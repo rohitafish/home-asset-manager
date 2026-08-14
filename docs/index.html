@@ -240,16 +240,29 @@
     margin: 0 auto;
     list-style: none;
     padding: 0;
+    display: grid;
+    grid-template-columns: max-content 1fr; /* one shared column per side, not per-row */
+    column-gap: 20px;
   }
   .req-list li {
+    display: contents; /* the <li> box disappears; its two spans become grid items */
+  }
+  .req-list .label,
+  .req-list .value {
     padding: 10px 0;
     border-bottom: 1px solid var(--border);
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
   }
-  .req-list li:last-child { border-bottom: none; }
-  .req-list .label { color: var(--fg-muted); }
+  .req-list .label {
+    text-align: right;
+    color: var(--fg-muted);
+  }
+  .req-list .value {
+    text-align: left;
+  }
+  .req-list li:last-child .label,
+  .req-list li:last-child .value {
+    border-bottom: none;
+  }
 
   /* -------- Get started -------- */
   pre.codeblock {
@@ -440,11 +453,11 @@
     <h2>Requirements</h2>
     <p class="lede">Stated upfront, on purpose — better to know now than after setup.</p>
     <ul class="req-list">
-      <li><span class="label">Operating system</span> <span>macOS</span></li>
-      <li><span class="label">Network</span> <span>A Ubiquiti UniFi network (controller or UDM/Cloud Gateway)</span></li>
-      <li><span class="label">Scale</span> <span>A home network — tens of devices, not hundreds</span></li>
-      <li><span class="label">Database</span> <span>Postgres via Docker/Colima (bundled)</span></li>
-      <li><span class="label">AI assistant</span> <span>Optional — needs an Anthropic or OpenRouter API key</span></li>
+      <li><span class="label">Operating system</span> <span class="value">macOS</span></li>
+      <li><span class="label">Network</span> <span class="value">A Ubiquiti UniFi network (controller or UDM/Cloud Gateway)</span></li>
+      <li><span class="label">Scale</span> <span class="value">A home network — tens of devices, not hundreds</span></li>
+      <li><span class="label">Database</span> <span class="value">Postgres via Docker/Colima (bundled)</span></li>
+      <li><span class="label">AI assistant</span> <span class="value">Optional — needs an Anthropic or OpenRouter API key</span></li>
     </ul>
   </div>
 </section>
