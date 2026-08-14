@@ -8,6 +8,6 @@ jinja2>=3.1
 python-multipart>=0.0.12
 httpx>=0.28.1
 typer>=0.13
-markdown>=3.7
+markdown>=3.10.3
 anthropic>=0.69
 defusedxml>=0.7  # safe parsing of device-supplied XML (nmap output, Sonos UPnP/SOAP)
