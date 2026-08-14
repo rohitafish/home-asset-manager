@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # check-pii.sh scans commit history, so fetch it all rather than the
+          # default shallow clone.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'  # the Mini's version and ruff.toml's target -- the production floor
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Tests (pytest)
+        run: pytest -q
+
+      - name: PII / secret scan
+        # .pii-denylist is gitignored and dev-machine-only, so it's absent here:
+        # check-pii WARNs about that and still runs the portable structural,
+        # secret, and tracked-.env rules (exit non-zero only on a real FAIL).
+        run: bash scripts/check-pii.sh --full
