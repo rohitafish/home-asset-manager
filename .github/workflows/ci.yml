@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+# Explicit, minimal token permissions: this workflow only reads the repo and
+# runs tests/lint/the PII scan -- it never needs to write anything. Currently
+# redundant with the repo's own default (Settings -> Actions -> read-only),
+# but stated here so it stays true even if that default is ever loosened.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
