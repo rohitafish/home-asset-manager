@@ -15,7 +15,7 @@ jobs:
           # default shallow clone.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'  # the Mini's version and ruff.toml's target -- the production floor
           cache: pip
