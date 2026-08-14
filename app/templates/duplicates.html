@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Possible Duplicates{% endblock %}
+{% block content %}
+<h2>Possible Duplicate Assets</h2>
+<p>Assets that may be the same physical device, from two sources: an exact
+   name match, and an existing "same physical device" link that was never
+   merged. Nothing is ever merged automatically — merging is destructive (it
+   deletes the row you don't keep), so it always needs a person to confirm and
+   choose which record survives. For scored near-duplicate <em>candidates</em>
+   (different names, weighed on evidence), see
+   <a href="/assets/investigate">Investigate</a>.</p>
+
+<h3>Same exact name</h3>
+<p>Often the same device seen under a different MAC per network (e.g. an
+   iPhone/iPad with a "Fixed" private Wi-Fi address: stable on one network, a
+   different fixed value on another).</p>
+{% for group in groups %}
+<h3>{{ group.hostname }}</h3>
+<form method="post" action="/assets/duplicates/merge">
+  <table>
+    <thead>
+      <tr><th>Keep this one</th><th>Asset</th><th>MAC</th><th>Network</th><th>Owner</th><th>Status</th><th>First seen</th></tr>
+    </thead>
+    <tbody>
+      {% for asset, iface in group.members %}
+      <tr>
+        <td><input type="radio" name="survivor_id" value="{{ asset.id }}" {% if loop.first %}checked{% endif %} required></td>
+        <td><a href="/assets/{{ asset.id }}">{{ asset.hostname }} (#{{ asset.id }})</a></td>
+        <td>{{ iface.mac if iface else "—" }}</td>
+        <td>{{ iface.network_name if iface and iface.network_name else "—" }}</td>
+        <td>{{ asset.owner or "—" }}</td>
+        <td>{{ asset.lifecycle_status.value }}</td>
+        <td>{{ asset.first_seen|localdt }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <button type="submit">Merge into selected asset</button>
+</form>
+{% else %}
+<p>No exact-name duplicates — every asset has a distinct name.</p>
+{% endfor %}
+
+<h3>Linked as the same physical device — not yet merged</h3>
+<p>Pairs already confirmed as one device (via <a href="/assets/investigate">Investigate</a>
+   or the assistant) but kept as two rows. Merge collapses them into one; the row
+   you keep retains both interfaces.</p>
+{% for a, b in linked_pairs %}
+<form method="post" action="/assets/duplicates/merge-pair">
+  <table>
+    <thead>
+      <tr><th>Keep this one</th><th>Asset</th><th>Owner</th><th>Vendor</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for asset in (a, b) %}
+      <tr>
+        <td><input type="radio" name="survivor_id" value="{{ asset.id }}" {% if loop.first %}checked{% endif %} required></td>
+        <td><a href="/assets/{{ asset.id }}">{{ asset.hostname or ('Asset #' ~ asset.id) }} (#{{ asset.id }})</a></td>
+        <td>{{ asset.owner or "—" }}</td>
+        <td>{{ asset.vendor or "—" }}</td>
+        <td>{{ asset.lifecycle_status.value }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <input type="hidden" name="id_a" value="{{ a.id }}">
+  <input type="hidden" name="id_b" value="{{ b.id }}">
+  <div class="dup-actions">
+    <button type="submit">Merge into selected asset</button>
+    <button type="submit" formaction="/assets/duplicates/dismiss-pair"
+            formnovalidate class="link-button">Dismiss &mdash; not the same device</button>
+  </div>
+</form>
+{% else %}
+<p>No unmerged same-device links.</p>
+{% endfor %}
+{% endblock %}

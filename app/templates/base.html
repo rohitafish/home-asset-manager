@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Home Asset & Vulnerability Management{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ static_version }}">
+  <!-- htmx vendored locally (was unpkg CDN): no third-party JS in an
+       authenticated admin page, and the dashboard works with no internet. The
+       committed file was verified byte-for-byte against htmx 2.0.3's npm tarball
+       + cdnjs (sha512) + jsdelivr (sha256). ?v= is the htmx version, so an
+       upgrade busts the cache. -->
+  <script src="/static/htmx.min.js?v=2.0.3"></script>
+</head>
+<body>
+  <header>
+    <h1><a href="/">Home Asset &amp; Vulnerability Management</a></h1>
+    <nav>
+      <a href="/assets">Assets</a>
+      <a href="/discovery">Discovery</a>
+      <a href="/assets/duplicates">Duplicates</a>
+      <a href="/assets/investigate">Investigate</a>
+      <a href="/locations">Locations</a>
+      <a href="/summary">Summary</a>
+      <a href="/assets/triage">Triage Queue</a>
+      <a href="/valuables">Valuables</a>
+      <a href="/findings">Vulnerabilities</a>
+      <a href="/docs">API Docs</a>
+      <a href="/readme">README</a>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

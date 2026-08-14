@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Valuables{% endblock %}
+{% block content %}
+{% macro sort_th(key, label) %}
+  {% set next_dir = 'asc' if not (sort == key and direction == 'asc') else 'desc' %}
+  {% set qs = {'all': '1' if show_all else '', 'sort': key, 'direction': next_dir} %}
+  <th><a class="sort-link" href="/valuables?{{ qs | urlencode }}">{{ label }}{% if sort == key %}{{ ' ▲' if direction == 'asc' else ' ▼' }}{% endif %}</a></th>
+{% endmacro %}
+<div class="toolbar">
+  <h2>Valuables</h2>
+  <div>
+    {% if show_all %}
+    <a class="button" href="/valuables">Show register only</a>
+    {% else %}
+    <a class="button" href="/valuables?all=1">Show all assets</a>
+    {% endif %}
+    <a class="button" href="/valuables.csv{{ '?all=1' if show_all }}">Download CSV</a>
+    <button type="button" onclick="window.print()">Print</button>
+  </div>
+</div>
+<p class="hint">
+  {% if show_all %}
+  Every asset in the inventory.
+  {% else %}
+  Assets with identity, purchase or cover data recorded, plus any high-criticality
+  asset regardless &mdash; the second group is the manual-entry worklist.
+  {% endif %}
+  For support calls and insurance claims: serial numbers, model numbers and
+  declared values in one printable place. Fill in the missing fields via each
+  asset's Edit page.
+</p>
+
+<table class="report">
+  <thead>
+    <tr>
+      {{ sort_th('hostname', 'Hostname') }}{{ sort_th('asset_type', 'Type') }}{{ sort_th('vendor', 'Vendor') }}{{ sort_th('model', 'Model') }}
+      {{ sort_th('model_number', 'Model number') }}{{ sort_th('serial_number', 'Serial number') }}{{ sort_th('location', 'Location') }}
+      {{ sort_th('purchase_date', 'Purchase date') }}{{ sort_th('purchase_price', 'Purchase price') }}{{ sort_th('replacement_value', 'Replacement value') }}
+      {{ sort_th('warranty', 'Warranty') }}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr class="crit-{{ row.asset.criticality.value }}">
+      <td><a href="/assets/{{ row.asset.id }}">{{ row.asset.hostname or ("Asset #" ~ row.asset.id) }}</a></td>
+      <td>{{ row.asset.asset_type.value.replace('_device', '') }}</td>
+      <td>{{ row.asset.vendor or "—" }}</td>
+      <td>{{ row.asset.model or "—" }}</td>
+      <td>{{ row.asset.model_number or "—" }}</td>
+      <td>{{ row.asset.serial_number or "—" }}</td>
+      <td>{{ row.location.name if row.location else "—" }}</td>
+      <td class="date">{{ row.asset.purchase_date or "—" }}</td>
+      <td class="num">{{ row.asset.purchase_price|money }}</td>
+      <td class="num">{{ row.asset.replacement_value|money }}</td>
+      <td class="warranty-{{ row.warranty_state }}">{{ row.warranty_label }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="11">Nothing to show yet &mdash; add identity/purchase data via an
+      asset's Edit page, or <a href="/valuables?all=1">show all assets</a>.</td></tr>
+    {% endfor %}
+  </tbody>
+  {% if rows %}
+  <tfoot>
+    <tr class="report-totals">
+      <th colspan="8">Total ({{ rows|length }} asset{{ "s" if rows|length != 1 }})</th>
+      <td class="num">{{ total_purchase|money }}</td>
+      <td class="num">{{ total_replacement|money }}</td>
+      <td></td>
+    </tr>
+  </tfoot>
+  {% endif %}
+</table>
+{% endblock %}

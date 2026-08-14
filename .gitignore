@@ -1,0 +1,30 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+# env-structure.sh writes this into the repo root while comparing .env layouts;
+# it's transient, but a crash can leave one behind for `git add -A` to sweep up.
+.env.example.tmp.*
+.pii-denylist
+*.egg-info/
+.DS_Store
+# logs/ is tracked (via logs/.gitkeep below) so it survives a fresh clone --
+# launchd's plists all write here (StandardOutPath/StandardErrorPath) and
+# won't create a missing log file's parent directory themselves.
+logs/*
+!logs/.gitkeep
+backups/
+.claude/
+
+# Internal standard docs -- not ours to redistribute
+Asset & Configuration Management Standard (ASET) v1.0.docx
+Vulnerability Management Standard (VULN) v1.0.docx
+
+# Vendor account exports used by discovery/account_import.py (screenshots/
+# PDFs of the Amazon and Sonos device lists, and the transcribed serials in
+# devices/accounts.json) -- real serials and room names, never committed.
+# redeploy.sh still rsyncs this directory to mini on purpose so the import
+# has data to read there; it's just never tracked in git.
+devices/

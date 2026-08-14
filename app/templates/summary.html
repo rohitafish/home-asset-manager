@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Summary{% endblock %}
+{% block content %}
+<h2>Summary</h2>
+
+<div class="metric-cards">
+  <div class="metric-card">
+    <div class="value">{{ total_assets }}</div>
+    <div class="label">Total assets</div>
+  </div>
+  <div class="metric-card">
+    <div class="value">{{ active_count }}</div>
+    <div class="label">Active</div>
+  </div>
+  <div class="metric-card {% if discovered_count %}warn{% endif %}">
+    <div class="value">{{ discovered_count }}</div>
+    <div class="label">Pending triage</div>
+  </div>
+  <div class="metric-card">
+    <div class="value">{{ coverage_pct }}%</div>
+    <div class="label">Seen in last 30 days</div>
+  </div>
+  <div class="metric-card {% if open_findings_total %}warn{% endif %}">
+    <div class="value">{{ open_findings_total }}</div>
+    <div class="label">Open findings</div>
+  </div>
+  <div class="metric-card {% if overdue_count %}warn{% endif %}">
+    <div class="value">{{ overdue_count }}</div>
+    <div class="label">SLA overdue</div>
+  </div>
+  <div class="metric-card {% if backup_stale %}warn{% endif %}">
+    <div class="value">{{ backup_age }}</div>
+    <div class="label">Since last DB backup</div>
+  </div>
+</div>
+
+<h3>Open findings by severity</h3>
+<table>
+  <thead><tr><th>Critical</th><th>High</th><th>Medium</th><th>Low</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="crit-critical">{{ open_by_severity.get("critical", 0) }}</td>
+      <td class="crit-high">{{ open_by_severity.get("high", 0) }}</td>
+      <td class="crit-medium">{{ open_by_severity.get("medium", 0) }}</td>
+      <td class="crit-low">{{ open_by_severity.get("low", 0) }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Last discovery run per source</h3>
+<table>
+  <thead><tr><th>Source</th><th>Started</th><th>Status</th><th>Summary</th></tr></thead>
+  <tbody>
+    {% for source, run in latest_runs.items() %}
+    <tr>
+      <td>{{ source }}</td>
+      <td>{{ run.started_at|localdt }}</td>
+      <td>{{ run.status }}</td>
+      <td>{{ run.summary or "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No discovery runs yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

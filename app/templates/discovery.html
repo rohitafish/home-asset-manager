@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Discovery{% endblock %}
+{% block content %}
+<h2>Discovery</h2>
+<p>Discovery is on-demand only &mdash; nothing runs continuously in the background.</p>
+
+<div class="button-row">
+  <form method="post" action="/discovery/run/unifi">
+    <button type="submit">Run UniFi discovery now</button>
+  </form>
+  <form method="post" action="/discovery/run/nmap">
+    <button type="submit">Run nmap scan now</button>
+  </form>
+  <form method="post" action="/discovery/run/nmap-privileged">
+    <button type="submit">Run privileged scan (sudo)</button>
+  </form>
+  <form method="post" action="/discovery/run/sonos">
+    <button type="submit">Discover Sonos household</button>
+  </form>
+</div>
+<div class="button-row">
+  <form method="post" action="/discovery/run/local-mac">
+    <button type="submit">Collect this Mac's hardware identity</button>
+  </form>
+  <form method="post" action="/discovery/run/enrich">
+    <button type="submit">Check for vulnerabilities</button>
+  </form>
+  <form method="post" action="/discovery/run/all">
+    <button type="submit">Run everything</button>
+  </form>
+</div>
+<p>"Run nmap scan now" uses an unprivileged TCP-connect scan (<code>-sT</code>).
+   "Run privileged scan (sudo)" uses a full SYN scan (<code>-sS</code>), which
+   is faster and gives more accurate port-state results, via a narrowly-scoped
+   passwordless sudo rule limited to just the <code>nmap</code> binary (see
+   README) &mdash; the app process itself still runs as a normal user, not
+   root.</p>
+<p>"Discover Sonos household" enumerates every Sonos player from the local
+   port-1400 API of one already-known player, and writes what it finds into the
+   inventory. It seeds only from Sonos IPs <em>already</em> in the inventory
+   (never multicast/SSDP), so run UniFi or nmap discovery first on a fresh
+   database or it will have nothing to seed from. It never renames an existing
+   asset. This collector doesn't fail loudly: if no seed player answers, the run
+   still shows as <code>completed</code> with a summary of
+   <code>status=no_seed_ips</code> or <code>status=no_response</code> &mdash;
+   that's the "found nothing" signal, not an error.</p>
+<p>"Collect this Mac's hardware identity" reads the serial number, model
+   number and model identifier from <code>system_profiler</code> on whichever
+   machine is running the app, and writes them onto that machine's own asset
+   &mdash; it can only ever describe the host it runs on, so run it on the
+   deployed instance (the Mini) to enrich that asset, not from a dev checkout
+   elsewhere.</p>
+<p>"Check for vulnerabilities" queries NVD once per detected service and can
+   take several minutes for the whole estate without an <code>NVD_API_KEY</code>
+   in <code>.env</code> (NVD rate-limits unauthenticated requests). The page
+   will just wait for it &mdash; that's expected, not a hang.</p>
+
+<h3>Run history</h3>
+<table class="run-history">
+  <thead><tr><th>Source</th><th>Started</th><th>Finished</th><th>Status</th><th>Summary</th></tr></thead>
+  <tbody>
+    {% for run in runs %}
+    <tr>
+      <td>{{ run.source }}</td>
+      <td>{{ run.started_at|localdt("%Y-%m-%d %H:%M:%S") }}</td>
+      <td>{{ run.finished_at|localdt("%Y-%m-%d %H:%M:%S") }}</td>
+      <td>{{ run.status }}</td>
+      <td>{{ run.summary or "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">No discovery runs yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

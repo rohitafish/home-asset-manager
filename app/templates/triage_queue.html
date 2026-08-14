@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Triage Queue{% endblock %}
+{% block content %}
+<div class="toolbar">
+  <div>
+    <h2>Triage Queue</h2>
+    <p>Assets discovered automatically that are not yet confirmed active. As
+       per good asset management practice, these should be investigated and
+       either confirmed (owner and criticality already auto-assigned — click
+       Confirm to mark active) or edited first if something needs correcting,
+       or removed.</p>
+  </div>
+  {% if assets %}
+  <form method="post" action="/assets/triage/confirm-all"
+        onsubmit="return confirm('Confirm all {{ assets|length }} discovered device(s) as active?')">
+    <button type="submit">Confirm all</button>
+  </form>
+  {% endif %}
+</div>
+<table>
+  <thead><tr><th>Hostname</th><th>Type</th><th>Source</th><th>First seen</th><th></th><th></th></tr></thead>
+  <tbody>
+    {% for asset in assets %}
+    <tr>
+      <td>{{ asset.hostname or ('Asset #' ~ asset.id) }}</td>
+      <td>{{ asset.asset_type.value }}</td>
+      <td>{{ asset.source or "—" }}</td>
+      <td>{{ asset.first_seen|localdt }}</td>
+      <td>
+        <form method="post" action="/assets/{{ asset.id }}/confirm" style="display:inline">
+          <button type="submit">Confirm</button>
+        </form>
+      </td>
+      <td><a class="button" href="/assets/{{ asset.id }}/edit">Edit</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">Nothing to triage — every discovered device is accounted for.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

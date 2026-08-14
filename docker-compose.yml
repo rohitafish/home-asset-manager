@@ -1,0 +1,25 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: assetmgt
+      POSTGRES_PASSWORD: assetmgt
+      POSTGRES_DB: assetmgt
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - assetmgt-db:/var/lib/postgresql/data
+    # Docker's default json-file driver has no size cap -- under a sustained
+    # failure (crash-restart loop, disk pressure, a misbehaving client) this
+    # container's own stdout/stderr would otherwise grow unbounded inside
+    # Colima's VM disk, the same class of gap as logs/app.error.log (see
+    # scripts/rotate-logs.sh / AGENTS.md). Same 10 MB x 5 policy as that.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  assetmgt-db:

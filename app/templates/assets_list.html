@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Assets{% endblock %}
+{% block content %}
+{% macro sort_th(key, label) %}
+  {% set next_dir = 'asc' if not (sort == key and direction == 'asc') else 'desc' %}
+  {% set qs = {
+    'asset_type': filters.asset_type,
+    'criticality': filters.criticality,
+    'lifecycle_status': filters.lifecycle_status,
+    'location_id': filters.location_id,
+    'sort': key,
+    'direction': next_dir,
+  } %}
+  <th><a class="sort-link" href="/assets?{{ qs | urlencode }}">{{ label }}{% if sort == key %}{{ ' ▲' if direction == 'asc' else ' ▼' }}{% endif %}</a></th>
+{% endmacro %}
+<div class="metric-cards">
+  {% include "_asset_count_badge.html" %}
+</div>
+
+<div class="toolbar">
+  <form method="get" class="filters">
+    <select name="asset_type" onchange="this.form.submit()">
+      <option value="">All types</option>
+      {% for t in asset_types %}
+        <option value="{{ t }}" {% if t == filters.asset_type %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+    <select name="criticality" onchange="this.form.submit()">
+      <option value="">All criticalities</option>
+      {% for c in criticalities %}
+        <option value="{{ c }}" {% if c == filters.criticality %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <select name="lifecycle_status" onchange="this.form.submit()">
+      <option value="">All statuses</option>
+      {% for s in lifecycle_statuses %}
+        <option value="{{ s }}" {% if s == filters.lifecycle_status %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <select name="location_id" onchange="this.form.submit()">
+      <option value="">All locations</option>
+      {% for loc in locations %}
+        <option value="{{ loc.id }}" {% if filters.location_id == loc.id|string %}selected{% endif %}>{{ loc.name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+  <a class="button" href="/assets/new">+ Add asset</a>
+</div>
+
+<table class="assets">
+  <thead>
+    <tr>
+      {{ sort_th('id', 'ID') }}{{ sort_th('hostname', 'Hostname') }}{{ sort_th('asset_type', 'Type') }}{{ sort_th('vendor', 'Vendor') }}{{ sort_th('owner', 'Owner') }}{{ sort_th('criticality', 'Criticality') }}
+      {{ sort_th('lifecycle_status', 'Status') }}{{ sort_th('location', 'Location') }}{{ sort_th('last_seen', 'Last seen') }}
+    </tr>
+  </thead>
+  <tbody>
+    {% for asset in assets %}
+    <tr class="crit-{{ asset.criticality.value }}">
+      <td>{{ asset.id }}</td>
+      <td><a href="/assets/{{ asset.id }}">{{ asset.hostname or ('Asset #' ~ asset.id) }}</a></td>
+      <td>{{ asset.asset_type.value.replace('_device', '') }}</td>
+      <td>{{ asset.vendor or "—" }}</td>
+      <td>{{ asset.owner or "—" }}</td>
+      <td>{{ asset.criticality.value }}</td>
+      <td>{{ asset.lifecycle_status.value }}</td>
+      <td>{{ locations_by_id[asset.location_id].name if asset.location_id in locations_by_id else "—" }}</td>
+      <td>{{ asset.last_seen|localdt }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9">No assets yet. Add one manually or run discovery.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

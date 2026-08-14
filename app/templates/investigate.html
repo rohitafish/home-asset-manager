@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Investigate{% endblock %}
+{% block content %}
+<h2>Same-device candidates</h2>
+<p>Pairs of assets that might be the same physical device (e.g. one wired NIC
+and one wireless NIC on the same box), scored on the evidence below. Linking
+keeps both records and just notes the relationship -- it does not delete
+anything. If discovery genuinely created two rows for the exact same
+interface, use <a href="/assets/duplicates">Duplicates</a> instead, which
+merges them into one.</p>
+
+{% for c in candidates %}
+<div class="candidate-card">
+  <div class="candidate-score">Score: {{ c.score }}</div>
+  <div class="candidate-pair">
+    <div>
+      <strong><a href="/assets/{{ c.asset_a.id }}">{{ c.asset_a.hostname or ("Asset #" ~ c.asset_a.id) }}</a></strong><br>
+      {{ c.asset_a.asset_type.value }} · {{ c.asset_a.vendor or "—" }}
+    </div>
+    <div>
+      <strong><a href="/assets/{{ c.asset_b.id }}">{{ c.asset_b.hostname or ("Asset #" ~ c.asset_b.id) }}</a></strong><br>
+      {{ c.asset_b.asset_type.value }} · {{ c.asset_b.vendor or "—" }}
+    </div>
+  </div>
+  <ul class="candidate-signals">
+    {% for s in c.signals %}
+    <li>{{ s.label }} ({{ '+' if s.points >= 0 else '' }}{{ s.points }})</li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="/assets/investigate/link" class="candidate-actions">
+    <input type="hidden" name="asset_id_a" value="{{ c.asset_a.id }}">
+    <input type="hidden" name="asset_id_b" value="{{ c.asset_b.id }}">
+    <input type="text" name="detail" placeholder="Optional note, e.g. \"wired + wireless NIC\"">
+    <button type="submit">Link as same device</button>
+  </form>
+</div>
+{% else %}
+<p>No candidates above the scoring threshold right now.</p>
+{% endfor %}
+{% endblock %}

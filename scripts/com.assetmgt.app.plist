@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.assetmgt.app</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__ASSETMGT_DIR__/.venv/bin/uvicorn</string>
+    <string>app.main:app</string>
+    <string>--host</string>
+    <string>0.0.0.0</string>
+    <string>--port</string>
+    <string>8000</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__ASSETMGT_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Without this, KeepAlive respawns immediately on any startup
+       exception -- e.g. this agent loaded before the dump was restored /
+       alembic upgrade head run (missing tables), or before Colima won the
+       reboot race -- producing a tight crash-loop that appends to
+       app.error.log every ~10s indefinitely. com.assetmgt.backup.plist
+       works around the same Colima-ordering hazard by skipping RunAtLoad
+       entirely; the app agent needs RunAtLoad (it should come up
+       immediately on a normal boot), so it gets a floor under the restart
+       rate instead. -->
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>__ASSETMGT_DIR__/logs/app.log</string>
+  <key>StandardErrorPath</key>
+  <string>__ASSETMGT_DIR__/logs/app.error.log</string>
+</dict>
+</plist>

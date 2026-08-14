@@ -1,0 +1,66 @@
+# Pins lint rules explicitly. Without this file, `ruff check` falls back to
+# ruff's own built-in defaults -- which, as of ruff 0.16, is a much broader
+# set than the old E4/E7/E9/F (confirmed empirically: `ruff check --isolated`
+# on this repo returns the exact same 366 findings as running with no config
+# at all). An unpinned default is ambient machine state, not something
+# committed to the repo -- the same class of problem as the machine-wide PII
+# guardrail (see AGENTS.md's "PII / privacy"): it'll silently change again on
+# the next ruff upgrade unless it's pinned here.
+target-version = "py312"  # floor across both hosts -- the Mini runs 3.12, dev runs 3.14
+
+# alembic-generated, not hand-maintained -- linting migrations for style
+# fights the tool that wrote them, not a human.
+exclude = ["migrations/versions"]
+
+[lint]
+# G (flake8-logging-format), LOG (flake8-logging) and T20 (flake8-print) were
+# added when app/logging_config.py introduced a real logging framework:
+# - G/LOG enforce lazy %-style logging args and correct logger usage now that
+#   the codebase logs for real (previously there was nothing to check).
+# - T20 is the guardrail that keeps print() from creeping back as ad-hoc
+#   diagnostics -- the CLI's user-facing output goes through typer.echo, not
+#   print, so the runtime is print-free. Tests are exempt below (a test may
+#   legitimately print for debugging).
+select = ["E4", "E7", "E9", "F", "I", "UP", "C4", "SIM", "FURB", "RUF", "DTZ003", "G", "LOG", "T20"]
+ignore = [
+  # dict(model=..., max_tokens=...) reads better than a literal for
+  # assistant.py's create_kwargs -- this is the one place it fires.
+  "C408",
+  # StrEnum conversion would change .value/SQLModel column semantics on
+  # live enum columns (criticality, lifecycle_status, ...). No benefit,
+  # real risk to the deployed database -- leave the Enum subclasses alone.
+  "UP042",
+  # contextlib.suppress (SIM105) and forced ternaries (SIM108) are less
+  # explicit than this codebase's commented try/except and if/else style.
+  "SIM105",
+  "SIM108",
+  # Timezone-parsing nuance in the one fromisoformat().replace("Z", ...)
+  # call site -- leave alone rather than rewrite blind.
+  "FURB162",
+]
+
+# Deliberately NOT selected as whole families, not just missing by omission:
+# - B (bugbear): B008 fires 51x on FastAPI's required Depends()/Form()
+#   default-argument idiom, which is the correct pattern here, not a bug.
+# - S (bandit): flags this app's own intentional nmap/probe subprocess calls.
+# - DTZ (naive datetime), MOSTLY: this schema is deliberately naive-UTC end
+#   to end (see app/clock.py) -- date.today() (DTZ011), strptime without %z
+#   (DTZ007), and the datetime.max sentinel (DTZ901) are all *correct* under
+#   that convention, not bugs; ruff's opinion there is "be fully timezone-
+#   aware," which would mean migrating every DateTime column to
+#   timezone=True and auditing every comparison site, a real, separately-
+#   reviewed change, not a lint fix. DTZ003 (datetime.utcnow(), deprecated
+#   since Python 3.12 and the actual source of the deprecation warnings
+#   that used to show up in every pytest run) is the one exception: it's
+#   selected above and fixed at the source via app/clock.py's
+#   utcnow_naive(), which returns the identical naive-UTC value
+#   datetime.utcnow() always did, just without the deprecated call.
+
+[lint.per-file-ignores]
+# Tests may print() for debugging -- T20 guards the runtime, not the suite.
+"tests/*" = ["T20"]
+# `import app.models` is a side-effect import that registers every table on
+# SQLModel.metadata before the fixtures build the in-memory engine -- ruff
+# sees it as unused because nothing here references the module by name.
+# Removing it breaks the entire suite. See tests/conftest.py's own comment.
+"tests/conftest.py" = ["F401"]
