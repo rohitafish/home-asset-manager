@@ -1,0 +1,268 @@
+:root {
+  --crit: #b71c1c;
+  --high: #e65100;
+  --med: #f9a825;
+  --low: #2e7d32;
+  --border: #d0d0d0;
+}
+
+body {
+  font-family: -apple-system, Helvetica, Arial, sans-serif;
+  margin: 0;
+  color: #1a1a1a;
+  background: #fafafa;
+}
+
+header {
+  background: #1f3864;
+  color: white;
+  padding: 0.75rem 1.5rem;
+}
+
+header h1 { font-size: 1.1rem; margin: 0 0 0.4rem 0; }
+header h1 a { color: white; text-decoration: none; }
+
+nav a {
+  color: #d5e8f0;
+  margin-right: 1rem;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+nav a:hover { text-decoration: underline; }
+
+main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+
+table { border-collapse: collapse; width: 100%; margin-bottom: 1.5rem; background: white; }
+th, td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left; font-size: 0.9rem; }
+th { background: #1f3864; color: white; }
+
+table.kv th { width: 180px; background: #eef2f7; color: #1a1a1a; }
+
+a.sort-link { color: white; text-decoration: none; display: block; }
+a.sort-link:hover { text-decoration: underline; }
+
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.button-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+.button-row:last-of-type { margin-bottom: 1rem; }
+.filters select { margin-right: 0.5rem; }
+
+.button, button {
+  background: #1f3864; color: white; border: none; padding: 0.4rem 0.9rem;
+  border-radius: 4px; text-decoration: none; cursor: pointer; font-size: 0.9rem;
+}
+button.danger { background: var(--crit); }
+
+.asset-form label { display: block; margin-bottom: 0.75rem; font-size: 0.9rem; }
+.asset-form input, .asset-form select, .asset-form textarea {
+  display: block; width: 100%; max-width: 420px; padding: 0.35rem; margin-top: 0.2rem;
+}
+.asset-form label.checkbox { display: flex; align-items: center; gap: 0.5rem; }
+.asset-form label.checkbox input { width: auto; }
+
+tr.crit-critical td:first-child, td.crit-critical { border-left: 4px solid var(--crit); }
+tr.crit-high td:first-child, td.crit-high { border-left: 4px solid var(--high); }
+tr.crit-medium td:first-child, td.crit-medium { border-left: 4px solid var(--med); }
+tr.crit-low td:first-child, td.crit-low { border-left: 4px solid var(--low); }
+
+td.warranty-in { color: var(--low); }
+td.warranty-leaving { color: var(--med); }
+td.warranty-out { color: var(--high); }
+td.warranty-unknown { color: #777; }
+
+table.report td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* ISO dates can break after a hyphen ("2024-" / "03-15"), and the auto
+   table layout will happily squeeze this column down to that minimum, so
+   pin the dates to one line. A nowrap column can't be sized below its
+   content, so the browser takes the width back from the widest wrappable
+   columns -- chiefly Replacement value, whose width comes from its long
+   header rather than its figures, which are already nowrap above. */
+table.report td.date { white-space: nowrap; }
+tr.report-totals th, tr.report-totals td { font-weight: bold; background: #eef2f7; color: #1a1a1a; }
+
+@media print {
+  header, nav, .toolbar, .button-row, button, .button { display: none !important; }
+  body { background: white; }
+  main { max-width: none; padding: 0; }
+  table { font-size: 0.8rem; }
+  th { background: white !important; color: #000 !important; border-bottom: 2px solid #000; }
+  tr { page-break-inside: avoid; }
+  thead { display: table-header-group; }
+  a { text-decoration: none; color: #000; }
+}
+
+.metric-cards { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+.metric-card { background: white; border: 1px solid var(--border); border-radius: 6px; padding: 1rem 1.5rem; min-width: 140px; }
+.metric-card .value { font-size: 1.8rem; font-weight: bold; }
+.metric-card .label { font-size: 0.85rem; color: #555; }
+.metric-card.warn .value { color: var(--crit); }
+
+tr.overdue { background: #fdecea; }
+
+.readme {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.5rem 2rem;
+  line-height: 1.6;
+  font-size: 0.95rem;
+}
+.readme h1, .readme h2, .readme h3 { color: #1f3864; }
+.readme h1 { font-size: 1.7rem; margin-top: 0; border-bottom: 2px solid var(--border); padding-bottom: 0.4rem; }
+.readme h2 { font-size: 1.35rem; margin-top: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+.readme h3 { font-size: 1.1rem; margin-top: 1.5rem; }
+.readme p, .readme ul, .readme ol { margin: 0.75rem 0; }
+.readme li { margin: 0.25rem 0; }
+.readme code {
+  background: #eef2f7; border-radius: 3px; padding: 0.1rem 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em;
+}
+.readme pre {
+  background: #1f2937; color: #e5e7eb; border-radius: 6px;
+  padding: 1rem; overflow-x: auto; line-height: 1.5;
+}
+.readme pre code { background: none; padding: 0; color: inherit; font-size: 0.85rem; }
+.readme table { width: auto; margin: 1rem 0; }
+.readme th, .readme td { font-size: 0.9rem; }
+.readme blockquote {
+  border-left: 4px solid var(--border); margin: 1rem 0; padding: 0.2rem 1rem;
+  color: #444; background: #f7f7f7;
+}
+.readme a { color: #1f3864; }
+.readme hr { border: none; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+
+/* The list itself is auto-generated from README.md's own headings by
+   python-markdown's toc extension (app/readme_render.py) -- never
+   hand-edited, so it can't drift out of sync with the document the way a
+   written-out list would. The heading/subtitle above it are supplied by
+   readme.html, since the extension can only emit a single title span. A
+   plain div, not <nav>: style.css's own @media print rule hides the `nav`
+   element, which would silently drop this from printouts -- the heading
+   matters most there, since it's what identifies the page once the site
+   header is hidden. */
+.readme-toc {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.5rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.readme-toc-title { font-size: 1.15rem; font-weight: 600; margin: 0 0 0.15rem; color: #1f3864; }
+.readme-toc-subtitle { font-size: 0.85rem; color: #555; margin: 0 0 0.75rem; }
+.readme-toc .toctitle { display: none; }
+.readme-toc ul { list-style: none; margin: 0; padding-left: 1rem; }
+.readme-toc > .toc > ul { padding-left: 0; }
+.readme-toc li { margin: 0.15rem 0; }
+.readme-toc a { color: #1f3864; text-decoration: none; }
+.readme-toc a:hover { text-decoration: underline; }
+
+/* nowrap on the short/fixed-format columns so they never break across
+   lines, regardless of window width -- Summary naturally absorbs the
+   extra space and still wraps normally since it's the one column with
+   genuinely variable-length content. */
+table.run-history td:nth-child(1),
+table.run-history td:nth-child(2),
+table.run-history td:nth-child(3),
+table.run-history td:nth-child(4) {
+  white-space: nowrap;
+}
+table.run-history td:nth-child(5) { word-wrap: break-word; }
+
+/* Type and Vendor are almost always one short word, so keep them narrow
+   rather than letting the browser size them off the widest row; an
+   occasional long value just wraps to a second line instead of stretching
+   the column. table-layout: fixed is required for explicit widths to
+   actually constrain content instead of just being a hint -- every column
+   needs a width, all in the same unit (%), summing to exactly 100%, or
+   browsers proportionally re-stretch every column (including the narrow
+   ones) to fill any leftover space rather than honoring a mix of px/%. */
+table.assets { table-layout: fixed; }
+table.assets th:nth-child(1), table.assets td:nth-child(1) { width: 6%; white-space: nowrap; }  /* ID */
+table.assets th:nth-child(2), table.assets td:nth-child(2) { width: 23%; }                       /* Hostname */
+table.assets th:nth-child(3), table.assets td:nth-child(3) { width: 7%; word-wrap: break-word; } /* Type */
+table.assets th:nth-child(4), table.assets td:nth-child(4) { width: 10%; word-wrap: break-word; }/* Vendor */
+table.assets th:nth-child(5), table.assets td:nth-child(5) { width: 7%; }                         /* Owner */
+table.assets th:nth-child(6), table.assets td:nth-child(6) { width: 9%; }                         /* Criticality */
+table.assets th:nth-child(7), table.assets td:nth-child(7) { width: 9%; }                         /* Status */
+table.assets th:nth-child(8), table.assets td:nth-child(8) { width: 13%; word-wrap: break-word; }/* Location */
+table.assets th:nth-child(9), table.assets td:nth-child(9) { width: 16%; white-space: nowrap; }  /* Last seen */
+
+.dup-actions { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.5rem; }
+
+.hint { font-weight: normal; color: #666; font-size: 0.85em; }
+
+.link-button {
+  background: none; border: none; color: #1f3864; text-decoration: underline;
+  padding: 0; font-size: 0.85em; cursor: pointer;
+}
+
+.note-form { display: flex; gap: 0.5rem; margin-bottom: 1rem; align-items: flex-start; }
+.note-form textarea { flex: 1; min-height: 3rem; padding: 0.4rem; font-family: inherit; }
+
+.note-list { list-style: none; margin: 0 0 1.5rem 0; padding: 0; }
+.note-list li {
+  background: white; border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.6rem 0.9rem; margin-bottom: 0.6rem;
+}
+.note-meta { font-size: 0.8rem; color: #666; margin-bottom: 0.25rem; }
+.note-body { white-space: pre-wrap; font-size: 0.9rem; }
+
+.probe-card {
+  background: white; border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.6rem 0.9rem; margin-bottom: 0.75rem; border-left: 4px solid var(--border);
+}
+.probe-card.probe-ok { border-left-color: var(--low); }
+.probe-card.probe-fail { border-left-color: var(--high); }
+.probe-meta { font-size: 0.8rem; color: #666; margin-bottom: 0.25rem; }
+.probe-summary { font-weight: bold; margin-bottom: 0.4rem; }
+table.probe-facts { width: auto; margin: 0.4rem 0; }
+table.probe-facts th { background: #eef2f7; color: #1a1a1a; font-weight: normal; }
+.probe-suggestions { margin-top: 0.5rem; font-size: 0.9rem; }
+.probe-suggestions ul { margin: 0.25rem 0 0 1.2rem; padding: 0; }
+
+.candidate-card {
+  background: white; border: 1px solid var(--border); border-radius: 6px;
+  padding: 1rem; margin-bottom: 1rem;
+}
+.candidate-score { font-size: 0.85rem; color: #555; margin-bottom: 0.5rem; }
+.candidate-pair { display: flex; gap: 1.5rem; margin-bottom: 0.75rem; }
+.candidate-pair > div { flex: 1; }
+.candidate-signals { margin: 0 0 0.75rem 1.2rem; font-size: 0.85rem; color: #444; }
+.candidate-actions { display: flex; gap: 0.5rem; align-items: center; }
+.candidate-actions input[type="text"] { width: auto; flex: 1; padding: 0.35rem; }
+
+.chat-error {
+  background: #fdecea; border: 1px solid var(--crit); border-radius: 6px;
+  padding: 0.5rem 0.8rem; margin-bottom: 0.75rem; font-size: 0.9rem;
+}
+
+.proposal-list { margin-bottom: 1rem; }
+.other-asset-group { border-top: 1px dashed var(--border); padding-top: 0.75rem; }
+.other-asset-heading { font-size: 0.9rem; margin-bottom: 0.5rem; }
+.other-asset-heading a { color: #1f3864; }
+.proposal-apply-all { margin-bottom: 0.75rem; }
+.proposal-card {
+  background: #fff8e1; border: 1px solid var(--med); border-radius: 6px;
+  padding: 0.6rem 0.9rem; margin-bottom: 0.5rem;
+}
+.proposal-body { font-weight: bold; }
+.proposal-rationale { font-size: 0.85rem; color: #555; margin-top: 0.2rem; }
+.proposal-actions { display: flex; gap: 0.75rem; margin-top: 0.5rem; align-items: center; }
+.proposal-actions form { display: inline; }
+
+.chat-transcript { margin-bottom: 0.75rem; }
+.chat-message {
+  border-radius: 6px; padding: 0.5rem 0.8rem; margin-bottom: 0.5rem; max-width: 80%;
+}
+.chat-message.chat-user { background: #eef2f7; margin-left: auto; }
+.chat-message.chat-assistant { background: white; border: 1px solid var(--border); }
+.chat-role { font-size: 0.75rem; color: #666; margin-bottom: 0.2rem; }
+.chat-text { white-space: pre-wrap; font-size: 0.9rem; }
+.chat-tool-call { font-size: 0.8rem; color: #666; font-style: italic; margin-top: 0.2rem; }
+
+.chat-form { display: flex; flex-direction: column; gap: 0.5rem; }
+.chat-form textarea { min-height: 4rem; padding: 0.4rem; font-family: inherit; }
+.chat-form-actions { display: flex; align-items: center; gap: 0.75rem; }
+.htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; font-size: 0.85rem; color: #666; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }

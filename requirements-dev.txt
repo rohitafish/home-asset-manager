@@ -1,0 +1,5 @@
+# Dev-only tooling -- not installed on the deployed instance (scripts/redeploy.sh
+# only installs requirements.txt). Install with:
+#   pip install -r requirements.txt -r requirements-dev.txt
+pytest>=8.3
+ruff>=0.8

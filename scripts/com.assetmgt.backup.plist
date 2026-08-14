@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.assetmgt.backup</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__ASSETMGT_DIR__/scripts/backup-db.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__ASSETMGT_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd agents don't inherit a login shell's PATH. `docker` and
+         `aws` must both be findable here. Homebrew installs both under
+         /opt/homebrew/bin; /usr/local/bin is included because the official
+         AWS CLI v2 .pkg installer puts `aws` there instead. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <!-- Bucket name and AWS credentials are NOT set here -- backup-db.sh
+       reads BACKUP_S3_BUCKET / BACKUP_AWS_* directly out of .env itself
+       (see the script and README). Keeps all backup config in one place
+       instead of splitting it between .env and this plist. -->
+
+  <!-- Preferred nightly run at 03:15 local, with catch-up ticks at 12:15 and
+       19:15. StartCalendarInterval (not StartInterval) re-runs a tick missed
+       during *sleep* at the next wake; the extra daytime ticks cover the case
+       it can't -- the Mac powered off / not-logged-in through 03:15 (FileVault,
+       see README's "Power outages and unattended restart"), which is what
+       caused the observed Aug 1-2 gap. backup-db.sh is idempotent (it skips
+       once the day's off-site copy exists), so whichever tick first finds the
+       Mac up and Colima ready does that day's backup and the rest no-op. The
+       daytime ticks also sidestep the boot-time Docker race below. -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>15</integer></dict>
+  </array>
+
+  <!-- Deliberately NO RunAtLoad, unlike com.assetmgt.logrotate: on a reboot
+       there is no ordering guarantee that Colima is up before LaunchAgents
+       run, so RunAtLoad would produce spurious "cannot connect to the Docker
+       daemon" entries in backup.error.log after every restart -- exactly the
+       noise that makes a failure log stop being trusted. The daytime
+       StartCalendarInterval ticks above are the catch-up mechanism instead,
+       firing when Colima is reliably already up. Verify the install with an
+       explicit `launchctl kickstart -k` instead (see README). -->
+
+  <!-- Only written on failure -- backup-db.sh is silent on success, so this
+       file is bounded by construction and deliberately not itself rotated
+       (same reasoning as logs/rotate.error.log). -->
+  <key>StandardErrorPath</key>
+  <string>__ASSETMGT_DIR__/logs/backup.error.log</string>
+</dict>
+</plist>

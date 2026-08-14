@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}{{ asset.hostname or ("Asset #" ~ asset.id) }}{% endblock %}
+{% block content %}
+<div class="toolbar">
+  <h2>{{ asset.hostname or ("Asset #" ~ asset.id) }}</h2>
+  <div>
+    {% if can_probe %}
+    <form method="post" action="/assets/{{ asset.id }}/ping" style="display:inline">
+      <button type="submit">Ping</button>
+    </form>
+    <form method="post" action="/assets/{{ asset.id }}/probe" style="display:inline">
+      <button type="submit">Run identification probe</button>
+    </form>
+    {% endif %}
+    <a class="button" href="/assets/{{ asset.id }}/edit">Edit</a>
+    <form method="post" action="/assets/{{ asset.id }}/delete" style="display:inline"
+          onsubmit="return confirm('Delete this asset?')">
+      <button type="submit" class="danger">Delete</button>
+    </form>
+  </div>
+</div>
+
+<table class="kv">
+  <tr><th>Type</th><td>{{ asset.asset_type.value }}</td></tr>
+  <tr><th>Vendor</th><td>{{ asset.vendor or "—" }}{% if asset.vendor_locked %} (locked){% endif %}</td></tr>
+  <tr><th>Owner</th><td>{{ asset.owner or "—" }}</td></tr>
+  <tr><th>Custodian</th><td>{{ asset.custodian or "—" }}</td></tr>
+  <tr><th>Criticality</th><td class="crit-{{ asset.criticality.value }}">{{ asset.criticality.value }}</td></tr>
+  <tr><th>Classification</th><td>{{ asset.classification or "—" }}</td></tr>
+  <tr><th>Lifecycle status</th><td>{{ asset.lifecycle_status.value }}</td></tr>
+  <tr><th>Internet-facing</th><td>{{ "yes" if asset.is_internet_facing else "no" }}</td></tr>
+  <tr><th>Model</th><td>{{ asset.model or "—" }}{% if asset.firmware_version %} (firmware {{ asset.firmware_version }}){% endif %}</td></tr>
+  <tr><th>Location</th><td>{% if location %}<a href="/locations/{{ location.id }}">{{ location.name }}</a>{% else %}—{% endif %}{% if asset.position %} — {{ asset.position }}{% endif %}</td></tr>
+  <tr><th>First seen</th><td>{{ asset.first_seen|localdt }}</td></tr>
+  <tr><th>Last seen</th><td>{{ asset.last_seen|localdt }}</td></tr>
+  <tr><th>Source</th><td>{{ asset.source or "manual" }}</td></tr>
+</table>
+
+<h3>Identity &amp; support <span class="hint">(for support calls and insurance claims)</span></h3>
+<table class="kv">
+  <tr><th>Model number</th><td>{{ asset.model_number or "—" }}</td></tr>
+  <tr><th>Model identifier</th><td>{{ asset.model_identifier or "—" }}</td></tr>
+  <tr><th>Serial number</th><td>{{ asset.serial_number or "—" }}{% if asset.identity_locked %} (locked){% endif %}</td></tr>
+  <tr><th>Purchased</th><td>{{ asset.purchase_date or "—" }}{% if asset.purchase_price %} — {{ asset.purchase_price|money }}{% endif %}</td></tr>
+  <tr><th>Warranty</th><td class="warranty-{{ warranty_state }}">{{ warranty_label }}</td></tr>
+  <tr><th>Replacement value</th><td>{{ asset.replacement_value|money }}</td></tr>
+</table>
+
+<h3>Network interfaces</h3>
+<table>
+  <thead><tr><th>MAC</th><th>Vendor</th><th>IP</th><th>Network</th><th>VLAN</th><th>Connection</th><th>Uplink</th><th>Last seen</th></tr></thead>
+  <tbody>
+    {% for iface in interfaces %}
+    <tr>
+      <td>{{ iface.mac or "—" }}</td>
+      <td>{{ iface.vendor or "—" }}</td>
+      <td>{{ iface.ip or "—" }}</td>
+      <td>{{ iface.network_name or "—" }}</td>
+      <td>{{ iface.vlan if iface.vlan is not none else "—" }}</td>
+      <td>{{ iface.connection_type or "—" }}</td>
+      <td>{{ iface.uplink_name or "—" }}</td>
+      <td>{{ iface.last_seen|localdt }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8">No interfaces recorded.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>Detected services</h3>
+<table>
+  <thead><tr><th>Port</th><th>Protocol</th><th>Product</th><th>Version</th></tr></thead>
+  <tbody>
+    {% for svc in services %}
+    <tr>
+      <td>{{ svc.port }}</td>
+      <td>{{ svc.protocol }}</td>
+      <td>{{ svc.product or "—" }}</td>
+      <td>{{ svc.version or "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No services recorded.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h3>Topology relationships</h3>
+<ul>
+  {% for rel in relationships %}
+  <li>
+    {{ rel.relationship_type }} →
+    {% set related = related_assets_by_id.get(rel.related_asset_id) %}
+    {% if related %}<a href="/assets/{{ related.id }}">{{ related.hostname or ("asset #" ~ related.id) }}</a>{% else %}asset #{{ rel.related_asset_id }}{% endif %}
+    {% if rel.detail %} ({{ rel.detail }}){% endif %}
+    {% if rel.relationship_type == "same_physical_device" %}
+    <form method="post" action="/assets/{{ asset.id }}/relationships/{{ rel.id }}/unlink" style="display:inline">
+      <button type="submit" class="link-button">Unlink</button>
+    </form>
+    {% endif %}
+  </li>
+  {% else %}
+  <li>None recorded.</li>
+  {% endfor %}
+</ul>
+
+<h3>Open vulnerability findings</h3>
+<table>
+  <thead><tr><th>Severity</th><th>Title / CVE</th><th>SLA due</th><th>Status</th></tr></thead>
+  <tbody>
+    {% for f in findings %}
+    <tr class="crit-{{ f.severity.value }}">
+      <td>{{ f.severity.value }}</td>
+      <td>{{ f.ad_hoc_title or f.vulnerability_id }}</td>
+      <td>{{ f.sla_due_date|localdt("%Y-%m-%d") }}</td>
+      <td>{{ f.status.value }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No open findings.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if probe_results %}
+<h3>Probe evidence</h3>
+{% for pr in probe_results %}
+<div class="probe-card {{ 'probe-ok' if pr.row.ok else 'probe-fail' }}">
+  <div class="probe-meta">
+    {{ pr.row.ran_at|localdt }} — {{ pr.row.probe_name }} probe of {{ pr.row.target_ip }}
+  </div>
+  <div class="probe-summary">{{ pr.row.summary }}</div>
+  {% if pr.facts %}
+  <table class="probe-facts">
+    {% for key, value in pr.facts.items() %}
+    <tr><th>{{ key }}</th><td>{{ value }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if pr.suggestions %}
+  <div class="probe-suggestions">
+    <strong>Suggested changes:</strong>
+    <ul>
+      {% for s in pr.suggestions %}
+      <li>
+        Set <strong>{{ s.field }}</strong> to "{{ s.value }}" — {{ s.reason }}
+        <form method="post" action="/assets/{{ asset.id }}/probe/apply-suggestion" style="display:inline">
+          <input type="hidden" name="field_name" value="{{ s.field }}">
+          <input type="hidden" name="value" value="{{ s.value }}">
+          <button type="submit" class="link-button">Apply</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+<h3>Investigation log</h3>
+<form method="post" action="/assets/{{ asset.id }}/notes" class="note-form">
+  <textarea name="body" placeholder="Add a note about this investigation..." required></textarea>
+  <button type="submit">Add note</button>
+</form>
+<ul class="note-list">
+  {% for note in notes %}
+  <li>
+    <div class="note-meta">{{ note.created_at|localdt }} — {{ note.author }}</div>
+    <div class="note-body">{{ note.body }}</div>
+  </li>
+  {% else %}
+  <li>No notes yet.</li>
+  {% endfor %}
+</ul>
+
+<h3>Investigation assistant</h3>
+{% include "_chat_panel.html" %}
+{% endblock %}

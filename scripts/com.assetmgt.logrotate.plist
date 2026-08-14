@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.assetmgt.logrotate</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__ASSETMGT_DIR__/scripts/rotate-logs.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__ASSETMGT_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- One-shot, run hourly -- not a long-running service, so no KeepAlive. -->
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Only written on failure -- rotate-logs.sh is silent on success, so
+       this file is bounded by construction and deliberately not itself
+       rotated. -->
+  <key>StandardErrorPath</key>
+  <string>__ASSETMGT_DIR__/logs/rotate.error.log</string>
+</dict>
+</plist>

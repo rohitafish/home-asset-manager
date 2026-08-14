@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}README{% endblock %}
+{% block content %}
+<div class="readme-toc">
+  <h2 class="readme-toc-title">Table of Contents</h2>
+  <p class="readme-toc-subtitle">Home Asset &amp; Vulnerability Management &mdash; README</p>
+  {{ toc|safe }}
+</div>
+<div class="readme">{{ content|safe }}</div>
+{% endblock %}

@@ -1,0 +1,90 @@
+{% macro apply_all_form(target_id, count, panel_id) %}
+<div class="proposal-apply-all">
+  <form method="post" action="/assets/{{ target_id }}/proposals/apply-all"
+        hx-post="/assets/{{ target_id }}/proposals/apply-all" hx-target="#chat-panel" hx-swap="outerHTML">
+    <input type="hidden" name="panel_asset_id" value="{{ panel_id }}">
+    <button type="submit">Apply all ({{ count }})</button>
+  </form>
+</div>
+{% endmacro %}
+{% macro proposal_card(p, panel_id) %}
+<div class="proposal-card">
+  <div class="proposal-body">{{ p.description }}</div>
+  {% if p.row.rationale %}<div class="proposal-rationale">{{ p.row.rationale }}</div>{% endif %}
+  <div class="proposal-actions">
+    <form method="post" action="/proposals/{{ p.row.id }}/apply"
+          hx-post="/proposals/{{ p.row.id }}/apply" hx-target="#chat-panel" hx-swap="outerHTML">
+      <input type="hidden" name="panel_asset_id" value="{{ panel_id }}">
+      <button type="submit">Apply</button>
+    </form>
+    <form method="post" action="/proposals/{{ p.row.id }}/discard"
+          hx-post="/proposals/{{ p.row.id }}/discard" hx-target="#chat-panel" hx-swap="outerHTML">
+      <input type="hidden" name="panel_asset_id" value="{{ panel_id }}">
+      <button type="submit" class="link-button">Discard</button>
+    </form>
+  </div>
+</div>
+{% endmacro %}
+<div id="chat-panel">
+{% if not configured %}
+  <p class="hint">Set <code>ANTHROPIC_API_KEY</code> (or <code>OPENROUTER_API_KEY</code> as a fallback) in <code>.env</code> to enable the investigation assistant.</p>
+{% else %}
+  {% if error %}
+  <p class="chat-error">{{ error }}</p>
+  {% endif %}
+
+  {% if proposals %}
+  <div class="proposal-list">
+    {% if proposals|length > 1 %}{{ apply_all_form(asset.id, proposals|length, asset.id) }}{% endif %}
+    {% for p in proposals %}{{ proposal_card(p, asset.id) }}{% endfor %}
+  </div>
+  {% endif %}
+
+  {% for group in other_asset_proposals %}
+  <div class="proposal-list other-asset-group">
+    <div class="other-asset-heading">Also proposed &mdash;
+      <a href="/assets/{{ group.asset.id }}">{{ group.asset.hostname or group.asset.model or ("Asset #" ~ group.asset.id) }}</a>
+      <span class="hint">(uploaded from this page)</span>
+    </div>
+    {% if group.proposals|length > 1 %}{{ apply_all_form(group.asset.id, group.proposals|length, asset.id) }}{% endif %}
+    {% for p in group.proposals %}{{ proposal_card(p, asset.id) }}{% endfor %}
+  </div>
+  {% endfor %}
+
+  <div class="chat-transcript">
+    {% for m in transcript %}
+    <div class="chat-message chat-{{ m.role }}">
+      <div class="chat-role">{{ "You" if m.role == "user" else "Claude" }}</div>
+      {% if m.text %}<div class="chat-text">{{ m.text }}</div>{% endif %}
+      {% for tc in m.tool_calls %}
+      <div class="chat-tool-call">{{ tc }}</div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="hint">Ask about this asset -- e.g. "is this the same device as asset #12?" or "what room is this speaker in?"</p>
+    {% endfor %}
+  </div>
+
+  <form method="post" action="/assets/{{ asset.id }}/chat" class="chat-form"
+        enctype="multipart/form-data"
+        hx-post="/assets/{{ asset.id }}/chat" hx-encoding="multipart/form-data"
+        hx-target="#chat-panel" hx-swap="outerHTML"
+        hx-indicator="#chat-spinner" hx-disabled-elt="find button, find textarea">
+    <textarea name="message" placeholder="Ask Claude about this asset..."></textarea>
+    <input type="file" name="files" multiple
+           accept="image/jpeg,image/png,image/webp,image/gif,application/pdf">
+    <p class="hint">Attach a receipt, screenshot, or warranty PDF -- up to 5 files, 15MB each. Analyzed once, not stored. An invoice covering several devices can update them all &mdash; the extra assets appear under &ldquo;Also proposed&rdquo; above.</p>
+    <div class="chat-form-actions">
+      <button type="submit">Ask Claude</button>
+      <span id="chat-spinner" class="htmx-indicator">Thinking…</span>
+    </div>
+  </form>
+  {% if transcript %}
+  <form method="post" action="/assets/{{ asset.id }}/chat/clear"
+        hx-post="/assets/{{ asset.id }}/chat/clear" hx-target="#chat-panel" hx-swap="outerHTML"
+        onsubmit="return confirm('Clear this conversation?')">
+    <button type="submit" class="link-button">Clear chat</button>
+  </form>
+  {% endif %}
+{% endif %}
+</div>

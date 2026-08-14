@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit" if asset else "New" }} Asset{% endblock %}
+{% block content %}
+<h2>{{ "Edit" if asset else "New" }} Asset</h2>
+<form method="post" class="asset-form">
+  <label>Hostname
+    <input type="text" name="hostname" value="{{ (asset.hostname or '') if asset else '' }}">
+  </label>
+  <label class="checkbox">
+    <input type="checkbox" name="hostname_locked" {% if asset and asset.hostname_locked %}checked{% endif %}>
+    Lock hostname (prevents discovery from overwriting it, e.g. for a device UniFi can't rename)
+  </label>
+  <label>Vendor / OEM
+    <input type="text" name="vendor" value="{{ (asset.vendor or '') if asset else '' }}">
+  </label>
+  <label class="checkbox">
+    <input type="checkbox" name="vendor_locked" {% if asset and asset.vendor_locked %}checked{% endif %}>
+    Lock vendor (prevents discovery from overwriting it, e.g. if the guess was wrong)
+  </label>
+  <label>Model
+    <input type="text" name="model" value="{{ (asset.model or '') if asset else '' }}">
+  </label>
+  <label>Model number <span class="hint">(e.g. Apple's "MGNR3B/A" or a UniFi SKU like "UDRULT")</span>
+    <input type="text" name="model_number" value="{{ (asset.model_number or '') if asset else '' }}">
+  </label>
+  <label>Model identifier <span class="hint">(e.g. Apple's "Macmini9,1")</span>
+    <input type="text" name="model_identifier" value="{{ (asset.model_identifier or '') if asset else '' }}">
+  </label>
+  <label>Serial number
+    <input type="text" name="serial_number" value="{{ (asset.serial_number or '') if asset else '' }}">
+  </label>
+  <label class="checkbox">
+    <input type="checkbox" name="identity_locked" {% if asset and asset.identity_locked %}checked{% endif %}>
+    Lock identity (prevents discovery from overwriting serial number, model number and model identifier)
+  </label>
+  <label>Purchase date
+    <input type="date" name="purchase_date" value="{{ asset.purchase_date or '' if asset else '' }}">
+  </label>
+  <label>Purchase price (£)
+    <input type="number" step="0.01" min="0" name="purchase_price" value="{{ asset.purchase_price if asset and asset.purchase_price is not none else '' }}">
+  </label>
+  <label>Warranty expiry
+    <input type="date" name="warranty_expiry" value="{{ asset.warranty_expiry or '' if asset else '' }}">
+  </label>
+  <label>Replacement value (£) <span class="hint">(for insurance purposes)</span>
+    <input type="number" step="0.01" min="0" name="replacement_value" value="{{ asset.replacement_value if asset and asset.replacement_value is not none else '' }}">
+  </label>
+  <label>Asset type
+    <select name="asset_type">
+      {% for t in asset_types %}
+        <option value="{{ t }}" {% if asset and asset.asset_type.value == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Owner
+    <input type="text" name="owner" value="{{ (asset.owner or '') if asset else '' }}">
+  </label>
+  <label>Custodian
+    <input type="text" name="custodian" value="{{ (asset.custodian or '') if asset else '' }}">
+  </label>
+  <label>Criticality
+    <select name="criticality">
+      {% for c in criticalities %}
+        <option value="{{ c }}" {% if (asset and asset.criticality.value == c) or (not asset and c == "medium") %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Classification
+    <input type="text" name="classification" value="{{ (asset.classification or '') if asset else '' }}">
+  </label>
+  <label>Lifecycle status
+    <select name="lifecycle_status">
+      {% for s in lifecycle_statuses %}
+        <option value="{{ s }}" {% if (asset and asset.lifecycle_status.value == s) or (not asset and s == "active") %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="checkbox">
+    <input type="checkbox" name="is_internet_facing" {% if asset and asset.is_internet_facing %}checked{% endif %}>
+    Internet-facing
+  </label>
+  <label>Location
+    <select name="location_id">
+      <option value="">—</option>
+      {% for loc in locations %}
+        <option value="{{ loc.id }}" {% if asset and asset.location_id == loc.id %}selected{% endif %}>{{ loc.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Position <span class="hint">(e.g. "socket behind the sofa")</span>
+    <input type="text" name="position" value="{{ (asset.position or '') if asset else '' }}">
+  </label>
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

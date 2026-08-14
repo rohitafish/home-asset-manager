@@ -1,0 +1,5 @@
+<div class="metric-card" id="asset-count-badge"
+     hx-get="/assets/count-badge" hx-trigger="every 5s" hx-swap="outerHTML">
+  <div class="value">{{ total_count }}</div>
+  <div class="label">Total assets</div>
+</div>

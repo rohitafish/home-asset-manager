@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Vulnerabilities{% endblock %}
+{% block content %}
+<h2>Vulnerability Register</h2>
+<form method="get" class="filters">
+  <select name="status" onchange="this.form.submit()">
+    <option value="">All statuses</option>
+    {% for s in finding_statuses %}
+      <option value="{{ s }}" {% if s == status_filter %}selected{% endif %}>{{ s }}</option>
+    {% endfor %}
+  </select>
+</form>
+
+<table>
+  <thead>
+    <tr>
+      <th>Severity</th><th>Asset</th><th>CVE / Title</th><th>Exposure</th>
+      <th>Detected</th><th>SLA due</th><th>Status</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in findings %}
+    {% set asset = assets_by_id.get(f.asset_id) %}
+    {% set vuln = vulns_by_id.get(f.vulnerability_id) if f.vulnerability_id else None %}
+    {% set overdue = f.sla_due_date and f.sla_due_date < now and f.status.value == "open" %}
+    <tr class="crit-{{ f.severity.value }}{% if overdue %} overdue{% endif %}">
+      <td>{{ f.severity.value }}</td>
+      <td>{% if asset %}<a href="/assets/{{ asset.id }}">{{ asset.hostname or ("Asset #" ~ asset.id) }}</a>{% else %}—{% endif %}</td>
+      <td>
+        {% if vuln %}
+          {{ vuln.cve_id }}{% if vuln.kev_flag %} <strong>(KEV)</strong>{% endif %}
+          <br><small>{{ (vuln.description or "")[:120] }}</small>
+        {% else %}
+          {{ f.ad_hoc_title or "—" }}
+        {% endif %}
+      </td>
+      <td>{{ f.exposure.value }}</td>
+      <td>{{ f.detected_date|localdt("%Y-%m-%d") }}</td>
+      <td>
+        {{ f.sla_due_date|localdt("%Y-%m-%d") }}
+        {% if overdue %}<strong>OVERDUE</strong>{% endif %}
+      </td>
+      <td>{{ f.status.value }}</td>
+      <td>
+        <form method="post" action="/findings/{{ f.id }}/status">
+          <select name="status" onchange="this.form.submit()">
+            {% for s in finding_statuses %}
+              <option value="{{ s }}" {% if s == f.status.value %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8">No findings. Run discovery + "Check for vulnerabilities" from the Discovery page.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
