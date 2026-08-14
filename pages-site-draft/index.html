@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Asset &amp; Vulnerability Management</title>
+<meta name="description" content="A self-hosted, LAN-only asset inventory and lightweight vulnerability manager for a home network — discovery, insurance valuations, best-effort CVE matching, and an AI assistant that only ever proposes changes.">
+
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-alt: #f6f8fa;
+    --fg: #1b1f24;
+    --fg-muted: #57606a;
+    --border: #d0d7de;
+    --accent: #1a5fb4;
+    --accent-fg: #ffffff;
+    --card-bg: #ffffff;
+    --code-bg: #24292f;
+    --code-fg: #e6edf3;
+    --callout-bg: #eef6ff;
+    --callout-border: #b6d4f5;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --bg-alt: #161b22;
+      --fg: #e6edf3;
+      --fg-muted: #9198a1;
+      --border: #30363d;
+      --accent: #4c9aff;
+      --accent-fg: #0d1117;
+      --card-bg: #161b22;
+      --code-bg: #010409;
+      --code-fg: #e6edf3;
+      --callout-bg: #0d2340;
+      --callout-border: #1a4a80;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+
+  code, pre, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  a { color: var(--accent); }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* -------- Hero -------- */
+  header.hero {
+    padding: 96px 0 72px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-alt);
+  }
+  header.hero h1 {
+    font-size: clamp(2rem, 4vw, 2.8rem);
+    margin: 0 0 12px;
+    letter-spacing: -0.02em;
+  }
+  header.hero p.tagline {
+    font-size: 1.2rem;
+    color: var(--fg-muted);
+    max-width: 640px;
+    margin: 0 auto 32px;
+  }
+  .cta-row {
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .btn {
+    display: inline-block;
+    padding: 12px 22px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+    border: 1px solid var(--border);
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+  }
+  .btn-secondary {
+    background: transparent;
+    color: var(--fg);
+  }
+  .hero-shot {
+    display: block;
+    max-width: 900px;
+    width: 100%;
+    margin: 48px auto 0;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.12);
+  }
+
+  /* -------- Sections -------- */
+  section {
+    padding: 64px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  section:last-of-type { border-bottom: none; }
+  section h2 {
+    font-size: 1.7rem;
+    margin: 0 0 8px;
+    text-align: center;
+  }
+  section p.lede {
+    text-align: center;
+    color: var(--fg-muted);
+    max-width: 640px;
+    margin: 0 auto 40px;
+  }
+
+  /* -------- Problem -------- */
+  .problem p {
+    max-width: 680px;
+    margin: 0 auto 16px;
+    font-size: 1.05rem;
+  }
+
+  /* -------- Feature grid -------- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px;
+  }
+  .card h3 {
+    margin: 0 0 8px;
+    font-size: 1.05rem;
+  }
+  .card p {
+    margin: 0;
+    color: var(--fg-muted);
+    font-size: 0.95rem;
+  }
+
+  /* -------- How it works -------- */
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+  }
+  @media (max-width: 760px) {
+    .steps { grid-template-columns: 1fr; }
+  }
+  .step {
+    text-align: center;
+  }
+  .step .num {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    margin: 0 auto 12px;
+  }
+  .step h3 { margin: 0 0 6px; font-size: 1rem; }
+  .step p { margin: 0; color: var(--fg-muted); font-size: 0.9rem; }
+
+  /* -------- Screenshot placeholders -------- */
+  .shot-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+  @media (max-width: 760px) {
+    .shot-grid { grid-template-columns: 1fr; }
+  }
+  figure.shot {
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--card-bg);
+  }
+  figure.shot img {
+    display: block;
+    width: 100%;
+    height: 220px;
+    object-fit: cover;
+    object-position: top;
+    border-bottom: 1px solid var(--border);
+  }
+  figure.shot figcaption {
+    padding: 12px 16px;
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+  }
+
+  /* -------- Security callout -------- */
+  .callout {
+    background: var(--callout-bg);
+    border: 1px solid var(--callout-border);
+    border-radius: 10px;
+    padding: 28px 32px;
+  }
+  .callout h2 { text-align: left; margin-bottom: 16px; }
+  .callout ul {
+    margin: 0;
+    padding-left: 20px;
+  }
+  .callout li { margin-bottom: 8px; }
+
+  /* -------- Requirements -------- */
+  .req-list {
+    max-width: 480px;
+    margin: 0 auto;
+    list-style: none;
+    padding: 0;
+  }
+  .req-list li {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .req-list li:last-child { border-bottom: none; }
+  .req-list .label { color: var(--fg-muted); }
+
+  /* -------- Get started -------- */
+  pre.codeblock {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 22px 24px;
+    border-radius: 10px;
+    overflow-x: auto;
+    font-size: 0.88rem;
+    max-width: 680px;
+    margin: 0 auto;
+  }
+  .get-started-links {
+    text-align: center;
+    margin-top: 20px;
+  }
+
+  /* -------- Footer -------- */
+  footer {
+    padding: 40px 0 64px;
+    text-align: center;
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+  }
+  footer a { color: var(--fg-muted); }
+  footer .links {
+    margin-bottom: 16px;
+  }
+  footer .links a {
+    margin: 0 10px;
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>Home Asset &amp; Vulnerability Management</h1>
+    <p class="tagline">
+      Know what's on your network, what it's worth, and what needs attention —
+      self-hosted, LAN-only, and entirely yours.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/rohitafish/home-asset-manager">View on GitHub</a>
+      <a class="btn btn-secondary" href="https://github.com/rohitafish/home-asset-manager/wiki">Read the docs</a>
+    </div>
+    <img class="hero-shot" src="screenshots/assets-list.jpg"
+         alt="The Assets list: a sortable, filterable table of inventoried devices with type, vendor, owner, criticality, status, location, and last-seen columns.">
+  </div>
+</header>
+
+<!-- ============ The problem ============ -->
+<section class="problem">
+  <div class="wrap">
+    <h2>Your network has quietly become an estate</h2>
+    <p class="lede">Thirty, sixty, maybe a hundred devices by now — and no inventory of any of it.</p>
+    <p>
+      Smart plugs, speakers, laptops, a NAS, a couple of streaming boxes, whatever
+      the kids' phones are this year. Nobody wrote any of it down. When an
+      insurance claim needs proof of what you owned and what it cost, or a
+      vulnerability disclosure makes you wonder if it affects <em>your</em> gear,
+      there's nothing to check against — just a vague sense of "I think we have
+      one of those."
+    </p>
+    <p>
+      This app builds and maintains that record automatically, from the network
+      itself — without sending your home inventory anywhere you didn't choose to.
+    </p>
+  </div>
+</section>
+
+<!-- ============ Key features ============ -->
+<section class="features">
+  <div class="wrap">
+    <h2>What it does</h2>
+    <p class="lede">One tool, four connected jobs.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>🔍 Automated discovery</h3>
+        <p>UniFi, nmap, and Sonos collectors find what's actually on the network, on demand — nothing scans continuously in the background.</p>
+      </div>
+      <div class="card">
+        <h3>📋 A real asset register</h3>
+        <p>Vendor, model, serial, purchase price, warranty, owner, location — a proper CMDB-style record, not a spreadsheet.</p>
+      </div>
+      <div class="card">
+        <h3>💷 Insurance-ready valuations</h3>
+        <p>New-for-old replacement values, computed and kept current automatically — the figure your contents policy actually needs.</p>
+      </div>
+      <div class="card">
+        <h3>🛡️ Best-effort vulnerability matching</h3>
+        <p>Detected service versions checked against the NVD, FIRST EPSS, and CISA's Known Exploited Vulnerabilities catalogue.</p>
+      </div>
+      <div class="card">
+        <h3>🤖 An AI assistant that proposes, never writes</h3>
+        <p>Ask it questions, hand it a receipt — every suggested change is a draft you explicitly approve. It can't edit your inventory on its own.</p>
+      </div>
+      <div class="card">
+        <h3>🔗 Duplicate detection, done right</h3>
+        <p>Links a device's wired and wireless NICs non-destructively; separately, a dedicated page merges genuine duplicate rows.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ How it works ============ -->
+<section class="how">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="lede">Four steps, and you're always the one who approves a change.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="num">1</div>
+        <h3>Discover</h3>
+        <p>Trigger a UniFi, nmap, or Sonos scan whenever you want.</p>
+      </div>
+      <div class="step">
+        <div class="num">2</div>
+        <h3>Correlate</h3>
+        <p>Devices are reconciled and matched across sources automatically.</p>
+      </div>
+      <div class="step">
+        <div class="num">3</div>
+        <h3>Review &amp; approve</h3>
+        <p>Every AI-suggested change waits as a draft until you click Apply.</p>
+      </div>
+      <div class="step">
+        <div class="num">4</div>
+        <h3>Track</h3>
+        <p>Valuations, warranties, and vulnerability findings stay current.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Screenshots ============ -->
+<section class="screenshots">
+  <div class="wrap">
+    <h2>See it in action</h2>
+    <p class="lede">
+      Captured from fabricated demo data — no real household inventory appears
+      anywhere on this site.
+    </p>
+    <div class="shot-grid">
+      <figure class="shot">
+        <img src="screenshots/assets-list.jpg" alt="The Assets list: a sortable, filterable inventory table.">
+        <figcaption>Assets list — sortable, filterable inventory</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="screenshots/asset-detail-chat.jpg" alt="An asset detail page with the AI assistant's chat panel open, showing a pending proposal to set the model number, with Apply and Discard buttons.">
+        <figcaption>Asset detail + chat panel — the AI assistant proposing a change</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="screenshots/discovery-run.jpg" alt="The Discovery page's run history table, showing completed UniFi, nmap, and Sonos household runs with summaries.">
+        <figcaption>Discovery run history — collector summaries</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="screenshots/investigate-duplicates.jpg" alt="The Investigate page showing a scored same-device candidate pair with a score breakdown and a Link as same device button.">
+        <figcaption>Same-device review — non-destructive linking, with a visible score breakdown</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Security & privacy ============ -->
+<section class="security">
+  <div class="wrap">
+    <div class="callout">
+      <h2>Built to stay on your LAN</h2>
+      <ul>
+        <li><strong>No port is ever forwarded.</strong> The whole dashboard sits behind HTTP Basic auth, reachable only from your own network.</li>
+        <li><strong>CSRF and brute-force protections</strong> on every state-changing request, not just the login form.</li>
+        <li><strong>SSRF-hardened probes</strong> — a device answering a discovery probe can't redirect the app to fetch an internal URL on its behalf.</li>
+        <li><strong>The AI assistant is opt-in and sandboxed.</strong> No API key, no assistant. Device-reported data is explicitly wrapped as untrusted before it ever reaches the model.</li>
+        <li><strong>Every push is scanned</strong> for secrets and personal data before it reaches this repository, both locally and in CI.</li>
+      </ul>
+      <p style="margin: 20px 0 0;">
+        <a href="https://github.com/rohitafish/home-asset-manager/wiki/Security-Model">Read the full security model →</a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Requirements ============ -->
+<section class="requirements">
+  <div class="wrap">
+    <h2>Requirements</h2>
+    <p class="lede">Stated upfront, on purpose — better to know now than after setup.</p>
+    <ul class="req-list">
+      <li><span class="label">Operating system</span> <span>macOS</span></li>
+      <li><span class="label">Network</span> <span>A Ubiquiti UniFi network (controller or UDM/Cloud Gateway)</span></li>
+      <li><span class="label">Scale</span> <span>A home network — tens of devices, not hundreds</span></li>
+      <li><span class="label">Database</span> <span>Postgres via Docker/Colima (bundled)</span></li>
+      <li><span class="label">AI assistant</span> <span>Optional — needs an Anthropic or OpenRouter API key</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ Get started ============ -->
+<section class="get-started">
+  <div class="wrap">
+    <h2>Get started</h2>
+    <p class="lede">The short version. The README has the full walkthrough.</p>
+    <pre class="codeblock"><code>brew install colima docker docker-compose nmap awscli
+brew services start colima
+
+git clone https://github.com/rohitafish/home-asset-manager.git
+cd home-asset-manager
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env        # then set APP_ADMIN_PASSWORD, UNIFI_*, SCAN_SUBNETS
+docker compose up -d db
+alembic upgrade head
+
+uvicorn app.main:app --reload</code></pre>
+    <div class="get-started-links">
+      <a href="https://github.com/rohitafish/home-asset-manager#one-time-setup">Full setup guide →</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/rohitafish/home-asset-manager">Source</a>
+      <a href="https://github.com/rohitafish/home-asset-manager/wiki">Wiki</a>
+      <a href="https://github.com/rohitafish/home-asset-manager/issues">Issues</a>
+      <a href="https://github.com/rohitafish/home-asset-manager/security/policy">Report a vulnerability</a>
+      <a href="https://github.com/rohitafish/home-asset-manager/blob/main/LICENSE">MIT Licence</a>
+    </div>
+    <p>
+      Not affiliated with or endorsed by Ubiquiti, Sonos, TP-Link, or Apple.
+      Product names are used only to describe compatibility.
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>
