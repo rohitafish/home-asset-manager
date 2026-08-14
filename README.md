@@ -100,7 +100,7 @@ brew services start colima
 # land there some other way (verified), but it's past its own upstream
 # end-of-life (Oct 2025) -- not the target to aim for. `./scripts/preflight.sh`
 # below checks which one you're actually on.
-cd assetmgt   # wherever you cloned this repo
+cd home-asset-manager   # wherever you cloned this repo
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -780,8 +780,8 @@ knowing before you're deep into this:
 ### 2. Clone and configure
 
 ```bash
-git clone https://github.com/rohitafish/assetmgt.git
-cd assetmgt
+git clone https://github.com/rohitafish/home-asset-manager.git
+cd home-asset-manager
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
