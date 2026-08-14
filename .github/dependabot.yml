@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Python dependencies (requirements.txt / requirements-dev.txt at the root).
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # The GitHub Actions used by the CI workflow.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
