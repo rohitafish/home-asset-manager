@@ -319,7 +319,10 @@ assistant or human contributor.
 - This repo has its own git identity, scoped locally (not global): commits
   are authored as `rohitafish <25867278+rohitafish@users.noreply.github.com>`,
   not the user's real name — keep it that way for anything pushed publicly.
-- Remote: `origin` → `https://github.com/rohitafish/assetmgt` (private).
+- Remote: `origin` → `https://github.com/rohitafish/home-asset-manager` — the
+  canonical repo. (The original repo, `rohitafish/assetmgt`, was renamed to
+  `assetmgt-archive` and kept private as a full-history backup when this repo
+  was started fresh from a clean baseline; never publish or push to it.)
 - Committing after a verified fix/feature (tested locally, deployed, spot-checked
   on the Mini) is the norm for this project — no need to ask first. Pushing to
   GitHub is different: only push when explicitly asked, never proactively just
