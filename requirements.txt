@@ -1,6 +1,6 @@
 fastapi>=0.115
 uvicorn[standard]>=0.32
-sqlmodel>=0.0.22
+sqlmodel>=0.0.39
 alembic>=1.14
 psycopg[binary]>=3.2
 python-dotenv>=1.0
