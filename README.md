@@ -1,5 +1,7 @@
 # Home Asset & Vulnerability Management
 
+**[Project site](https://rohitafish.github.io/home-asset-manager/) · [Wiki](https://github.com/rohitafish/home-asset-manager/wiki)**
+
 A CMDB-style asset inventory + lightweight vulnerability management tool,
 built for asset and vulnerability management at small scale (a home network),
 scaled down from the enterprise-grade practices that inspired it.
@@ -1515,6 +1517,10 @@ treating it as real.
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md), and read its
 privacy section before your first commit. To report a security vulnerability,
 follow [SECURITY.md](SECURITY.md) rather than opening a public issue.
+
+For deeper documentation than this README carries — architecture, the security
+model, a full configuration reference, and more — see the
+[wiki](https://github.com/rohitafish/home-asset-manager/wiki).
 
 ## Licence
 
