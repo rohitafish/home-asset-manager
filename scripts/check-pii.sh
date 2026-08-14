@@ -288,9 +288,28 @@ fi
 # Note the second entry: writing a literal here puts that dotted quad into
 # this file too, so the allowlist has to cover its own source or the check
 # reports itself. That's honest rather than circular -- the entry is still
-# file-scoped, so these digits anywhere else are still flagged.
+# file-scoped, so these digits anywhere else are still flagged. The third
+# entry is the same Sonos version string again, quoted as a Python constant
+# in test_check_pii.py's own fixture data (see that file's ALLOWLISTED_VALUE)
+# -- same value, same reasoning, just a third file it happens to appear in.
+#
+# The next two entries are a different case: genuine IP addresses (not
+# lookalikes like 1.9.1.10 above), but standard, reserved, or well-known
+# public ones used deliberately as test fixtures -- 8.8.8.8 is Google Public
+# DNS (test_sonos_api.py's SSRF-guard test uses it as an obvious "reject this
+# public address" case); 203.0.113.7 is inside 203.0.113.0/24, the IANA
+# TEST-NET-3 block reserved by RFC 5737 specifically for documentation/
+# examples and never assignable to a real host (test_check_pii.py's own
+# fixture data, confirming the "genuine public address" WARN path still
+# fires). Neither can be a real home IP.
 IP_ALLOWLIST='tests/test_sonos_api.py|1.9.1.10
-scripts/check-pii.sh|1.9.1.10'
+scripts/check-pii.sh|1.9.1.10
+tests/test_check_pii.py|1.9.1.10
+tests/test_sonos_api.py|8.8.8.8
+tests/test_check_pii.py|203.0.113.7
+scripts/check-pii.sh|8.8.8.8
+scripts/check-pii.sh|203.0.113.7
+scripts/check-pii.sh|203.0.113.0'
 
 # Non-private IPv4 addresses -- WARN not FAIL, since a legitimate public
 # endpoint (an API host, a documentation example) can trigger this
