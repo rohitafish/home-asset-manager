@@ -115,7 +115,7 @@ they're read once, analysed, and discarded.
 - Private vulnerability reporting is enabled, so the "Report a vulnerability"
   flow linked at the bottom of this page is live, not just documented.
 - Every response carries a Content-Security-Policy, `X-Content-Type-Options:
-  nosniff`, and `Referrer-Policy: no-referrer`.
+  nosniff`, and `Referrer-Policy: same-origin`.
 - `/docs`, `/redoc`, and the OpenAPI schema are disabled — no unauthenticated
   route inventory.
 
