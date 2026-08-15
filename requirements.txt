@@ -1,13 +1,20 @@
-fastapi>=0.115
-uvicorn[standard]>=0.32
-sqlmodel>=0.0.39
-alembic>=1.14
-psycopg[binary]>=3.2
-python-dotenv>=1.0
-jinja2>=3.1
-python-multipart>=0.0.32
-httpx>=0.28.1
-typer>=0.13
-markdown>=3.10.3
-anthropic>=0.69
-defusedxml>=0.7  # safe parsing of device-supplied XML (nmap output, Sonos UPnP/SOAP)
+# Exact pins (==), not floors (>=): scripts/redeploy.sh runs `pip install -r
+# requirements.txt` on the Mini on every deploy, so a floor lets the Mini
+# silently resolve different versions than whatever was tested locally --
+# the same dev/prod drift shape as the brew-upgrade incident documented in
+# AGENTS.md's "Deployment topology". Dependabot bumps these pins the same
+# way it already bumps floors (see .github/dependabot.yml) -- exact-pin PRs
+# aren't a new workflow, just a `==` in place of a `>=` in the diff.
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+sqlmodel==0.0.39
+alembic==1.19.1
+psycopg[binary]==3.3.4
+python-dotenv==1.2.2
+jinja2==3.1.6
+python-multipart==0.0.32
+httpx==0.28.1
+typer==0.27.1
+markdown==3.10.3
+anthropic==0.122.0
+defusedxml==0.7.1  # safe parsing of device-supplied XML (nmap output, Sonos UPnP/SOAP)

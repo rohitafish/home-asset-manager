@@ -318,6 +318,14 @@ assistant or human contributor.
   labeling, device correlation/linking, dashboard helpers, and hostname/
   vendor normalization. Run it with `.venv/bin/pytest -q` (or `pytest -q`
   once the venv is activated).
+- `requirements.txt`/`requirements-dev.txt` use exact `==` pins, not floors —
+  see the header comment in `requirements.txt` for why (redeploy.sh installing
+  a floor on every deploy is the same dev/prod drift risk as the brew-upgrade
+  incident above). Not a hash-locked `pip-compile` lockfile: that would defend
+  against a tampered release, which Dependabot's alerts (0 open as of writing)
+  don't cover, at the cost of `redeploy.sh` needing `--require-hashes` and
+  every Dependabot PR needing the lock regenerated. Exact pins remove the
+  drift risk with neither cost.
 - Dependencies are in `requirements-dev.txt`, not `requirements.txt` —
   `scripts/redeploy.sh` only installs the latter, so a *fresh* checkout
   anywhere (including a from-scratch Mini rebuild) starts without pytest.
@@ -388,6 +396,21 @@ assistant or human contributor.
     both directions: `git push --force-with-lease` to `main` is rejected
     outright, a normal push still goes through without a PR (the
     `protect-main` bypass above still applies to it).
+- **Repo-level security settings** (`Settings` → `Code security`, or the
+  equivalent `gh api repos/.../...` calls): private vulnerability reporting is
+  **on** — `SECURITY.md` points reporters at GitHub's "Report a vulnerability"
+  button, so this has to be enabled for that button to actually exist.
+  `sha_pinning_required` is **on** for Actions, and both workflow steps in
+  `ci.yml` are pinned to a commit SHA (with a trailing `# vX.Y.Z` comment for
+  readability) rather than a mutable tag like `@v7` — Dependabot updates SHA
+  pins the same way it updates version tags, so this doesn't add a manual step.
+  Secret scanning's two extra toggles (`secret_scanning_non_provider_patterns`,
+  generic/non-provider secret patterns; `secret_scanning_validity_checks`,
+  whether a found token is still live) do **not** turn on via the API for this
+  repo — `PATCH .../repos/{owner}/{repo}` returns `200 OK` but silently leaves
+  both `disabled`, which is consistent with a plan-gated feature rather than a
+  bug; unconfirmed whether that's tied to the account plan. Revisit from the
+  Settings UI, which may explain the gate the API doesn't.
 - Committing after a verified fix/feature (tested locally, deployed, spot-checked
   on the Mini) is the norm for this project — no need to ask first. Pushing to
   GitHub is different: only push when explicitly asked, never proactively just
