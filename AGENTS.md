@@ -606,6 +606,24 @@ assistant or human contributor.
 - If a change also affects deployment steps, gotchas, or gets learned the
   hard way, update *this* file too, not just README — this is what a fresh
   session (agent or human) should read first.
+- **The GitHub Wiki is a separate git repo** —
+  `https://github.com/rohitafish/home-asset-manager.wiki.git` — not part of
+  this repo's history or working tree. `wiki-drafts/*.md` here is the
+  editable *source*; editing it does **nothing** to the live wiki until it's
+  separately published, and the two can silently drift exactly like
+  `wiki-drafts/Security-Model.md` once did (drafted before this session's
+  signing/rulesets/headers/exact-pins work, never updated after). To
+  publish a change: clone the wiki repo to a scratch dir (`git clone
+  https://github.com/rohitafish/home-asset-manager.wiki.git`), copy the
+  updated file(s) from `wiki-drafts/` over the matching page(s) (filenames
+  map 1:1, e.g. `Security-Model.md` → the wiki's Security Model page),
+  commit, push, then delete the scratch clone — same commands as any repo,
+  no special tooling. Pushing here publishes immediately with no PR/review
+  gate, so treat it like any other publish-to-a-public-place action (confirm
+  before pushing). Whenever a change here also changes something a wiki page
+  claims — a security control, an architecture detail, a config key — check
+  `wiki-drafts/` for a page that needs the same update, the same way README/
+  AGENTS.md updates are already expected above.
 
 ## Asset-child tables (cascade deletion)
 - There's no `ON DELETE CASCADE` on any FK pointing at `asset.id`, so

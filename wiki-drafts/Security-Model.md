@@ -98,9 +98,24 @@ they're read once, analysed, and discarded.
 ## Supply chain & repo hygiene
 
 - CI runs `ruff` (lint) and the full test suite on every push and pull
-  request, plus a PII/secret scan (see below) as a server-side backstop.
+  request, plus a PII/secret scan (see below) as a server-side backstop. The
+  two CI actions are pinned to a commit SHA, not a mutable version tag —
+  GitHub's `sha_pinning_required` is on for this repo, so an unpinned action
+  can't creep back in.
 - Dependabot watches both the Python dependencies and the GitHub Actions used
-  by CI.
+  by CI. `requirements.txt`/`requirements-dev.txt` use exact `==` pins, not
+  floors — the deployed instance installs from the same file on every
+  deploy, so a floor would let it silently resolve different versions than
+  whatever was actually tested.
+- Commits to `main` must be signed, enforced server-side with **no bypass
+  actor** — this applies even to the repo owner, on any machine. A separate
+  ruleset also blocks force-pushes and branch deletion on `main`, again with
+  no bypass — the two operations that could otherwise rewrite or destroy the
+  repo's history outright.
+- Private vulnerability reporting is enabled, so the "Report a vulnerability"
+  flow linked at the bottom of this page is live, not just documented.
+- Every response carries a Content-Security-Policy, `X-Content-Type-Options:
+  nosniff`, and `Referrer-Policy: no-referrer`.
 - `/docs`, `/redoc`, and the OpenAPI schema are disabled — no unauthenticated
   route inventory.
 

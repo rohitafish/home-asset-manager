@@ -439,6 +439,7 @@
         <li><strong>SSRF-hardened probes</strong> — a device answering a discovery probe can't redirect the app to fetch an internal URL on its behalf.</li>
         <li><strong>The AI assistant is opt-in and sandboxed.</strong> No API key, no assistant. Device-reported data is explicitly wrapped as untrusted before it ever reaches the model.</li>
         <li><strong>Every push is scanned</strong> for secrets and personal data before it reaches this repository, both locally and in CI.</li>
+        <li><strong>Every commit on <code>main</code> must be signed</strong> — enforced server-side with no bypass, even for the repo owner. History can't be force-pushed or deleted either.</li>
       </ul>
       <p style="margin: 20px 0 0;">
         <a href="https://github.com/rohitafish/home-asset-manager/wiki/Security-Model">Read the full security model →</a>
