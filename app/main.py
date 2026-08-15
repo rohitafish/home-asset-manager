@@ -41,7 +41,25 @@ _SECURITY_HEADERS = {
         "object-src 'none'"
     ),
     "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "no-referrer",
+    # NOT "no-referrer": per the Fetch spec (confirmed against real traffic --
+    # see the incident this comment replaces below), a browser honoring
+    # "no-referrer" sends Origin: null on an HTML form POST, even a same-
+    # origin one -- indistinguishable from the literal signature a sandboxed-
+    # iframe/data: URI CSRF bypass produces, so app/auth.py's
+    # require_same_origin correctly rejects it. That broke every plain form
+    # submission in this app, for every standards-compliant browser,
+    # regardless of extensions/OS security software -- traced via a live
+    # user report, reproduced against the exact captured header set
+    # (Origin: null, no Referer, no Sec-Fetch-Site) both against a local
+    # instance and confirmed byte-for-byte on the deployed one via temporary
+    # server-side logging. "same-origin" doesn't null Origin for a same-
+    # origin request (there's no cross-origin/downgrade case here to omit
+    # it for), so the CSRF guard keeps working, and it's still at least as
+    # private as leaving this header unset -- the browser default
+    # ("strict-origin-when-cross-origin") would send the app's origin to any
+    # external link clicked from inside it (e.g. from the in-app README
+    # view); "same-origin" sends nothing at all cross-origin instead.
+    "Referrer-Policy": "same-origin",
 }
 
 

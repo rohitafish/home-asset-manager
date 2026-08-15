@@ -14,12 +14,25 @@ from app.main import _apply_security_headers
 def test_applies_all_security_headers():
     response = _apply_security_headers(Response())
     assert response.headers["X-Content-Type-Options"] == "nosniff"
-    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["Referrer-Policy"] == "same-origin"
 
     csp = response.headers["Content-Security-Policy"]
     assert "frame-ancestors 'none'" in csp
     assert "object-src 'none'" in csp
     assert "default-src 'self'" in csp
+
+
+def test_referrer_policy_is_not_no_referrer():
+    """Regression test: a browser honoring "no-referrer" sends Origin: null
+    on an HTML form POST, even a same-origin one (Fetch spec) -- which
+    app/auth.py's require_same_origin then rejects, since it's the same
+    signature a sandboxed-iframe/data: URI CSRF bypass produces. This broke
+    every plain form submission in the app for every standards-compliant
+    browser (traced via a live user report, reproduced with the exact
+    captured header set both locally and against the deployed instance).
+    Pinned here so "no-referrer" can't quietly come back as a
+    privacy-tightening edit without someone re-reading this history."""
+    assert _apply_security_headers(Response()).headers["Referrer-Policy"] != "no-referrer"
 
 
 def test_csp_permits_self_hosted_inline_script_and_style():
