@@ -65,6 +65,10 @@
       {% endfor %}
     </select>
   </label>
+  <label class="checkbox">
+    <input type="checkbox" name="is_valuable" {% if not asset or asset.is_valuable %}checked{% endif %}>
+    Show on the Valuables page (uncheck for something not worth insuring, even if it's high criticality)
+  </label>
   <label>Classification
     <input type="text" name="classification" value="{{ (asset.classification or '') if asset else '' }}">
   </label>
