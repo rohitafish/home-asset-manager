@@ -366,6 +366,28 @@ assistant or human contributor.
   no-op for direct pushes. Confirmed by testing both directions: an unsigned
   push is rejected outright (`GH013: ... Commits must have verified
   signatures`), a signed one goes through normally.
+- Three rulesets total, split deliberately by whether the repo owner should
+  be able to bypass them:
+  - `protect-main` (`pull_request`, `required_status_checks`) — **Admin-role
+    bypass, always.** Kept bypassable on purpose: `required_approving_review_count`
+    is 0, so the PR rule buys no actual review on a solo repo, only ceremony;
+    CI already runs on `push: [main]` too, so a direct push still gets
+    checked, just after the fact instead of blocking it. This is where an
+    external contributor's PR is enforced — see "Submitting a change" in
+    CONTRIBUTING.md — since only the owner has the bypass.
+  - `require-signed-commits` (`required_signatures`) and
+    `protect-main-history` (`deletion`, `non_fast_forward`) — **no bypass
+    actor, for anyone.** Both guard something with no undo: an unsigned
+    commit landing on `main`, or `main`'s history itself being force-pushed
+    or the branch deleted outright. `deletion`/`non_fast_forward` used to
+    live in `protect-main` with everything else, which made them silently
+    advisory for the owner via the same bypass that makes the PR rule
+    convenient to skip — split out once that was noticed, since "the admin
+    can still destroy history" is exactly the wrong property for a repo
+    whose own history is the product of a PII rewrite. Confirmed by testing
+    both directions: `git push --force-with-lease` to `main` is rejected
+    outright, a normal push still goes through without a PR (the
+    `protect-main` bypass above still applies to it).
 - Committing after a verified fix/feature (tested locally, deployed, spot-checked
   on the Mini) is the norm for this project — no need to ask first. Pushing to
   GitHub is different: only push when explicitly asked, never proactively just
