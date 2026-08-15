@@ -1,8 +1,9 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.backup_status import backup_status
 from app.clock import utcnow_naive
@@ -10,6 +11,56 @@ from app.db import engine
 from app.logging_config import configure_logging
 from app.models import DiscoveryRun
 from app.routers import assets, dashboard
+
+# Response headers applied to every request, not just the require_admin
+# routers -- /health is unauthenticated by design (redeploy.sh's deploy gate,
+# launchd), and these are cheap insurance regardless of auth state.
+#
+# script-src/style-src keep 'unsafe-inline': the templates have a handful of
+# inline onclick/onchange/onsubmit handlers (form auto-submit on filter
+# change, delete/clear confirm() dialogs) and no external stylesheet. Moving
+# those into app/static/ would allow dropping 'unsafe-inline' from script-src,
+# but there's no untrusted-HTML rendering path for it to actually defend
+# against here -- the only |safe template output is the app's own README
+# (see app/readme_render.py's SECURITY INVARIANT comment), and htmx is
+# self-hosted (app/static/htmx.min.js), not pulled from a CDN. What this CSP
+# does earn regardless of 'unsafe-inline': no *externally hosted* script can
+# load, no framing, no <base> tag hijack, no form POST to another origin.
+#
+# frame-ancestors 'none' supersedes X-Frame-Options in every browser this
+# dashboard is used from, so only one of the two is set.
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "frame-ancestors 'none'; "
+        "base-uri 'none'; "
+        "form-action 'self'; "
+        "object-src 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+def _apply_security_headers(response: Response) -> Response:
+    """Split out from the middleware below so it's unit-testable against a
+    plain Response, the same way app/auth.py's require_admin/
+    require_same_origin are tested as callables rather than through a live
+    app (see tests/test_auth.py's docstring -- this app has no route-level
+    TestClient)."""
+    for name, value in _SECURITY_HEADERS.items():
+        response.headers[name] = value
+    return response
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        return _apply_security_headers(response)
+
 
 # docs/redoc/openapi are disabled: they sit outside the require_admin routers
 # and would otherwise hand the full route inventory to any unauthenticated LAN
@@ -21,6 +72,7 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+app.add_middleware(SecurityHeadersMiddleware)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(assets.router)
 app.include_router(dashboard.router)
