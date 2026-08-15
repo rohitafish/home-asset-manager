@@ -99,6 +99,20 @@ assistant or human contributor.
   deliberately **not** pinned, since that would just forfeit interpreter
   security patches while postponing this same failure mode to whenever it's
   eventually unpinned -- the restart discipline above is the actual fix.
+  **This isn't inconsistent with pinning `requirements.txt`'s pip packages
+  exactly (below) -- both follow the same rule, applied to two different risk
+  shapes.** The rule: freeze whatever would otherwise drift silently and
+  *frequently*, with no review step in between; don't freeze something whose
+  actual risk was already fixed at the root, since freezing it there only
+  costs you patches for nothing. `colima`'s and `python@3.x`'s upgrade path is
+  a rare, manual `brew upgrade` -- for `python@3.x` specifically, the real
+  failure mode (a running process losing files mid-upgrade) is what
+  `mini-brew-upgrade.sh` fixes directly, so pinning the version would be
+  treating a symptom. `requirements.txt`'s upgrade path is `pip install -r
+  requirements.txt` on **every deploy**, far more frequent and with no test
+  gate of its own -- pinning it forces every version change through a
+  reviewed Dependabot PR + CI run first, and Dependabot still delivers the
+  patches either way, just on a reviewed path instead of an unattended one.
 - Post-reboot sluggishness on the Mini is **not** this app: measured, the app
   process runs ~0.1% CPU/mem and Colima's VM support processes ~0% CPU. What
   actually spikes after an unclean shutdown is macOS's own housekeeping
@@ -321,11 +335,13 @@ assistant or human contributor.
 - `requirements.txt`/`requirements-dev.txt` use exact `==` pins, not floors —
   see the header comment in `requirements.txt` for why (redeploy.sh installing
   a floor on every deploy is the same dev/prod drift risk as the brew-upgrade
-  incident above). Not a hash-locked `pip-compile` lockfile: that would defend
-  against a tampered release, which Dependabot's alerts (0 open as of writing)
-  don't cover, at the cost of `redeploy.sh` needing `--require-hashes` and
-  every Dependabot PR needing the lock regenerated. Exact pins remove the
-  drift risk with neither cost.
+  incident above), and the brew-upgrade bullet above for why this isn't
+  inconsistent with leaving `python@3.x` itself unpinned -- same rule, two
+  different risk shapes. Not a hash-locked `pip-compile` lockfile: that would
+  defend against a tampered release, which Dependabot's alerts (0 open as of
+  writing) don't cover, at the cost of `redeploy.sh` needing
+  `--require-hashes` and every Dependabot PR needing the lock regenerated.
+  Exact pins remove the drift risk with neither cost.
 - Dependencies are in `requirements-dev.txt`, not `requirements.txt` —
   `scripts/redeploy.sh` only installs the latter, so a *fresh* checkout
   anywhere (including a from-scratch Mini rebuild) starts without pytest.
