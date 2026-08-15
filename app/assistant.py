@@ -24,6 +24,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
+from app.asset_search import asset_search_filter
 from app.clock import utcnow_naive
 from app.correlate import link_assets
 from app.models import (
@@ -425,11 +426,8 @@ def _record_proposal(
 
 
 def _tool_search_assets(session: Session, query: str) -> Any:
-    like = f"%{query}%"
     assets = session.exec(
-        select(Asset).where(
-            (Asset.hostname.ilike(like)) | (Asset.vendor.ilike(like)) | (Asset.owner.ilike(like))
-        ).limit(20)
+        select(Asset).where(asset_search_filter(query)).limit(20)
     ).all()
     return [
         {"id": a.id, "hostname": a.hostname, "asset_type": a.asset_type.value, "vendor": a.vendor}

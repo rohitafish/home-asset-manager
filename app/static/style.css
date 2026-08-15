@@ -45,6 +45,8 @@ a.sort-link:hover { text-decoration: underline; }
 .button-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
 .button-row:last-of-type { margin-bottom: 1rem; }
 .filters select { margin-right: 0.5rem; }
+.filters input[type="search"] { margin-right: 0.5rem; padding: 0.3rem; border: 1px solid #ccc; border-radius: 4px; }
+.filters a { margin-left: 0.25rem; font-size: 0.9rem; }
 
 .button, button {
   background: #1f3864; color: white; border: none; padding: 0.4rem 0.9rem;

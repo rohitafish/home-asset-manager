@@ -8,6 +8,7 @@
     'criticality': filters.criticality,
     'lifecycle_status': filters.lifecycle_status,
     'location_id': filters.location_id,
+    'q': filters.q,
     'sort': key,
     'direction': next_dir,
   } %}
@@ -43,6 +44,9 @@
         <option value="{{ loc.id }}" {% if filters.location_id == loc.id|string %}selected{% endif %}>{{ loc.name }}</option>
       {% endfor %}
     </select>
+    <input type="search" name="q" value="{{ filters.q }}" placeholder="Search hostname, model, owner…">
+    <button type="submit">Search</button>
+    {% if filters_active %}<a href="/assets">Clear</a>{% endif %}
   </form>
   <a class="button" href="/assets/new">+ Add asset</a>
 </div>
@@ -68,7 +72,10 @@
       <td>{{ asset.last_seen|localdt }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="9">No assets yet. Add one manually or run discovery.</td></tr>
+    <tr><td colspan="9">
+      {% if filters_active %}No assets match your search/filters. <a href="/assets">Clear them</a> to see everything.
+      {% else %}No assets yet. Add one manually or run discovery.{% endif %}
+    </td></tr>
     {% endfor %}
   </tbody>
 </table>

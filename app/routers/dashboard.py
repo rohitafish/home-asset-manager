@@ -15,6 +15,7 @@ from sqlmodel import Session, select
 from app import assistant, template_filters, valuation
 from app.asset_children import delete_asset_cascade
 from app.asset_merge import merge_asset_into
+from app.asset_search import asset_search_filter
 from app.auth import require_admin, require_same_origin
 from app.backup_status import backup_age_label, backup_status
 from app.clock import utcnow_naive
@@ -251,6 +252,7 @@ def assets_list(
     criticality: str | None = None,
     lifecycle_status: str | None = None,
     location_id: str | None = None,
+    q: str | None = None,
     sort: str = "last_seen",
     direction: str = "desc",
 ):
@@ -264,6 +266,9 @@ def assets_list(
     location_filter = _parse_location_id(location_id)
     if location_filter is not None:
         query = query.where(Asset.location_id == location_filter)
+    q = (q or "").strip()
+    if q:
+        query = query.where(asset_search_filter(q))
     if sort == "location":
         # Location.name isn't a column on Asset -- outerjoin so it can be
         # sorted on directly, and outer (not inner) so assets with no
@@ -293,7 +298,11 @@ def assets_list(
                 "criticality": criticality or "",
                 "lifecycle_status": lifecycle_status or "",
                 "location_id": location_id or "",
+                "q": q,
             },
+            "filters_active": bool(
+                asset_type or criticality or lifecycle_status or location_filter or q
+            ),
             "sort": sort,
             "direction": direction if direction == "asc" else "desc",
             "total_count": total_count,
