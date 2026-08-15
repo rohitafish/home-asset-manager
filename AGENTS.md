@@ -323,6 +323,15 @@ assistant or human contributor.
   canonical repo. (The original repo, `rohitafish/assetmgt`, was renamed to
   `assetmgt-archive` and kept private as a full-history backup when this repo
   was started fresh from a clean baseline; never publish or push to it.)
+- Commits are SSH-signed, scoped locally to this repo (not `--global`, so it
+  doesn't affect other projects on this machine): `gpg.format=ssh`,
+  `user.signingkey` points at a dedicated key
+  (`~/.ssh/id_ed25519_git_signing`, distinct from the `mini` access key —
+  different purpose, kept separate so rotating one never touches the other),
+  `commit.gpgsign=true`. This doesn't add friction for external contributors:
+  branch protection requires every outside change to land via a squash-merged
+  PR, and GitHub signs the resulting merge commit itself regardless of
+  whether the contributor's own commits were signed.
 - Committing after a verified fix/feature (tested locally, deployed, spot-checked
   on the Mini) is the norm for this project — no need to ask first. Pushing to
   GitHub is different: only push when explicitly asked, never proactively just
