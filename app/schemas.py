@@ -28,6 +28,7 @@ class AssetCreate(SQLModel):
     classification: str | None = None
     lifecycle_status: LifecycleStatus = LifecycleStatus.active
     is_internet_facing: bool = False
+    is_valuable: bool = True
     location_id: int | None = None
     position: str | None = None
 
@@ -54,5 +55,6 @@ class AssetUpdate(SQLModel):
     classification: str | None = None
     lifecycle_status: LifecycleStatus | None = None
     is_internet_facing: bool | None = None
+    is_valuable: bool | None = None
     location_id: int | None = None
     position: str | None = None

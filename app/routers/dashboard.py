@@ -328,8 +328,12 @@ def _valuables_query(
     """The asset register for support calls / insurance claims. Default
     scope is assets that already carry identity/purchase/cover data, plus
     any high-criticality asset regardless -- that combination surfaces both
-    "here's what's documented" and "here's what's still worth documenting."
-    ?all=1 shows every asset."""
+    "here's what's documented" and "here's what's still worth documenting" --
+    minus anything explicitly marked not is_valuable (a cheap smart plug can
+    legitimately be high criticality as an attack-surface concern while
+    being worth nothing for insurance; that flag is the one way to say so
+    without misrepresenting its actual criticality). ?all=1 shows every
+    asset, is_valuable included -- that mode means literally everything."""
     query = select(Asset)
     if not show_all:
         query = query.where(
@@ -343,7 +347,7 @@ def _valuables_query(
                 Asset.warranty_expiry.is_not(None),
                 Asset.criticality == Criticality.high,
             )
-        )
+        ).where(Asset.is_valuable.is_(True))
     if sort == "location":
         # Location.name isn't a column on Asset -- outerjoin so it can be
         # sorted on directly, and outer (not inner) so assets with no
@@ -567,6 +571,7 @@ def asset_create(
     lifecycle_status: LifecycleStatus = Form(...),
     is_internet_facing: str | None = Form(None),
     hostname_locked: str | None = Form(None),
+    is_valuable: str | None = Form(None),
     location_id: str = Form(""),
     position: str = Form(""),
     session: Session = Depends(get_session),
@@ -592,6 +597,7 @@ def asset_create(
         classification=classification or None,
         lifecycle_status=lifecycle_status,
         is_internet_facing=bool(is_internet_facing),
+        is_valuable=bool(is_valuable),
         location_id=_parse_location_id(location_id),
         position=position or None,
         source="manual",
@@ -1070,6 +1076,7 @@ def asset_update(
     lifecycle_status: LifecycleStatus = Form(...),
     is_internet_facing: str | None = Form(None),
     hostname_locked: str | None = Form(None),
+    is_valuable: str | None = Form(None),
     location_id: str = Form(""),
     position: str = Form(""),
     session: Session = Depends(get_session),
@@ -1097,6 +1104,7 @@ def asset_update(
     asset.classification = classification or None
     asset.lifecycle_status = lifecycle_status
     asset.is_internet_facing = bool(is_internet_facing)
+    asset.is_valuable = bool(is_valuable)
     asset.location_id = _parse_location_id(location_id)
     asset.position = position or None
     asset.last_seen = utcnow_naive()

@@ -90,6 +90,13 @@ class Asset(SQLModel, table=True):
     classification: str | None = None
     lifecycle_status: LifecycleStatus = LifecycleStatus.discovered
     is_internet_facing: bool = False
+    # Independent of criticality -- a cheap smart plug can legitimately be
+    # high criticality (attack-surface concern) while being worth nothing
+    # for insurance. Gates the Valuables page's default view
+    # (_valuables_query in app/routers/dashboard.py); doesn't affect
+    # anything else. Defaults True so an existing/new asset is visible
+    # there until someone explicitly says otherwise.
+    is_valuable: bool = True
     first_seen: datetime = Field(default_factory=utcnow_naive)
     last_seen: datetime = Field(default_factory=utcnow_naive)
     source: str | None = None

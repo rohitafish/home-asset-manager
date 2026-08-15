@@ -11,7 +11,7 @@ from conftest import make_asset
 from sqlmodel import select
 
 from app.assistant import apply_proposal
-from app.models import AssetNote, AssetType, ChangeProposal, Location
+from app.models import AssetNote, AssetType, ChangeProposal, Criticality, Location
 from app.routers.dashboard import (
     _WARRANTY_LEAVING_SOON_DAYS,
     _autofill_model_number,
@@ -361,6 +361,42 @@ def test_valuables_query_invalid_sort_key_falls_back_to_hostname(session):
     rows = _valuables_query(session, show_all=True, sort="not-a-real-column", direction="asc")
 
     assert [r.hostname for r in rows] == ["Alpha", "Bravo"]
+
+
+def test_valuables_query_excludes_high_criticality_asset_marked_not_valuable(session):
+    """A smart plug can legitimately be high criticality (attack-surface
+    concern) while being worth nothing for insurance -- is_valuable=False
+    overrides the criticality-high inclusion rule, not just supplements it."""
+    make_asset(
+        session, hostname="Smart plug", criticality=Criticality.high, is_valuable=False
+    )
+
+    assert _valuables_query(session, show_all=False) == []
+    assert [r.hostname for r in _valuables_query(session, show_all=True)] == ["Smart plug"]
+
+
+def test_valuables_query_excludes_priced_asset_marked_not_valuable(session):
+    """is_valuable=False overrides real purchase data too, not just the
+    criticality-high shortcut."""
+    make_asset(
+        session, hostname="Priced but excluded",
+        purchase_price=Decimal("50.00"), is_valuable=False,
+    )
+    make_asset(session, hostname="Priced and included", purchase_price=Decimal("50.00"))
+
+    rows = _valuables_query(session, show_all=False)
+
+    assert [r.hostname for r in rows] == ["Priced and included"]
+
+
+def test_valuables_query_default_is_valuable_still_shows_up(session):
+    """The common case: an asset that never touched this field at all (the
+    schema default) behaves exactly as it did before this field existed."""
+    make_asset(session, hostname="Ordinary", purchase_price=Decimal("50.00"))
+
+    rows = _valuables_query(session, show_all=False)
+
+    assert [r.hostname for r in rows] == ["Ordinary"]
 
 
 # -- _autofill_model_number (auto model-number guess on save) ----------------
