@@ -74,6 +74,31 @@ assistant or human contributor.
   crash-looping against a vanishing DB (it autostarts on next boot), then
   reboot normally. This is the safe path; the manual recovery above is only
   for reboots you couldn't get ahead of.
+- **Never run a bare `brew upgrade` on the Mini -- use
+  `./scripts/mini-brew-upgrade.sh`.** A manual one briefly broke the live
+  app: `python@3.12` was upgraded (3.12.13_4 -> 3.12.14) while `uvicorn` was
+  still running, and Homebrew's cleanup deleted the old Cellar directory out
+  from under it. Jinja2 compiles templates lazily, on first render, so the
+  first request to a not-yet-rendered template
+  (`app/templates/assets_list.html`, via `/assets`) hit a codec lookup
+  against files that had just vanished
+  (`jinja2.exceptions.TemplateSyntaxError: unicode-escape` in
+  `logs/app.error.log`). It self-healed at the next restart -- exactly the
+  "briefly broke" shape. The fix isn't "upgrade less" or "pin more
+  formulae"; it's never leaving the app running across an upgrade.
+  `mini-brew-upgrade.sh` stops the app (`launchctl bootout`, with an `EXIT`
+  trap so it always comes back even on failure), upgrades with
+  `HOMEBREW_NO_INSTALL_CLEANUP=1` (so nothing gets deleted mid-upgrade),
+  restarts, then runs `./scripts/preflight.sh` to verify -- not just a bare
+  `/health` check, since preflight also re-imports the venv's dependencies,
+  which is what would actually catch a broken interpreter. `colima` is the
+  only pinned formula (`brew pin colima`, on both the Mini and the dev
+  machine -- the dev machine also auto-upgrades everything else daily via a
+  local, untracked `domt4/autoupdate` launchd job; the Mini stays on
+  deliberate, manual upgrades through this script); `python@3.x` is
+  deliberately **not** pinned, since that would just forfeit interpreter
+  security patches while postponing this same failure mode to whenever it's
+  eventually unpinned -- the restart discipline above is the actual fix.
 - Post-reboot sluggishness on the Mini is **not** this app: measured, the app
   process runs ~0.1% CPU/mem and Colima's VM support processes ~0% CPU. What
   actually spikes after an unclean shutdown is macOS's own housekeeping

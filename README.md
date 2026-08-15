@@ -125,6 +125,19 @@ alembic upgrade head
 ./scripts/preflight.sh
 ```
 
+### Keeping Homebrew packages current: `scripts/mini-brew-upgrade.sh`
+
+On the always-on Mini, don't run a bare `brew upgrade` -- a manual one once
+briefly broke the live app (a lazily-compiled Jinja2 template hit a codec
+lookup against Python files that Homebrew's cleanup had just deleted out
+from under the still-running process). `scripts/mini-brew-upgrade.sh` stops
+the app service first, upgrades with cleanup deferred, restarts, then runs
+`preflight.sh` to confirm nothing broke -- instead of relying on remembering
+to do all that by hand every time. `-y` skips the confirmation prompt,
+`--no-preflight` skips the doctor run. Only meaningful on a machine running
+the `com.assetmgt.app` LaunchAgent -- it refuses to run anywhere else. See
+AGENTS.md's "Deployment topology" for the full incident and reasoning.
+
 ### Checking the install: `scripts/preflight.sh`
 
 One command that reports every problem it finds in a single pass, rather
