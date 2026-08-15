@@ -408,9 +408,14 @@ assistant or human contributor.
   generic/non-provider secret patterns; `secret_scanning_validity_checks`,
   whether a found token is still live) do **not** turn on via the API for this
   repo — `PATCH .../repos/{owner}/{repo}` returns `200 OK` but silently leaves
-  both `disabled`, which is consistent with a plan-gated feature rather than a
-  bug; unconfirmed whether that's tied to the account plan. Revisit from the
-  Settings UI, which may explain the gate the API doesn't.
+  both `disabled`. Confirmed via the Settings UI why: the account is on
+  **GitHub Free** ($0/month, no paid add-ons — `github.com/settings/billing`),
+  and neither the repo's own Advanced Security page nor the account-wide
+  `github.com/settings/security_analysis` page exposes a control for either
+  feature at all — the only two secret-scanning toggles that exist anywhere
+  are "Secret Protection" and "Push protection", both already on. Not a bug
+  or an API gap; these two simply aren't offered outside a paid tier, and
+  there's nothing further to do here short of paying for it.
 - Committing after a verified fix/feature (tested locally, deployed, spot-checked
   on the Mini) is the norm for this project — no need to ask first. Pushing to
   GitHub is different: only push when explicitly asked, never proactively just
