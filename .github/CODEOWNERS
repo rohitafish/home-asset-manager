@@ -1,0 +1,5 @@
+# Makes review ownership explicit (there's currently only one collaborator,
+# so this is largely a statement of fact today) and future-proofs it if
+# collaborators are ever added later. See CONTRIBUTING.md for how to submit
+# a change.
+* @rohitafish

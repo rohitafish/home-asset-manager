@@ -63,13 +63,37 @@ Both must pass; the pre-push hook runs them too. Please add or update tests for
 behaviour you change — the suite is thorough, including a dedicated
 `tests/test_check_pii.py` for the privacy guard itself.
 
-## Pull requests
+## Code style
 
-- Keep commits small and focused, with a clear message (remember: **messages are
-  scanned and become public** — no real personal data in them).
-- Describe what changed and why, and how you verified it.
-- If you touch security-relevant code (`app/auth.py`, the probes, anything that
-  handles device-supplied data), call that out so it gets a closer look.
+`ruff check .` enforces this repo's pinned lint rules — see `ruff.toml` for
+exactly which (it's deliberately explicit rather than "whatever ruff defaults
+to today," so the rule set doesn't silently drift on a ruff upgrade). There's
+no separate auto-formatter step; a passing `ruff check` is the bar.
 
-For security vulnerabilities, do **not** open a public issue — see
+Beyond that, match the codebase's existing style: comments explain *why*, not
+just *what*, especially for a non-obvious decision — see `AGENTS.md` for the
+fuller set of conventions (deployment, git workflow, and more) this project
+follows.
+
+## Submitting a change
+
+This repo only has one collaborator with push access, so every external
+contribution goes through a fork:
+
+1. **Fork** the repo on GitHub, then clone your fork locally.
+2. Create a branch for your change (`git checkout -b my-change`).
+3. Make the change, following the code style above.
+4. Run the checks locally: `pytest`, `ruff check .`, and — if you have
+   `.pii-denylist` populated, which a fresh clone won't — `scripts/check-pii.sh`.
+5. Commit with a clear message (remember: **messages are scanned and become
+   public** — no real personal data in them) and push to *your fork*.
+6. Open a pull request against this repo's `main` branch.
+
+CI (`ruff`, `pytest`, and the PII/secret scan) runs automatically on your PR
+and **must pass before it can be merged** — this is enforced by branch
+protection, not just a request. If you touch security-relevant code
+(`app/auth.py`, the probes, anything that handles device-supplied data), say
+so in the PR description so it gets a closer look.
+
+For security vulnerabilities, do **not** open a public issue or PR — see
 [SECURITY.md](SECURITY.md).
