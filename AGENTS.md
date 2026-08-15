@@ -332,6 +332,15 @@ assistant or human contributor.
   branch protection requires every outside change to land via a squash-merged
   PR, and GitHub signs the resulting merge commit itself regardless of
   whether the contributor's own commits were signed.
+- Signing is also enforced server-side: a second ruleset,
+  `require-signed-commits`, requires `main` to only ever accept commits with
+  a verified signature — **no bypass actor**, so this applies even to the
+  repo owner, on any machine. Deliberately a separate ruleset from
+  `protect-main` rather than a rule added to it, because `protect-main`'s
+  Admin-role bypass would otherwise silently cover this too and make it a
+  no-op for direct pushes. Confirmed by testing both directions: an unsigned
+  push is rejected outright (`GH013: ... Commits must have verified
+  signatures`), a signed one goes through normally.
 - Committing after a verified fix/feature (tested locally, deployed, spot-checked
   on the Mini) is the norm for this project — no need to ask first. Pushing to
   GitHub is different: only push when explicitly asked, never proactively just
