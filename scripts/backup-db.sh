@@ -49,9 +49,84 @@ NAME="assetmgt-$STAMP.dump"
 DEST="$BACKUP_DIR/$NAME"
 TMP="$BACKUP_DIR/.$NAME.partial"
 
+# Runs only once the upload retries below are exhausted, i.e. a sustained
+# outage rather than the transient reset those already absorb -- so these
+# probes are here to characterise "still broken minutes later", and they cost
+# a few seconds on a path that is already failing.
+#
+# What each one distinguishes:
+#   dump        Body size. The Aug 2026 outage began on the tick where this
+#               jumped 2.6M -> 7.4M while small calls in the same windows
+#               (head-object, s3 ls) kept working, so size belongs in any
+#               report of an upload failure.
+#   s3-bucket   DNS + TCP + TLS to the exact endpoint that failed. An
+#               unauthenticated GET is expected to return 403/307 -- that is
+#               a *success* here, it proves the path is reachable. A curl
+#               exit code instead means the network, not S3, is the problem.
+#   internet    Separates "S3/AWS is unreachable" from "this host has no
+#               working egress at all".
+# All are `|| true`: a probe failing is itself the finding, and must never
+# replace the original error. Note the ERR trap is deliberately not inherited
+# here -- `set -E` is absent -- so a failing probe cannot re-enter the trap.
+_diagnose() {
+  local endpoint="$BUCKET.s3.$AWS_DEFAULT_REGION.amazonaws.com"
+  echo "  diag dump:      $(ls -lh "$DEST" 2>&1 | awk '{print $5}' || echo '(absent)')" >&2
+  echo "  diag s3-bucket: $(curl -sS -o /dev/null -m 20 \
+    -w 'HTTP %{http_code} dns=%{time_namelookup}s connect=%{time_connect}s total=%{time_total}s' \
+    "https://$endpoint/" 2>&1 | tail -1)" >&2
+  echo "  diag internet:  $(curl -sS -o /dev/null -m 15 \
+    -w 'HTTP %{http_code} total=%{time_total}s' \
+    https://checkip.amazonaws.com 2>&1 | tail -1)" >&2
+}
+
+# Every production failure of this script so far has been the same one: the
+# upload dying mid-body with "Connection was closed before we received a valid
+# response from endpoint URL". Three consecutive ticks failed that way over 15
+# hours (Aug 2026) and then the very same upload succeeded by hand in 1.4s --
+# the definition of a transient worth retrying rather than sleeping through
+# until the next tick eight hours later.
+#
+# The head-object before each retry is not belt-and-braces, it is required for
+# correctness. "Connection closed before the response" means exactly that the
+# outcome is unknown: S3 may well have committed the object and lost only the
+# reply. These keys are under COMPLIANCE Object Lock, so a blind same-key retry
+# would then be *rejected* -- turning a succeeded upload into a hard failure.
+# Checking first turns that case into the success it actually was.
+_put_object_with_retries() {
+  local key="$1" retain_until="$2"
+  local attempt=1 delay=30
+  local max="${BACKUP_UPLOAD_ATTEMPTS:-3}"
+  while : ; do
+    if aws s3api put-object \
+        --bucket "$BUCKET" --key "$key" --body "$DEST" \
+        --server-side-encryption AES256 \
+        --object-lock-mode COMPLIANCE --object-lock-retain-until-date "$retain_until" \
+        > /dev/null
+    then
+      if [ "$attempt" -gt 1 ]; then
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh: $key uploaded on attempt $attempt" >&2
+      fi
+      return 0
+    fi
+    # aws has already written its own error to stderr, above this line.
+    if aws s3api head-object --bucket "$BUCKET" --key "$key" >/dev/null 2>&1; then
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh: $key landed despite the error on attempt $attempt (lost response, not lost upload)" >&2
+      return 0
+    fi
+    if [ "$attempt" -ge "$max" ]; then
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh: $key failed all $max upload attempts" >&2
+      return 1
+    fi
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh: $key upload attempt $attempt/$max failed, retrying in ${delay}s" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 4))
+  done
+}
+
 # Fail loudly: set -e alone exits silently on e.g. Docker not running,
 # leaving nothing in logs/backup.error.log to act on.
-trap 'echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh FAILED at line $LINENO" >&2' ERR
+trap 'echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh FAILED at line $LINENO" >&2; _diagnose || true' ERR
 # Never leave a truncated dump behind that a later restore could mistake for good.
 trap 'rm -f "$TMP"' EXIT
 
@@ -109,11 +184,7 @@ mv "$TMP" "$DEST"
 # GNU `date -d "+30 days"` would silently fail here on Linux.
 RETAIN_UNTIL_DAILY="$(date -u -v+30d +%Y-%m-%dT%H:%M:%SZ)"
 
-aws s3api put-object \
-  --bucket "$BUCKET" --key "daily/$NAME" --body "$DEST" \
-  --server-side-encryption AES256 \
-  --object-lock-mode COMPLIANCE --object-lock-retain-until-date "$RETAIN_UNTIL_DAILY" \
-  > /dev/null
+_put_object_with_retries "daily/$NAME" "$RETAIN_UNTIL_DAILY"
 
 # Monthly retention: one longer-lived copy per calendar month. Ensure-based
 # ("does this month already have one?") rather than "only on the 1st", so an
@@ -126,11 +197,7 @@ aws s3api put-object \
 YEAR_MONTH="$(date -u +%Y-%m)"
 if [ -z "$(aws s3 ls "s3://$BUCKET/monthly/assetmgt-$YEAR_MONTH-" 2>/dev/null)" ]; then
   RETAIN_UNTIL_MONTHLY="$(date -u -v+186d +%Y-%m-%dT%H:%M:%SZ)"
-  aws s3api put-object \
-    --bucket "$BUCKET" --key "monthly/$NAME" --body "$DEST" \
-    --server-side-encryption AES256 \
-    --object-lock-mode COMPLIANCE --object-lock-retain-until-date "$RETAIN_UNTIL_MONTHLY" \
-    > /dev/null
+  _put_object_with_retries "monthly/$NAME" "$RETAIN_UNTIL_MONTHLY"
 fi
 
 # Success marker -- the only thing the app reads back (see /health and /summary).
