@@ -18,8 +18,25 @@ from app.clock import utcnow_naive
 # the launchd plist's WorkingDirectory / the venv activation instructions).
 _MARKER_PATH = Path("backups/last-success")
 
-# One nightly run (~24h) plus a day's grace before flagging staleness.
-_STALE_AFTER_HOURS = 36
+# Derived from the actual tick schedule, not a round number. The backup
+# LaunchAgent fires three times a day (03:15 / 12:15 / 19:15 local, see
+# scripts/com.assetmgt.backup.plist), and every *successful* tick refreshes
+# the marker -- including the one that skips because the day's off-site copy
+# already exists. So in normal operation the marker is never older than the
+# longest gap between ticks, about 8 hours.
+#
+# The threshold is therefore set by how long the host can legitimately go
+# without a successful tick, not by the backup interval: the documented
+# powered-off / FileVault case (README's "Power outages and unattended
+# restart") can swallow a whole day's ticks, which is 24h from the previous
+# evening's run, plus slack.
+#
+# Was 36h, on the older premise of "one nightly run plus a day's grace" --
+# that predated both the extra daytime ticks and the marker being refreshed
+# on the skip path, and meant a full day of failed uploads still read as
+# healthy. Observed for real: three consecutive failed ticks sat at 30.9h
+# and never tripped it.
+_STALE_AFTER_HOURS = 26
 
 
 class BackupStatus(TypedDict):
