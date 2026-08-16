@@ -67,6 +67,14 @@ cd "$REPO_DIR"   # `docker compose exec` resolves the project from the cwd
 # backup; the rest no-op here. A head-object failure (e.g. no network) falls
 # through to attempt the backup rather than silently skip a needed one.
 if aws s3api head-object --bucket "$BUCKET" --key "daily/$NAME" >/dev/null 2>&1; then
+  # Confirming today's off-site copy exists counts as success, so refresh the
+  # marker here too. /health reads it to answer "is there a current off-site
+  # backup?", not "did this process upload one" -- and only the uploading run
+  # reached the write at the end of this script. So any day whose copy got
+  # there by another route (a manual re-upload after a failed tick, a
+  # restore) left the marker frozen and /health reporting a backup gap that
+  # didn't exist, while the object sat safely in S3 the whole time.
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$BACKUP_DIR/last-success"
   exit 0
 fi
 
