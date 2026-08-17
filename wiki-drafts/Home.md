@@ -40,6 +40,7 @@ hundreds of devices, no UniFi), this probably isn't the right tool; see
 | Understand how it's built | [Architecture Deep-Dive](Architecture-Deep-Dive) |
 | Know what it does with my data before I trust it on my LAN | [Security Model](Security-Model) |
 | See what each `.env` setting does | [Configuration Reference](Configuration-Reference) |
+| See every software component this app is built on | [Software Bill of Materials](SBOM) |
 | Understand a specific discovery collector | [Discovery Collectors Guide](Discovery-Collectors-Guide) |
 | Understand a specific probe | [Probes Reference](Probes-Reference) |
 | Understand the AI assistant's safety model | [The LLM Assistant, Explained](The-LLM-Assistant-Explained) |
