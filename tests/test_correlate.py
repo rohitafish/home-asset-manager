@@ -11,11 +11,18 @@ from app.correlate import (
     _BRAND_STOPWORDS,
     SAME_DEVICE,
     _score_pair,
+    dismiss_same_device_candidate,
     find_same_device_candidates,
     link_assets,
     remove_same_device_link,
 )
-from app.models import Asset, AssetInterface, AssetType, CIRelationship
+from app.models import (
+    Asset,
+    AssetInterface,
+    AssetType,
+    CIRelationship,
+    SameDeviceDismissal,
+)
 
 
 def _asset(**overrides):
@@ -253,3 +260,161 @@ def test_remove_same_device_link_leaves_other_links_intact(session):
 
     remaining = {frozenset((r.asset_id, r.related_asset_id)) for r in _same_device_rows(session)}
     assert remaining == {frozenset((a.id, c.id))}  # a<->c survives
+
+
+# -- dismiss_same_device_candidate (the Investigate page "Dismiss" action) ---
+
+
+def test_dismiss_removes_pair_from_candidates(session):
+    a = make_asset(session, hostname="zeta laptop", vendor="HP", owner="Dana")
+    b = make_asset(session, hostname="Dana's zeta laptop", vendor="HP", owner="zeta")
+    make_interface(session, a.id, mac="aa:bb:cc:00:00:01", connection_type="wired")
+    make_interface(session, b.id, mac="aa:bb:cc:00:00:02", connection_type="wireless")
+    assert frozenset((a.id, b.id)) in {
+        frozenset((c.asset_a.id, c.asset_b.id)) for c in find_same_device_candidates(session)
+    }
+
+    assert dismiss_same_device_candidate(session, a.id, b.id) is True
+    session.commit()
+
+    pairs = {
+        frozenset((c.asset_a.id, c.asset_b.id)) for c in find_same_device_candidates(session)
+    }
+    assert frozenset((a.id, b.id)) not in pairs
+
+
+def test_dismiss_is_order_independent(session):
+    """Dismissing (b, a) must suppress the same pair as (a, b) -- the stored
+    row is canonically ordered, but callers pass ids in whatever order the
+    template happened to render them."""
+    a = make_asset(session, hostname="zeta laptop", vendor="HP")
+    b = make_asset(session, hostname="Dana's zeta laptop", vendor="HP")
+    make_interface(session, a.id, connection_type="wired")
+    make_interface(session, b.id, connection_type="wireless")
+
+    dismiss_same_device_candidate(session, b.id, a.id)  # reversed order
+    session.commit()
+
+    pairs = {
+        frozenset((c.asset_a.id, c.asset_b.id)) for c in find_same_device_candidates(session)
+    }
+    assert frozenset((a.id, b.id)) not in pairs
+
+
+def test_dismiss_reoffers_after_hostname_change(session):
+    """A dismissal is a judgement about the evidence at the time, not a
+    permanent veto -- once one asset's hostname changes, the pair is worth
+    re-scoring rather than staying silently hidden forever."""
+    a = make_asset(session, hostname="zeta laptop", vendor="HP")
+    b = make_asset(session, hostname="Dana's zeta laptop", vendor="HP")
+    make_interface(session, a.id, connection_type="wired")
+    make_interface(session, b.id, connection_type="wireless")
+    dismiss_same_device_candidate(session, a.id, b.id)
+    session.commit()
+
+    a.hostname = "totally different name"
+    session.add(a)
+    session.commit()
+
+    # The dismissal no longer silently applies -- confirmed via the stored
+    # fingerprint below rather than the candidate list, since whether the new
+    # hostname still clears the score threshold isn't what this test pins.
+    stale_row = session.exec(select(SameDeviceDismissal)).first()
+    assert stale_row is not None  # the old row is left in place, not deleted
+    assert stale_row.evidence_fingerprint != _current_fingerprint(session, a.id, b.id)
+
+
+def test_dismiss_reoffers_after_mac_change(session):
+    a = make_asset(session, hostname="zeta laptop", vendor="HP")
+    b = make_asset(session, hostname="Dana's zeta laptop", vendor="HP")
+    iface_a = make_interface(session, a.id, mac="aa:bb:cc:00:00:01", connection_type="wired")
+    make_interface(session, b.id, connection_type="wireless")
+    dismiss_same_device_candidate(session, a.id, b.id)
+    session.commit()
+
+    iface_a.mac = "aa:bb:cc:00:00:99"
+    session.add(iface_a)
+    session.commit()
+
+    pairs = {
+        frozenset((c.asset_a.id, c.asset_b.id)) for c in find_same_device_candidates(session)
+    }
+    assert frozenset((a.id, b.id)) in pairs
+
+
+def test_dismiss_not_reoffered_after_ip_change(session):
+    """IP is deliberately excluded from the fingerprint -- DHCP churn must
+    not silently undo a dismissal."""
+    a = make_asset(session, hostname="zeta laptop", vendor="HP")
+    b = make_asset(session, hostname="Dana's zeta laptop", vendor="HP")
+    iface_a = make_interface(
+        session, a.id, mac="aa:bb:cc:00:00:01", ip="192.168.1.10", connection_type="wired"
+    )
+    make_interface(session, b.id, connection_type="wireless")
+    dismiss_same_device_candidate(session, a.id, b.id)
+    session.commit()
+
+    iface_a.ip = "192.168.1.77"
+    session.add(iface_a)
+    session.commit()
+
+    pairs = {
+        frozenset((c.asset_a.id, c.asset_b.id)) for c in find_same_device_candidates(session)
+    }
+    assert frozenset((a.id, b.id)) not in pairs
+
+
+def test_dismiss_twice_upserts_single_row(session):
+    a = make_asset(session, hostname="zeta laptop", vendor="HP")
+    b = make_asset(session, hostname="Dana's zeta laptop", vendor="HP")
+
+    dismiss_same_device_candidate(session, a.id, b.id)
+    session.commit()
+    dismiss_same_device_candidate(session, a.id, b.id)
+    session.commit()
+
+    rows = session.exec(select(SameDeviceDismissal)).all()
+    assert len(rows) == 1
+
+
+def test_dismiss_leaves_other_pairs_unaffected(session):
+    a = make_asset(session, hostname="zeta laptop", vendor="HP")
+    b = make_asset(session, hostname="Dana's zeta laptop", vendor="HP")
+    c = make_asset(session, hostname="Ellis PC laptop", vendor="HP")
+    make_interface(session, a.id, connection_type="wired")
+    make_interface(session, b.id, connection_type="wireless")
+    make_interface(session, c.id, connection_type="wireless")
+
+    before = {
+        frozenset((cand.asset_a.id, cand.asset_b.id))
+        for cand in find_same_device_candidates(session)
+    }
+    dismiss_same_device_candidate(session, a.id, b.id)
+    session.commit()
+
+    after = {
+        frozenset((cand.asset_a.id, cand.asset_b.id))
+        for cand in find_same_device_candidates(session)
+    }
+    assert after == before - {frozenset((a.id, b.id))}
+
+
+def test_dismiss_rejects_self_pair_and_missing_asset(session):
+    a = make_asset(session)
+    assert dismiss_same_device_candidate(session, a.id, a.id) is False
+    assert dismiss_same_device_candidate(session, a.id, 999999) is False
+    assert session.exec(select(SameDeviceDismissal)).all() == []
+
+
+def _current_fingerprint(session, asset_id_a, asset_id_b):
+    from app.correlate import _pair_fingerprint
+
+    asset_a = session.get(Asset, asset_id_a)
+    asset_b = session.get(Asset, asset_id_b)
+    ifaces_a = session.exec(
+        select(AssetInterface).where(AssetInterface.asset_id == asset_id_a)
+    ).all()
+    ifaces_b = session.exec(
+        select(AssetInterface).where(AssetInterface.asset_id == asset_id_b)
+    ).all()
+    return _pair_fingerprint(asset_a, asset_b, ifaces_a, ifaces_b)

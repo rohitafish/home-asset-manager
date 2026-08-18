@@ -975,7 +975,8 @@ assistant) but not yet merged. For either, pick which record survives and
 it. Merging is never automatic: a name match alone isn't a safe enough signal.
 For a *linked* pair that turns out to be two separate devices (e.g. a control
 box and its Wi-Fi module), click **Dismiss — not the same device** instead:
-that removes the link so the pair stops being suggested, keeping both assets.
+that removes the link, keeping both assets, and also records the pair as
+dismissed on Investigate (below) so it doesn't reappear there either.
 
 On the **Assets** list, click any column heading (ID, Hostname, Type, Vendor,
 Owner, Criticality, Status, Location, Last seen) to sort by that column; click
@@ -1199,6 +1200,15 @@ itself; and two network-infrastructure devices (APs, switches, gateways)
 are never compared against each other at all, since owning several
 identical-model units in different rooms is the normal shape of a mesh
 network, not a coincidence worth flagging.
+
+If a candidate pair is actually two separate devices, click **Dismiss — not
+the same device** (or **Dismiss all shown** to clear the whole current list
+at once). A dismissed pair stops being offered here -- but only while the
+evidence stays the same: if either asset's hostname, vendor, type, or MACs
+later change, it's re-scored and can reappear, since a dismissal is a
+judgement about the evidence at the time, not a permanent veto. Dismissing a
+pair here and dismissing the equivalent *linked* pair on Duplicates (above)
+are kept in sync -- either one is enough to stop both pages suggesting it.
 
 ### Investigation assistant (Claude)
 

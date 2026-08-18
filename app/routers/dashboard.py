@@ -21,6 +21,7 @@ from app.backup_status import backup_age_label, backup_status
 from app.clock import utcnow_naive
 from app.correlate import (
     SAME_DEVICE,
+    dismiss_same_device_candidate,
     find_same_device_candidates,
     link_assets,
     remove_same_device_link,
@@ -747,9 +748,15 @@ def duplicates_dismiss_pair(
     id_a: int = Form(...), id_b: int = Form(...), session: Session = Depends(get_session)
 ):
     # "Not the same device": drop the same-physical-device link so the pair
-    # stops being suggested. Non-destructive -- both assets are kept; re-link
-    # via Investigate or the assistant if it turns out they are the same.
-    if remove_same_device_link(session, id_a, id_b):
+    # stops appearing here, AND record a dismissal so it doesn't immediately
+    # reappear as a fresh candidate on /assets/investigate -- removing the
+    # link alone used to do exactly that, since find_same_device_candidates()
+    # only excludes *linked* pairs. Non-destructive -- both assets are kept;
+    # re-link via Investigate or the assistant if it turns out they are the
+    # same.
+    unlinked = remove_same_device_link(session, id_a, id_b)
+    dismissed = dismiss_same_device_candidate(session, id_a, id_b)
+    if unlinked or dismissed:
         session.commit()
     return RedirectResponse(url="/assets/duplicates", status_code=303)
 
@@ -963,6 +970,28 @@ def assets_investigate_link(
     session.add(AssetNote(asset_id=asset_id_a, author="user", body=note_body))
     note_body_b = f"Linked to asset #{asset_id_a} as the same physical device.{' ' + detail if detail else ''}"
     session.add(AssetNote(asset_id=asset_id_b, author="user", body=note_body_b))
+    session.commit()
+    return RedirectResponse(url="/assets/investigate", status_code=303)
+
+
+@router.post("/assets/investigate/dismiss")
+def assets_investigate_dismiss(
+    asset_id_a: int = Form(...),
+    asset_id_b: int = Form(...),
+    session: Session = Depends(get_session),
+):
+    if dismiss_same_device_candidate(session, asset_id_a, asset_id_b):
+        session.commit()
+    return RedirectResponse(url="/assets/investigate", status_code=303)
+
+
+@router.post("/assets/investigate/dismiss-all")
+def assets_investigate_dismiss_all(session: Session = Depends(get_session)):
+    # Dismisses exactly what's currently on screen -- recomputes the same
+    # list assets_investigate() renders rather than trusting posted ids, so
+    # this can't be tricked into dismissing a pair the user never saw.
+    for c in find_same_device_candidates(session):
+        dismiss_same_device_candidate(session, c.asset_a.id, c.asset_b.id)
     session.commit()
     return RedirectResponse(url="/assets/investigate", status_code=303)
 
