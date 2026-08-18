@@ -8,9 +8,15 @@ when deleting an asset with dependent rows" because one of those three copies
 drifted out of sync with the model list. Adding a new asset-child table now
 means adding it to ASSET_CHILD_MODELS once, here.
 
-CIRelationship is handled separately (not in this list) because it's a
-self-referential asset<->asset link -- a row can reference a given asset via
-either asset_id or related_asset_id, not just asset_id.
+CIRelationship and SameDeviceDismissal are handled separately (not in this
+list) because both are self-referential asset<->asset rows -- CIRelationship
+via asset_id/related_asset_id, SameDeviceDismissal via asset_id_a/asset_id_b.
+Both are deleted outright on delete AND on merge: unlike a regular child row,
+repointing one side onto the merge survivor could produce a self-pair or
+collide with SameDeviceDismissal's (asset_id_a, asset_id_b) unique
+constraint, and once one side of a dismissal is gone the "these two are
+different devices" judgement no longer refers to anything -- there's a fresh
+survivor+other pair for find_same_device_candidates() to score from scratch.
 
 AiUsage is also handled separately (not in this list): it's the AI spend
 ledger (see app/assistant.py's _log_usage/budget_block_reason), and deleting
@@ -36,6 +42,7 @@ from app.models import (
     CIRelationship,
     Finding,
     ProbeResult,
+    SameDeviceDismissal,
 )
 
 # Every model with a plain `asset_id` FK back to Asset. Extend this list --
@@ -65,6 +72,14 @@ def delete_asset_cascade(session: Session, asset_id: int) -> None:
         )
     ).all():
         session.delete(rel)
+
+    for dismissal in session.exec(
+        select(SameDeviceDismissal).where(
+            (SameDeviceDismissal.asset_id_a == asset_id)
+            | (SameDeviceDismissal.asset_id_b == asset_id)
+        )
+    ).all():
+        session.delete(dismissal)
 
     session.flush()
     asset = session.get(Asset, asset_id)
@@ -100,6 +115,19 @@ def reassign_asset_children(session: Session, survivor_id: int, duplicate_id: in
         if rel.related_asset_id == duplicate_id:
             rel.related_asset_id = survivor_id
         session.add(rel)
+
+    # Deleted, not repointed, unlike every model above: repointing could
+    # produce a self-pair or collide with the (asset_id_a, asset_id_b) unique
+    # constraint, and once one side of a dismissal is merged away the "these
+    # two are different devices" judgement no longer refers to anything --
+    # find_same_device_candidates() will score the survivor+other pair fresh.
+    for dismissal in session.exec(
+        select(SameDeviceDismissal).where(
+            (SameDeviceDismissal.asset_id_a == duplicate_id)
+            | (SameDeviceDismissal.asset_id_b == duplicate_id)
+        )
+    ).all():
+        session.delete(dismissal)
 
     session.flush()
 

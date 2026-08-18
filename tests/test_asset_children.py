@@ -17,6 +17,7 @@ from app.asset_children import (
     delete_asset_cascade,
     reassign_asset_children,
 )
+from app.correlate import dismiss_same_device_candidate
 from app.models import (
     AiUsage,
     Asset,
@@ -27,6 +28,7 @@ from app.models import (
     CIRelationship,
     Finding,
     ProbeResult,
+    SameDeviceDismissal,
     Severity,
 )
 
@@ -82,6 +84,22 @@ def test_delete_asset_cascade_removes_every_dependent_row(session):
         assert session.exec(select(model).where(model.asset_id == asset.id)).all() == []
     assert session.exec(select(CIRelationship)).all() == []
     # The unrelated asset survives untouched.
+    assert session.get(Asset, other.id) is not None
+
+
+def test_delete_asset_cascade_removes_same_device_dismissals(session):
+    """SameDeviceDismissal is self-referential like CIRelationship (asset_id_a
+    / asset_id_b instead of a plain asset_id), so it isn't in
+    ASSET_CHILD_MODELS and needs its own cleanup -- pin that it happens."""
+    asset = make_asset(session, hostname="doomed")
+    other = make_asset(session, hostname="bystander")
+    dismiss_same_device_candidate(session, asset.id, other.id)
+    session.commit()
+
+    delete_asset_cascade(session, asset.id)
+    session.commit()
+
+    assert session.exec(select(SameDeviceDismissal)).all() == []
     assert session.get(Asset, other.id) is not None
 
 
@@ -156,6 +174,24 @@ def test_reassign_asset_children_drops_self_reference_and_dupes(session):
 
     rels = session.exec(select(CIRelationship)).all()
     assert rels == []
+
+
+def test_reassign_asset_children_deletes_same_device_dismissals(session):
+    """Unlike every model in ASSET_CHILD_MODELS, a dismissal referencing the
+    merged-away duplicate is deleted, not repointed onto the survivor --
+    repointing could collide with the unique constraint or produce a
+    self-pair, and the "these are different devices" judgement no longer
+    refers to anything once one side is gone."""
+    survivor = make_asset(session, hostname="survivor")
+    duplicate = make_asset(session, hostname="duplicate")
+    other = make_asset(session, hostname="other")
+    dismiss_same_device_candidate(session, duplicate.id, other.id)
+    session.commit()
+
+    reassign_asset_children(session, survivor_id=survivor.id, duplicate_id=duplicate.id)
+    session.commit()
+
+    assert session.exec(select(SameDeviceDismissal)).all() == []
 
 
 def test_reassign_asset_children_noop_when_ids_match(session):

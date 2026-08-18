@@ -11,13 +11,21 @@ and wireless MAC -- worth tracking separately).
 """
 
 import difflib
+import hashlib
 import re
 from dataclasses import dataclass, field
 from itertools import combinations
 
 from sqlmodel import Session, select
 
-from app.models import Asset, AssetInterface, AssetType, CIRelationship
+from app.clock import utcnow_naive
+from app.models import (
+    Asset,
+    AssetInterface,
+    AssetType,
+    CIRelationship,
+    SameDeviceDismissal,
+)
 from discovery.normalize import (
     _HOSTNAME_VENDOR_KEYWORDS,
     _IOT_VENDORS,
@@ -260,6 +268,70 @@ def _score_pair(
     return score, signals
 
 
+def _asset_identity_fingerprint(asset: Asset, ifaces: list[AssetInterface]) -> str:
+    macs = sorted((i.mac or "").lower() for i in ifaces if i.mac)
+    # Deliberately NOT ip: DHCP churn would otherwise silently re-offer every
+    # dismissed pair. Deliberately NOT score: the common-word stopword set in
+    # find_same_device_candidates depends on *all* assets' hostnames, so an
+    # unrelated third device can shift an untouched pair's score.
+    return "\x1e".join([
+        asset.asset_type.value,
+        (asset.hostname or "").strip().lower(),
+        (asset.vendor or "").strip().lower(),
+        "|".join(macs),
+    ])
+
+
+def _pair_fingerprint(
+    asset_a: Asset, asset_b: Asset, ifaces_a: list[AssetInterface], ifaces_b: list[AssetInterface]
+) -> str:
+    """Hashes the identity fields the scorer reads for this pair. Ordered by
+    asset id so the result doesn't depend on which asset is passed as a/b.
+    Used to tell a genuinely-unchanged dismissed pair (SameDeviceDismissal)
+    from one worth re-offering after an edit."""
+    lo, lo_ifaces, hi, hi_ifaces = (
+        (asset_a, ifaces_a, asset_b, ifaces_b) if asset_a.id < asset_b.id
+        else (asset_b, ifaces_b, asset_a, ifaces_a)
+    )
+    combined = (
+        _asset_identity_fingerprint(lo, lo_ifaces) + "\x1d" + _asset_identity_fingerprint(hi, hi_ifaces)
+    )
+    return hashlib.sha256(combined.encode()).hexdigest()
+
+
+def dismiss_same_device_candidate(session: Session, asset_id_a: int, asset_id_b: int) -> bool:
+    """Records that a same-device candidate pair was judged NOT the same
+    device, so find_same_device_candidates() stops offering it -- until
+    either asset's identity fields change (see SameDeviceDismissal). Upserts:
+    re-dismissing an already-dismissed pair refreshes its fingerprint rather
+    than hitting the unique constraint. Returns False if either asset id
+    doesn't exist, or the two ids are equal. Does not commit."""
+    if asset_id_a == asset_id_b:
+        return False
+    lo, hi = sorted((asset_id_a, asset_id_b))
+    asset_a = session.get(Asset, lo)
+    asset_b = session.get(Asset, hi)
+    if not asset_a or not asset_b:
+        return False
+    ifaces_a = session.exec(select(AssetInterface).where(AssetInterface.asset_id == lo)).all()
+    ifaces_b = session.exec(select(AssetInterface).where(AssetInterface.asset_id == hi)).all()
+    fingerprint = _pair_fingerprint(asset_a, asset_b, ifaces_a, ifaces_b)
+
+    existing = session.exec(
+        select(SameDeviceDismissal).where(
+            SameDeviceDismissal.asset_id_a == lo,
+            SameDeviceDismissal.asset_id_b == hi,
+        )
+    ).first()
+    if existing:
+        existing.evidence_fingerprint = fingerprint
+        existing.dismissed_at = utcnow_naive()
+        session.add(existing)
+    else:
+        session.add(SameDeviceDismissal(asset_id_a=lo, asset_id_b=hi, evidence_fingerprint=fingerprint))
+    return True
+
+
 def find_same_device_candidates(session: Session, min_score: int = 20) -> list[Candidate]:
     assets = session.exec(select(Asset)).all()
     interfaces = session.exec(select(AssetInterface)).all()
@@ -298,13 +370,27 @@ def find_same_device_candidates(session: Session, min_score: int = 20) -> list[C
     ).all():
         already_linked.add(frozenset((rel.asset_id, rel.related_asset_id)))
 
+    # Pair -> fingerprint at dismissal time. A pair is only skipped while its
+    # current identity fingerprint still matches -- see dismiss_same_device_
+    # candidate and _pair_fingerprint.
+    dismissed_fingerprints: dict[frozenset, str] = {
+        frozenset((d.asset_id_a, d.asset_id_b)): d.evidence_fingerprint
+        for d in session.exec(select(SameDeviceDismissal)).all()
+    }
+
     candidates = []
     for a, b in combinations(assets, 2):
-        if frozenset((a.id, b.id)) in already_linked:
+        pair_key = frozenset((a.id, b.id))
+        if pair_key in already_linked:
             continue
-        score, signals = _score_pair(
-            a, b, ifaces_by_asset.get(a.id, []), ifaces_by_asset.get(b.id, []), base_stopwords
-        )
+        ifaces_a = ifaces_by_asset.get(a.id, [])
+        ifaces_b = ifaces_by_asset.get(b.id, [])
+        stored_fingerprint = dismissed_fingerprints.get(pair_key)
+        if stored_fingerprint is not None and stored_fingerprint == _pair_fingerprint(
+            a, b, ifaces_a, ifaces_b
+        ):
+            continue
+        score, signals = _score_pair(a, b, ifaces_a, ifaces_b, base_stopwords)
         if score >= min_score:
             candidates.append(Candidate(asset_a=a, asset_b=b, score=score, signals=signals))
 

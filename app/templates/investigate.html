@@ -7,7 +7,14 @@ and one wireless NIC on the same box), scored on the evidence below. Linking
 keeps both records and just notes the relationship -- it does not delete
 anything. If discovery genuinely created two rows for the exact same
 interface, use <a href="/assets/duplicates">Duplicates</a> instead, which
-merges them into one.</p>
+merges them into one. Dismissing a pair hides it here until one of the two
+assets' hostname, vendor, type, or MACs changes.</p>
+
+{% if candidates %}
+<form method="post" action="/assets/investigate/dismiss-all" class="button-row">
+  <button type="submit" class="link-button">Dismiss all shown ({{ candidates|length }})</button>
+</form>
+{% endif %}
 
 {% for c in candidates %}
 <div class="candidate-card">
@@ -32,6 +39,8 @@ merges them into one.</p>
     <input type="hidden" name="asset_id_b" value="{{ c.asset_b.id }}">
     <input type="text" name="detail" placeholder="Optional note, e.g. \"wired + wireless NIC\"">
     <button type="submit">Link as same device</button>
+    <button type="submit" formaction="/assets/investigate/dismiss"
+            formnovalidate class="link-button">Dismiss &mdash; not the same device</button>
   </form>
 </div>
 {% else %}

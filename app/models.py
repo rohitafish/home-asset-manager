@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
-from sqlalchemy import Column, Numeric
+from sqlalchemy import Column, Numeric, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.clock import utcnow_naive
@@ -134,6 +134,33 @@ class CIRelationship(SQLModel, table=True):
     related_asset_id: int = Field(foreign_key="asset.id", index=True)
     relationship_type: str  # e.g. "connected_via_ap", "uplinked_to_switch_port", "same_physical_device"
     detail: str | None = None
+
+
+class SameDeviceDismissal(SQLModel, table=True):
+    """Records that a user looked at a same-device candidate pair on
+    /assets/investigate and judged the two assets NOT the same physical
+    device, so find_same_device_candidates() should stop re-offering it.
+
+    One row per pair, unlike CIRelationship's mirrored two-rows-per-link --
+    asset_id_a is always the lower id, so there's no "direction" to mirror.
+
+    evidence_fingerprint snapshots the identity fields the scorer actually
+    reads (hostname, vendor, asset_type, interface MACs) at dismissal time.
+    It deliberately excludes IP -- DHCP churn would otherwise re-offer every
+    dismissed pair constantly -- and excludes the score itself, which drifts
+    for an unrelated reason: the common-word stopword set in
+    find_same_device_candidates depends on *all* assets' hostnames, so
+    adding an unrelated third device can shift an untouched pair's score.
+    When a fresh fingerprint no longer matches the stored one, the pair is
+    offered again -- see find_same_device_candidates."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    asset_id_a: int = Field(foreign_key="asset.id", index=True)
+    asset_id_b: int = Field(foreign_key="asset.id", index=True)
+    evidence_fingerprint: str
+    dismissed_at: datetime = Field(default_factory=utcnow_naive)
+
+    __table_args__ = (UniqueConstraint("asset_id_a", "asset_id_b"),)
 
 
 class AssetNote(SQLModel, table=True):
