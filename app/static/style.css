@@ -239,6 +239,13 @@ table.probe-facts th { background: #eef2f7; color: #1a1a1a; font-weight: normal;
   padding: 0.5rem 0.8rem; margin-bottom: 0.75rem; font-size: 0.9rem;
 }
 
+.ai-budget-bar {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  font-size: 0.8rem; color: #555; margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border); padding-bottom: 0.5rem;
+}
+.ai-budget-figure { white-space: nowrap; }
+
 .proposal-list { margin-bottom: 1rem; }
 .other-asset-group { border-top: 1px dashed var(--border); padding-top: 0.75rem; }
 .other-asset-heading { font-size: 0.9rem; margin-bottom: 0.5rem; }

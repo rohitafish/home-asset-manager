@@ -14,6 +14,7 @@ produce real CPEs, so false positives/negatives are expected and findings
 should be spot-checked, same as any lightweight scanner.
 """
 
+import logging
 import os
 import time
 from datetime import datetime, timedelta
@@ -32,11 +33,21 @@ from app.models import (
     Vulnerability,
 )
 
+logger = logging.getLogger(__name__)
+
 NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 EPSS_API = "https://api.first.org/data/v1/epss"
 KEV_FEED = (
     "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 )
+
+# Hard cap on distinct "<product> <version>" keywords queried against NVD in
+# one enrich_findings_from_services() run -- a backstop against the fan-out
+# growing unbounded (one 6s-paced request per keyword otherwise), not a
+# limit this app's normal home-network scale (a few dozen services) should
+# ever approach. "" counts as unset, same idiom as ANTHROPIC_MODEL in
+# app/assistant.py.
+DEFAULT_MAX_NVD_KEYWORDS = 200
 
 SLA_DAYS: dict[tuple[Severity, Exposure], int] = {
     (Severity.critical, Exposure.internet_facing): 7,
@@ -144,6 +155,17 @@ def enrich_findings_from_services(session: Session) -> dict[str, int]:
     "uvicorn server", matched purely on that shared word with no version to
     disambiguate. Skipping unversioned services trades some coverage for
     precision, consistent with this being best-effort matching (see README).
+
+    Queries NVD once per distinct "<product> <version>" keyword, not once
+    per service row: two services sharing an identical banner (e.g. two of
+    the same smart-plug model on the same firmware) previously paid
+    search_nvd_by_keyword's 6s/0.2s rate-limit pacing sleep twice for an
+    identical result. Every service sharing a keyword reuses that one
+    query's result. The distinct-keyword count is additionally capped by
+    CVE_ENRICH_MAX_KEYWORDS (default DEFAULT_MAX_NVD_KEYWORDS) as a backstop
+    against the fan-out growing unbounded; services past the cap are simply
+    skipped this run (a later run picks them up -- there's no "already
+    tried" marker to fight, unlike app/assistant.py's model-number guess).
     """
     with httpx.Client() as client:
         kev_ids = fetch_kev_catalog(client)
@@ -154,15 +176,30 @@ def enrich_findings_from_services(session: Session) -> dict[str, int]:
             )
         ).all()
 
-        candidates: dict[str, dict] = {}
-        service_matches: list[tuple[AssetService, list[str]]] = []
+        services_by_keyword: dict[str, list[AssetService]] = {}
         for svc in services:
             keyword = f"{svc.product} {svc.version}"
+            services_by_keyword.setdefault(keyword, []).append(svc)
+
+        max_keywords = int(os.environ.get("CVE_ENRICH_MAX_KEYWORDS") or DEFAULT_MAX_NVD_KEYWORDS)
+        keywords = list(services_by_keyword)
+        if len(keywords) > max_keywords:
+            logger.warning(
+                "cve_enrich: %s distinct product/version keywords exceeds the %s-keyword "
+                "cap -- querying the first %s and skipping the rest this run",
+                len(keywords), max_keywords, max_keywords,
+            )
+            keywords = keywords[:max_keywords]
+
+        candidates: dict[str, dict] = {}
+        service_matches: list[tuple[AssetService, list[str]]] = []
+        for keyword in keywords:
             results = search_nvd_by_keyword(client, keyword)
             cve_ids = [r["cve_id"] for r in results]
             for r in results:
                 candidates[r["cve_id"]] = r
-            service_matches.append((svc, cve_ids))
+            for svc in services_by_keyword[keyword]:
+                service_matches.append((svc, cve_ids))
 
         epss_scores = fetch_epss_scores(client, list(candidates.keys()))
 
@@ -234,6 +271,7 @@ def enrich_findings_from_services(session: Session) -> dict[str, int]:
         session.commit()
         return {
             "services_checked": len(services),
+            "nvd_queries": len(keywords),
             "candidate_cves": len(candidates),
             "vulnerabilities_created": created_vulns,
             "findings_created": created_findings,

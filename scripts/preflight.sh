@@ -176,7 +176,10 @@ if [ -f "$REPO_DIR/.env" ]; then
   # LOG_LEVEL is likewise excluded: it has a code-level default (INFO, see
   # app/logging_config.py) and is genuinely optional, so an existing .env
   # that predates it -- including the Mini's, which isn't rsynced -- shouldn't
-  # be flagged.
+  # be flagged. AI_DAILY_BUDGET_USD/AI_MONTHLY_BUDGET_USD/
+  # CVE_ENRICH_MAX_KEYWORDS are the same shape (code-level defaults in
+  # app/assistant.py / discovery/cve_enrich.py, added after this file's
+  # .env would already exist).
   # `[A-Za-z0-9_]` not `[A-Z_]`: the latter has no digits, so a key like
   # BACKUP_S3_BUCKET is silently invisible to this drift check on both sides
   # of the comm. (scripts/env-structure.sh and check-pii.sh use the same
@@ -184,7 +187,7 @@ if [ -f "$REPO_DIR/.env" ]; then
   MISSING_KEYS="$(comm -23 \
     <(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$REPO_DIR/.env.example" | tr -d '=' | sort -u) \
     <(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$REPO_DIR/.env" | tr -d '=' | sort -u) \
-    | grep -vE '^(ANTHROPIC_API_KEY|ANTHROPIC_MODEL|LOG_LEVEL)$' || true)"
+    | grep -vE '^(ANTHROPIC_API_KEY|ANTHROPIC_MODEL|LOG_LEVEL|AI_DAILY_BUDGET_USD|AI_MONTHLY_BUDGET_USD|CVE_ENRICH_MAX_KEYWORDS)$' || true)"
   if [ -z "$MISSING_KEYS" ]; then
     ok "every key in .env.example is present in .env"
   else

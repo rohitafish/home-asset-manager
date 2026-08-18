@@ -221,6 +221,56 @@ class Vulnerability(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
+class AiUsage(SQLModel, table=True):
+    """One row per billed Claude API call (see app/assistant.py's
+    _log_usage) -- the spend ledger behind the chat panel's budget display
+    and enforcement (assistant.budget_block_reason). Written for both call
+    sites: the chat tool loop (call_site="chat", one row per loop
+    iteration) and the one-shot model-number guess
+    (call_site="model_number_guess").
+
+    asset_id is nullable defensively -- both current call sites always have
+    one, but nothing here should assume a future call site will too.
+
+    model is the model *as served* (resp.model), not necessarily the
+    ANTHROPIC_MODEL configured -- run_chat_turn's server-side refusal
+    fallback can serve a different model than requested.
+
+    cost_usd is nullable -- see app/ai_pricing.py's cost_usd(): a model
+    that isn't in the rate table (including anything served via
+    OpenRouter) can't be priced without guessing, so it's left NULL rather
+    than written as a misleading 0. Postgres's SUM() already skips NULLs,
+    which is exactly the "unknown, not zero" behaviour budget enforcement
+    needs -- no special-casing required at query time."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=utcnow_naive, index=True)
+    asset_id: int | None = Field(default=None, foreign_key="asset.id", index=True)
+    call_site: str  # "chat" | "model_number_guess"
+    provider: str  # "anthropic" | "openrouter"
+    model: str | None = None
+    iteration: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    stop_reason: str | None = None
+    cost_usd: Decimal | None = Field(default=None, sa_column=Column(Numeric(10, 6)))
+
+
+class AppSetting(SQLModel, table=True):
+    """Generic key/value settings store, editable from the dashboard UI
+    without an .env edit + launchd restart. First (and currently only) use:
+    the "ai_assistant_enabled" kill switch -- see
+    assistant.budget_block_reason(). Deliberately generic rather than a
+    single-purpose boolean column, so a future in-app toggle doesn't need
+    another migration."""
+
+    key: str = Field(primary_key=True)
+    value: str
+    updated_at: datetime = Field(default_factory=utcnow_naive)
+
+
 class Finding(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     asset_id: int = Field(foreign_key="asset.id", index=True)
