@@ -18,16 +18,19 @@ import base64
 import json
 import logging
 import os
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlmodel import Session, select
 
+from app import ai_pricing
 from app.asset_search import asset_search_filter
 from app.clock import utcnow_naive
 from app.correlate import link_assets
 from app.models import (
+    AiUsage,
+    AppSetting,
     Asset,
     AssetInterface,
     AssetNote,
@@ -45,6 +48,12 @@ from probes.registry import applicable_probes
 
 MODEL = os.environ.get("ANTHROPIC_MODEL") or "claude-opus-5"
 MAX_TOKENS = 16000
+
+# Spend ceilings for the whole assistant feature (chat + model-number guess
+# combined), enforced by budget_block_reason() below. "" counts as unset,
+# same idiom as ANTHROPIC_MODEL above and app/logging_config.py's LOG_LEVEL.
+AI_DAILY_BUDGET_USD = Decimal(os.environ.get("AI_DAILY_BUDGET_USD") or "5.00")
+AI_MONTHLY_BUDGET_USD = Decimal(os.environ.get("AI_MONTHLY_BUDGET_USD") or "50.00")
 
 logger = logging.getLogger(__name__)
 MAX_TOOL_ITERATIONS = 8
@@ -248,6 +257,91 @@ def is_configured() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENROUTER_API_KEY"))
 
 
+_AI_ASSISTANT_ENABLED_KEY = "ai_assistant_enabled"
+
+
+def is_ai_assistant_enabled(session: Session) -> bool:
+    """The in-app kill switch (AppSetting row, defaults to on when unset).
+    Deliberately separate from is_configured(): that's "is a key present at
+    all", this is "is spending currently allowed" -- see
+    budget_block_reason(), which checks both but the UI needs to tell them
+    apart (a "not configured" panel vs. a "turned off" one)."""
+    row = session.get(AppSetting, _AI_ASSISTANT_ENABLED_KEY)
+    return row is None or row.value != "false"
+
+
+def set_ai_assistant_enabled(session: Session, enabled: bool) -> None:
+    """Flips the kill switch. Unlike unsetting ANTHROPIC_API_KEY /
+    OPENROUTER_API_KEY (which needs an .env edit and a launchd restart to
+    take effect), this applies on the very next request."""
+    row = session.get(AppSetting, _AI_ASSISTANT_ENABLED_KEY)
+    value = "true" if enabled else "false"
+    if row:
+        row.value = value
+        row.updated_at = utcnow_naive()
+    else:
+        row = AppSetting(key=_AI_ASSISTANT_ENABLED_KEY, value=value)
+    session.add(row)
+    session.commit()
+
+
+def _period_spend(session: Session, start: datetime) -> tuple[Decimal, bool]:
+    """Returns (summed cost_usd for AiUsage rows created_at >= start, whether
+    any row in that window has cost_usd = NULL). A NULL row is a call whose
+    model wasn't in app/ai_pricing.py's rate table (see AiUsage's docstring
+    in app/models.py) -- it's excluded from the sum rather than counted as
+    $0, so the second return value tells a caller the true total may be
+    higher than what's returned. Pulls the whole window's rows rather than
+    a SQL SUM(): this app's usage volume (a single admin, a few dozen
+    assets) makes that difference immaterial, and a plain list is simpler
+    to test."""
+    costs = session.exec(select(AiUsage.cost_usd).where(AiUsage.created_at >= start)).all()
+    known = [c for c in costs if c is not None]
+    return sum(known, Decimal(0)), len(known) != len(costs)
+
+
+def spend_summary(session: Session) -> dict:
+    """Today's and this month's spend against their budgets, for the chat
+    panel's display. Uses the same _period_spend() budget_block_reason()
+    enforces against, so the number shown and the number enforced can never
+    disagree."""
+    now = utcnow_naive()
+    day_start = datetime(now.year, now.month, now.day)
+    month_start = datetime(now.year, now.month, 1)
+    day_spend, day_partial = _period_spend(session, day_start)
+    month_spend, month_partial = _period_spend(session, month_start)
+    return {
+        "enabled": is_ai_assistant_enabled(session),
+        "day_spend": day_spend, "day_limit": AI_DAILY_BUDGET_USD, "day_partial": day_partial,
+        "month_spend": month_spend, "month_limit": AI_MONTHLY_BUDGET_USD, "month_partial": month_partial,
+    }
+
+
+def budget_block_reason(session: Session) -> str | None:
+    """Returns None when the assistant may spend right now, otherwise a
+    human-readable reason to show the user instead of making the call.
+    Checked once before each run_chat_turn does any work, again at the top
+    of every tool-loop iteration inside it (so a budget crossed mid-turn by
+    a concurrent request stops the loop rather than continuing to spend),
+    and before _autofill_model_number's one-shot guess."""
+    if not is_ai_assistant_enabled(session):
+        return "The investigation assistant is turned off."
+    now = utcnow_naive()
+    day_spend, _ = _period_spend(session, datetime(now.year, now.month, now.day))
+    if day_spend >= AI_DAILY_BUDGET_USD:
+        return (
+            f"Today's AI budget (${AI_DAILY_BUDGET_USD:.2f}) is used up "
+            f"(${day_spend:.2f} spent) -- resets at midnight."
+        )
+    month_spend, _ = _period_spend(session, datetime(now.year, now.month, 1))
+    if month_spend >= AI_MONTHLY_BUDGET_USD:
+        return (
+            f"This month's AI budget (${AI_MONTHLY_BUDGET_USD:.2f}) is used up "
+            f"(${month_spend:.2f} spent)."
+        )
+    return None
+
+
 def _client_kwargs() -> dict:
     """Prefer a direct Anthropic key (full feature support, including the
     server-side refusal fallback used in run_chat_turn) over OpenRouter's
@@ -273,12 +367,18 @@ _MODEL_NUMBER_SYSTEM = (
 )
 
 
-def guess_model_number(asset) -> str | None:
+def guess_model_number(asset, session: Session | None = None) -> str | None:
     """Best-guess an asset's model number via a single Claude call (no tools).
     Returns the guessed model number, "N/A" when the device genuinely has none,
     or None when it can't be determined, the assistant isn't configured, or the
     API call fails (so a caller can safely skip). The serial number is
     deliberately NOT sent -- it barely helps the guess and is identifying data.
+
+    session is optional and only used to persist this call's usage/cost as
+    an AiUsage row (see _log_usage) -- pass it when a session is available
+    (as _autofill_model_number does) so this call site isn't invisible to
+    the spend ledger the way it used to be entirely. Omitting it still logs
+    the usage line, just without the DB row.
     """
     if not is_configured():
         return None
@@ -303,6 +403,15 @@ def guess_model_number(asset) -> str | None:
             resp = stream.get_final_message()
     except anthropic.APIError:
         return None  # any API failure -> skip the guess, never break the save
+
+    # Before the stop_reason check below: a refused or truncated call is
+    # still billed, same rationale as run_chat_turn's _log_usage placement.
+    _log_usage(
+        getattr(asset, "id", None), 0, using_openrouter, getattr(resp, "usage", None),
+        session=session, call_site="model_number_guess",
+        model=getattr(resp, "model", None), stop_reason=getattr(resp, "stop_reason", None),
+    )
+
     if getattr(resp, "stop_reason", None) not in (None, "end_turn"):
         return None  # a refusal or a max_tokens truncation is not a usable answer
     text = "".join(
@@ -661,7 +770,39 @@ def _replay(session: Session, asset_id: int) -> list[dict]:
         if m["role"] == "user" and all(b.get("type") != "tool_result" for b in m["content"])
     ]
     if len(turn_starts) > MAX_REPLAY_TURNS:
-        messages = messages[turn_starts[-MAX_REPLAY_TURNS]:]
+        window_start = turn_starts[-MAX_REPLAY_TURNS]
+        messages = messages[window_start:]
+        # turn_starts held indices into the pre-slice list -- rebase them
+        # (and drop everything the slice cut off) instead of re-scanning.
+        turn_starts = [i - window_start for i in turn_starts[-MAX_REPLAY_TURNS:]]
+
+    # Attachments (image/document blocks) are billed on every iteration of
+    # the turn that uploaded them AND, without this, on every replay of
+    # every later turn for the rest of the MAX_REPLAY_TURNS window -- a
+    # 15MB receipt re-sent for up to 10 more turns is the single biggest
+    # cost multiplier in this feature. Strip them from every turn except
+    # the newest one (turn_starts[-1], the turn this call is being made
+    # for): Claude can no longer re-examine an old attachment's bytes in a
+    # later turn, but it still sees that one was there and what was said
+    # about it, via the placeholder text below. This turn's own attachments
+    # (messages[newest_turn_start:]) are left untouched by slicing
+    # messages[:newest_turn_start] below.
+    if turn_starts:
+        newest_turn_start = turn_starts[-1]
+        for msg in messages[:newest_turn_start]:
+            if msg["role"] != "user" or not isinstance(msg["content"], list):
+                continue
+            stripped = []
+            for block in msg["content"]:
+                if isinstance(block, dict) and block.get("type") in ("image", "document"):
+                    name = block.get("title") or "attachment"
+                    stripped.append({
+                        "type": "text",
+                        "text": f'[{block["type"]} "{name}" from an earlier turn -- re-upload to re-examine it]',
+                    })
+                else:
+                    stripped.append(block)
+            msg["content"] = stripped
 
     if messages:
         # Cache breakpoint on the newest turn's message (the brand-new user
@@ -676,7 +817,17 @@ def _replay(session: Session, asset_id: int) -> list[dict]:
     return messages
 
 
-def _log_usage(asset_id: int, iteration: int, using_openrouter: bool, usage) -> None:
+def _log_usage(
+    asset_id: int | None,
+    iteration: int,
+    using_openrouter: bool,
+    usage,
+    *,
+    session: Session | None = None,
+    call_site: str = "chat",
+    model: str | None = None,
+    stop_reason: str | None = None,
+) -> None:
     """Logs one token-usage line per API call at INFO. Under launchd the
     configured stdout handler lands it in logs/app.log (see
     app/logging_config.py and scripts/com.assetmgt.app.plist).
@@ -692,12 +843,26 @@ def _log_usage(asset_id: int, iteration: int, using_openrouter: bool, usage) -> 
     nothing was cached. Those two need different fixes, so don't collapse
     them into one value.
 
-    Must not raise: it runs before run_chat_turn's stop_reason branches, so
-    a malformed or usage-less response must not take down the whole turn on
-    a purely diagnostic line -- hence the getattr-with-default in tok().
+    When session is given, this also persists the call as an AiUsage row --
+    the spend ledger budget_block_reason() and spend_summary() read from.
+    session is keyword-only and optional so every existing call site (and
+    every existing test) that only wants the log line keeps working
+    unchanged; the two real call sites (run_chat_turn, guess_model_number)
+    pass it. model is the model *as served* (resp.model), not necessarily
+    the configured MODEL -- run_chat_turn's server-side refusal fallback
+    can serve a different one.
+
+    Must not raise: it runs before the caller's stop_reason branches, so a
+    malformed or usage-less response -- or a transient DB error on the
+    ledger write -- must not take down the whole turn on what is otherwise
+    a purely diagnostic line. Hence the getattr-with-default in tok(), and
+    the try/except around the persistence step.
     """
-    def tok(name: str) -> str:
-        value = getattr(usage, name, None)
+    def tok(name: str):
+        return getattr(usage, name, None)
+
+    def tok_str(name: str) -> str:
+        value = tok(name)
         return "n/a" if value is None else str(value)
 
     logger.info(
@@ -705,11 +870,38 @@ def _log_usage(asset_id: int, iteration: int, using_openrouter: bool, usage) -> 
         asset_id,
         iteration,
         "openrouter" if using_openrouter else "anthropic",
-        tok("input_tokens"),
-        tok("output_tokens"),
-        tok("cache_read_input_tokens"),
-        tok("cache_creation_input_tokens"),
+        tok_str("input_tokens"),
+        tok_str("output_tokens"),
+        tok_str("cache_read_input_tokens"),
+        tok_str("cache_creation_input_tokens"),
     )
+
+    if session is None:
+        return
+    try:
+        cost = ai_pricing.cost_usd(
+            model, tok("input_tokens"), tok("output_tokens"),
+            tok("cache_read_input_tokens"), tok("cache_creation_input_tokens"),
+        )
+        session.add(AiUsage(
+            asset_id=asset_id,
+            call_site=call_site,
+            provider="openrouter" if using_openrouter else "anthropic",
+            model=model,
+            iteration=iteration,
+            input_tokens=tok("input_tokens"),
+            output_tokens=tok("output_tokens"),
+            cache_read_tokens=tok("cache_read_input_tokens"),
+            cache_write_tokens=tok("cache_creation_input_tokens"),
+            stop_reason=stop_reason,
+            cost_usd=cost,
+        ))
+        session.commit()
+    except Exception:
+        logger.exception(
+            "Failed to persist AiUsage row for asset=%s call_site=%s -- spend for this "
+            "call is only in the log line above, not the ledger.", asset_id, call_site,
+        )
 
 
 def run_chat_turn(
@@ -732,6 +924,13 @@ def run_chat_turn(
     the MAX_REPLAY_TURNS window."""
     if not is_configured():
         return "Neither ANTHROPIC_API_KEY nor OPENROUTER_API_KEY is set -- the investigation assistant is not configured."
+
+    # Checked before anything is persisted, same placement as is_configured()
+    # above -- a budget-blocked turn shouldn't leave a stray user message
+    # with no reply. Checked again at the top of every loop iteration below.
+    reason = budget_block_reason(session)
+    if reason:
+        return reason
 
     import anthropic  # deferred: importing at module load would break app
 
@@ -775,6 +974,16 @@ def run_chat_turn(
     system_prompt = _system_prompt(session, asset)
 
     for iteration in range(MAX_TOOL_ITERATIONS):
+        # Re-checked every iteration (not just once above): a budget crossed
+        # mid-turn -- by this same multi-iteration turn, or by a concurrent
+        # chat/guess request against another asset -- stops the loop here
+        # rather than continuing to spend past the ceiling. Returning here
+        # (before the API call) leaves the transcript on the same
+        # already-persisted, resendable state as the MAX_TOOL_ITERATIONS
+        # exhaustion path below.
+        reason = budget_block_reason(session)
+        if reason:
+            return f"{reason} This question is saved -- ask again once the budget allows it."
         create_kwargs: dict = dict(
             model=MODEL,
             max_tokens=MAX_TOKENS,
@@ -825,7 +1034,11 @@ def run_chat_turn(
         # Before the stop_reason branches below: those return early, and a
         # refused or truncated call is still a billed call worth accounting
         # for.
-        _log_usage(asset.id, iteration, using_openrouter, getattr(resp, "usage", None))
+        _log_usage(
+            asset.id, iteration, using_openrouter, getattr(resp, "usage", None),
+            session=session, call_site="chat",
+            model=getattr(resp, "model", None), stop_reason=getattr(resp, "stop_reason", None),
+        )
 
         if resp.stop_reason == "refusal":
             category = getattr(resp.stop_details, "category", None) if resp.stop_details else None

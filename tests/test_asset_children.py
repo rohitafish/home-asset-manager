@@ -7,6 +7,8 @@ module exists for; the rest pin delete_asset_cascade/reassign_asset_children
 themselves.
 """
 
+from decimal import Decimal
+
 from conftest import make_asset, make_interface
 from sqlmodel import SQLModel, select
 
@@ -16,6 +18,7 @@ from app.asset_children import (
     reassign_asset_children,
 )
 from app.models import (
+    AiUsage,
     Asset,
     AssetNote,
     AssetService,
@@ -30,13 +33,13 @@ from app.models import (
 
 def test_asset_child_models_completeness():
     """Every SQLModel table with a plain `asset_id` FK back to asset.id,
-    other than Asset itself and the self-referential CIRelationship (handled
-    separately by design -- see asset_children.py's module docstring), must
-    be in ASSET_CHILD_MODELS."""
+    other than Asset itself, the self-referential CIRelationship, and the
+    AiUsage spend ledger (all three handled separately by design -- see
+    asset_children.py's module docstring), must be in ASSET_CHILD_MODELS."""
     discovered = set()
     for cls in SQLModel.__subclasses__():
         table = getattr(cls, "__table__", None)
-        if table is None or cls in (Asset, CIRelationship):
+        if table is None or cls in (Asset, CIRelationship, AiUsage):
             continue
         column = table.columns.get("asset_id")
         if column is None:
@@ -87,6 +90,23 @@ def test_delete_asset_cascade_safe_with_no_dependents(session):
     delete_asset_cascade(session, asset.id)
     session.commit()
     assert session.get(Asset, asset.id) is None
+
+
+def test_delete_asset_cascade_detaches_ai_usage_instead_of_deleting_it(session):
+    """AiUsage is the AI spend ledger -- deleting an asset must not erase the
+    record of money already spent against it, unlike every model in
+    ASSET_CHILD_MODELS (which IS meaningless without its asset)."""
+    asset = make_asset(session, hostname="doomed")
+    usage = AiUsage(asset_id=asset.id, call_site="chat", provider="anthropic", cost_usd=Decimal("0.05"))
+    session.add(usage)
+    session.commit()
+
+    delete_asset_cascade(session, asset.id)
+    session.commit()
+
+    session.refresh(usage)
+    assert usage.asset_id is None  # detached, not deleted
+    assert usage.cost_usd == Decimal("0.05")  # the spend record survives intact
 
 
 def test_reassign_asset_children_moves_every_dependent_row(session):
@@ -145,3 +165,20 @@ def test_reassign_asset_children_noop_when_ids_match(session):
     session.commit()
     for model in ASSET_CHILD_MODELS:
         assert len(session.exec(select(model).where(model.asset_id == asset.id)).all()) == 1
+
+
+def test_reassign_asset_children_moves_ai_usage_to_survivor(session):
+    """Unlike delete (which detaches to NULL), a merge reassigns AiUsage rows
+    to the survivor same as every other child model -- no spend is lost by
+    that, since the survivor is the asset going forward."""
+    survivor = make_asset(session, hostname="survivor")
+    duplicate = make_asset(session, hostname="duplicate")
+    usage = AiUsage(asset_id=duplicate.id, call_site="chat", provider="anthropic", cost_usd=Decimal("0.10"))
+    session.add(usage)
+    session.commit()
+
+    reassign_asset_children(session, survivor_id=survivor.id, duplicate_id=duplicate.id)
+    session.commit()
+
+    session.refresh(usage)
+    assert usage.asset_id == survivor.id

@@ -196,6 +196,7 @@ def run_enrichment() -> dict:
         summary = enrich_findings_from_services(session)
         run.summary = (
             f"services_checked={summary['services_checked']} "
+            f"nvd_queries={summary['nvd_queries']} "
             f"candidate_cves={summary['candidate_cves']} "
             f"vulns_created={summary['vulnerabilities_created']} "
             f"findings_created={summary['findings_created']}"

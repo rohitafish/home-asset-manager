@@ -18,18 +18,24 @@ from app.assistant import (
     _append_message,
     _coerce_proposal_value,
     _log_usage,
+    _period_spend,
     _replay,
     _request_safe_blocks,
     _tool_propose_set_field,
     apply_proposal,
+    budget_block_reason,
     build_asset_context,
     chat_transcript,
     describe_proposal,
     describe_tool_call,
     guess_model_number,
+    is_ai_assistant_enabled,
     run_chat_turn,
+    set_ai_assistant_enabled,
+    spend_summary,
 )
 from app.models import (
+    AiUsage,
     AssetNote,
     ChangeProposal,
     ChatMessage,
@@ -486,6 +492,44 @@ def test_replay_counts_image_attachment_turn_as_a_turn_start(session):
     assert any(b["type"] == "image" for b in messages[0]["content"])
 
 
+def test_replay_strips_attachment_from_an_earlier_turn_but_not_the_newest(session):
+    """The single biggest cost multiplier this feature had: an attachment used
+    to be re-billed on every replay of every later turn for the rest of the
+    MAX_REPLAY_TURNS window. Only the newest turn (the one this _replay call is
+    for) should still carry its image/document bytes -- an older turn's
+    attachment is replaced with a text placeholder."""
+    asset = make_asset(session)
+    session.add(ChatMessage(
+        asset_id=asset.id, role="user",
+        content_json=json.dumps([
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "Zm9v"}},
+            {"type": "text", "text": "[Attached 1 file(s): receipt.jpg.]\n\nwhat's the serial?"},
+        ]),
+    ))
+    session.add(ChatMessage(asset_id=asset.id, role="assistant", content_json='[{"type": "text", "text": "TG123"}]'))
+    session.add(ChatMessage(
+        asset_id=asset.id, role="user",
+        content_json=json.dumps([
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "Zm9v"}, "title": "warranty.pdf"},
+            {"type": "text", "text": "[Attached 1 file(s): warranty.pdf.]\n\nand the warranty end date?"},
+        ]),
+    ))
+    session.commit()
+
+    messages = _replay(session, asset.id)
+
+    assert len(messages) == 3
+    older_turn = messages[0]["content"]
+    assert not any(b["type"] in ("image", "document") for b in older_turn)
+    placeholder = next(b for b in older_turn if b["type"] == "text" and "earlier turn" in b["text"])
+    assert "receipt.jpg" not in placeholder["text"]  # image blocks carry no filename to preserve
+
+    newest_turn = messages[2]["content"]
+    doc_block = next(b for b in newest_turn if b["type"] == "document")
+    assert doc_block["title"] == "warranty.pdf"
+    assert doc_block["source"]["data"] == "Zm9v"  # bytes intact for the turn that uploaded them
+
+
 # -- run_chat_turn tool loop, via a fake Anthropic client ---------------------
 
 
@@ -714,6 +758,239 @@ def test_log_usage_survives_missing_usage_object(caplog):
     out = caplog.records[-1].getMessage()
     assert "asset=7 iter=3" in out
     assert "in=n/a" in out
+
+
+# -- _log_usage persisting to the AiUsage ledger ------------------------------
+
+
+def test_log_usage_persists_ai_usage_row_with_computed_cost(session):
+    asset = make_asset(session)
+    usage = SimpleNamespace(
+        input_tokens=1000, output_tokens=500,
+        cache_read_input_tokens=200, cache_creation_input_tokens=100,
+    )
+
+    _log_usage(
+        asset.id, 2, False, usage,
+        session=session, call_site="chat", model="claude-opus-5", stop_reason="end_turn",
+    )
+
+    rows = session.exec(select(AiUsage).where(AiUsage.asset_id == asset.id)).all()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.call_site == "chat"
+    assert row.provider == "anthropic"
+    assert row.model == "claude-opus-5"
+    assert row.iteration == 2
+    assert row.stop_reason == "end_turn"
+    assert row.input_tokens == 1000 and row.output_tokens == 500
+    # (1000*5 + 500*25 + 200*5*0.1 + 100*5*1.25) / 1_000_000
+    # = (5000 + 12500 + 100 + 625) / 1_000_000
+    assert row.cost_usd == Decimal("0.018225")
+
+
+def test_log_usage_unknown_model_persists_null_cost(session):
+    """An unpriced model (an Anthropic model not in the rate table, or --
+    much more commonly -- an OpenRouter call) must not silently record cost
+    0; it needs to stay NULL so budget_block_reason's SUM() treats it as
+    unknown, not as free."""
+    asset = make_asset(session)
+    usage = SimpleNamespace(input_tokens=100, output_tokens=50)
+
+    _log_usage(
+        asset.id, 0, True, usage,
+        session=session, call_site="chat", model="some-openrouter-model", stop_reason="end_turn",
+    )
+
+    row = session.exec(select(AiUsage).where(AiUsage.asset_id == asset.id)).one()
+    assert row.cost_usd is None
+    assert row.provider == "openrouter"
+
+
+def test_log_usage_without_session_does_not_persist(session):
+    """session is optional -- omitting it (as every pre-existing caller/test
+    does) must log without touching the database."""
+    asset = make_asset(session)
+
+    _log_usage(asset.id, 0, False, SimpleNamespace(input_tokens=1, output_tokens=1))
+
+    assert session.exec(select(AiUsage)).all() == []
+
+
+def test_log_usage_db_failure_does_not_raise(session, monkeypatch):
+    """The persistence step must not be able to take down a chat turn -- same
+    must-not-raise invariant as the log line itself."""
+    def _boom(*a, **kw):
+        raise RuntimeError("db is down")
+
+    monkeypatch.setattr(session, "commit", _boom)
+
+    _log_usage(  # must not raise
+        1, 0, False, SimpleNamespace(input_tokens=1, output_tokens=1),
+        session=session, call_site="chat", model="claude-opus-5",
+    )
+
+
+# -- budget_block_reason / spend_summary / the kill switch -------------------
+
+
+def _usage_row(session, *, cost, created_at=None, call_site="chat"):
+    from app.clock import utcnow_naive
+    row = AiUsage(
+        asset_id=None, call_site=call_site, provider="anthropic", model="claude-opus-5",
+        input_tokens=0, output_tokens=0, cost_usd=cost,
+        created_at=created_at or utcnow_naive(),
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def test_budget_block_reason_none_when_under_both_budgets(session, monkeypatch):
+    import app.assistant as assistant_module
+    monkeypatch.setattr(assistant_module, "AI_DAILY_BUDGET_USD", Decimal("5.00"))
+    monkeypatch.setattr(assistant_module, "AI_MONTHLY_BUDGET_USD", Decimal("50.00"))
+
+    assert budget_block_reason(session) is None
+
+
+def test_budget_block_reason_blocks_at_daily_limit(session, monkeypatch):
+    import app.assistant as assistant_module
+    monkeypatch.setattr(assistant_module, "AI_DAILY_BUDGET_USD", Decimal("1.00"))
+    monkeypatch.setattr(assistant_module, "AI_MONTHLY_BUDGET_USD", Decimal("50.00"))
+    _usage_row(session, cost=Decimal("1.00"))  # exactly at the limit -- >= blocks
+
+    reason = budget_block_reason(session)
+
+    assert reason is not None
+    assert "Today's AI budget" in reason
+
+
+def test_budget_block_reason_blocks_at_monthly_limit(session, monkeypatch):
+    import app.assistant as assistant_module
+    monkeypatch.setattr(assistant_module, "AI_DAILY_BUDGET_USD", Decimal("100.00"))  # day is fine
+    monkeypatch.setattr(assistant_module, "AI_MONTHLY_BUDGET_USD", Decimal("2.00"))
+    _usage_row(session, cost=Decimal("2.00"))
+
+    reason = budget_block_reason(session)
+
+    assert reason is not None
+    assert "month's AI budget" in reason
+
+
+def test_budget_block_reason_ignores_spend_outside_the_window(session, monkeypatch):
+    from datetime import timedelta
+
+    import app.assistant as assistant_module
+    from app.clock import utcnow_naive
+    monkeypatch.setattr(assistant_module, "AI_DAILY_BUDGET_USD", Decimal("1.00"))
+    monkeypatch.setattr(assistant_module, "AI_MONTHLY_BUDGET_USD", Decimal("50.00"))
+    _usage_row(session, cost=Decimal("1.00"), created_at=utcnow_naive() - timedelta(days=2))
+
+    assert budget_block_reason(session) is None  # yesterday's spend doesn't count against today
+
+
+def test_budget_block_reason_null_cost_row_not_treated_as_zero(session):
+    """A NULL-cost row (unpriced model) must not silently sum as $0 -- it's
+    simply excluded, per app/ai_pricing.py's contract, so it can never by
+    itself clear a budget check that a priced call would have failed."""
+    from datetime import datetime as _dt
+
+    _usage_row(session, cost=None)
+    _usage_row(session, cost=Decimal("1.00"))
+
+    total, has_unknown = _period_spend(session, _dt(2000, 1, 1))
+
+    assert total == Decimal("1.00")  # the NULL row contributes nothing to the sum
+    assert has_unknown is True
+
+
+def test_budget_block_reason_off_when_kill_switch_disabled(session):
+    set_ai_assistant_enabled(session, False)
+
+    reason = budget_block_reason(session)
+
+    assert reason == "The investigation assistant is turned off."
+
+
+def test_kill_switch_defaults_to_enabled(session):
+    assert is_ai_assistant_enabled(session) is True
+
+
+def test_kill_switch_round_trips(session):
+    set_ai_assistant_enabled(session, False)
+    assert is_ai_assistant_enabled(session) is False
+
+    set_ai_assistant_enabled(session, True)
+    assert is_ai_assistant_enabled(session) is True
+
+
+def test_spend_summary_reflects_the_same_totals_budget_block_reason_uses(session):
+    _usage_row(session, cost=Decimal("2.50"))
+
+    summary = spend_summary(session)
+
+    assert summary["day_spend"] == Decimal("2.50")
+    assert summary["month_spend"] == Decimal("2.50")
+    assert summary["enabled"] is True
+
+
+# -- run_chat_turn budget enforcement -----------------------------------------
+
+
+def test_run_chat_turn_blocked_by_budget_never_calls_the_api(session, monkeypatch):
+    import app.assistant as assistant_module
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setattr(assistant_module, "budget_block_reason", lambda s: "Today's AI budget is used up.")
+    asset = make_asset(session)
+
+    result = run_chat_turn(session, asset, "hello")
+
+    assert result == "Today's AI budget is used up."
+    # Blocked before anything was persisted -- same placement as is_configured().
+    assert session.exec(select(ChatMessage).where(ChatMessage.asset_id == asset.id)).all() == []
+
+
+def test_run_chat_turn_stops_mid_loop_when_budget_crosses(session, monkeypatch):
+    """A budget crossed between tool-loop iterations (e.g. by a concurrent
+    request) must stop the loop before the next API call, leaving the
+    transcript on the same resendable state as the MAX_TOOL_ITERATIONS
+    exhaustion path -- not mid-response."""
+    import anthropic
+
+    import app.assistant as assistant_module
+
+    asset = make_asset(session, hostname="probe-target")
+    responses = [
+        _FakeMessage(
+            content=[_FakeContentBlock(
+                type="tool_use", id="tu_1", name="search_assets", input={"query": "probe"},
+            )],
+            stop_reason="tool_use",
+        ),
+        # A second response is queued but must never be consumed.
+        _FakeMessage(content=[_FakeContentBlock(type="text", text="should not be reached")]),
+    ]
+    monkeypatch.setattr(anthropic, "Anthropic", _make_fake_anthropic_class(responses))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    # Allowed for the turn-start check and iteration 0's check (so the first
+    # tool_use response IS consumed) -- blocked from iteration 1 onward, so
+    # the queued second response must never be reached.
+    calls = {"n": 0}
+
+    def _reason(s):
+        calls["n"] += 1
+        return None if calls["n"] <= 2 else "Today's AI budget is used up."
+
+    monkeypatch.setattr(assistant_module, "budget_block_reason", _reason)
+
+    result = run_chat_turn(session, asset, "find the probe asset")
+
+    assert result is not None and "budget" in result
+    assert len(responses) == 1  # the second queued response was never consumed
 
 
 # -- guess_model_number (auto model-number best guess) -----------------------

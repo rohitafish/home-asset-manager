@@ -11,11 +11,22 @@ means adding it to ASSET_CHILD_MODELS once, here.
 CIRelationship is handled separately (not in this list) because it's a
 self-referential asset<->asset link -- a row can reference a given asset via
 either asset_id or related_asset_id, not just asset_id.
+
+AiUsage is also handled separately (not in this list): it's the AI spend
+ledger (see app/assistant.py's _log_usage/budget_block_reason), and deleting
+an asset must never erase the record of money already spent -- that's a
+different meaning than "this row is meaningless without its asset", which is
+what every model in ASSET_CHILD_MODELS assumes when delete_asset_cascade
+deletes it outright. So on delete, an AiUsage row's asset_id is detached to
+NULL instead (the column is nullable for exactly this reason); on merge, it's
+reassigned to the survivor like every other child model, since no spend is
+lost by that.
 """
 
 from sqlmodel import Session, select
 
 from app.models import (
+    AiUsage,
     Asset,
     AssetInterface,
     AssetNote,
@@ -43,6 +54,10 @@ def delete_asset_cascade(session: Session, asset_id: int) -> None:
         for row in session.exec(select(model).where(model.asset_id == asset_id)).all():
             session.delete(row)
 
+    for usage in session.exec(select(AiUsage).where(AiUsage.asset_id == asset_id)).all():
+        usage.asset_id = None
+        session.add(usage)
+
     for rel in session.exec(
         select(CIRelationship).where(
             (CIRelationship.asset_id == asset_id)
@@ -69,6 +84,10 @@ def reassign_asset_children(session: Session, survivor_id: int, duplicate_id: in
         for row in session.exec(select(model).where(model.asset_id == duplicate_id)).all():
             row.asset_id = survivor_id
             session.add(row)
+
+    for usage in session.exec(select(AiUsage).where(AiUsage.asset_id == duplicate_id)).all():
+        usage.asset_id = survivor_id
+        session.add(usage)
 
     for rel in session.exec(
         select(CIRelationship).where(

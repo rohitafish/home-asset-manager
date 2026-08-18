@@ -132,16 +132,21 @@ def _autofill_model_number(session: Session, asset: Asset) -> None:
     Runs at most once per asset: model_number_guess_attempted_at is stamped on
     any real attempt (including a no-answer miss), so a guess that comes back
     "unknown" isn't re-run on every subsequent save. Not stamped when the API
-    isn't configured yet, so configuring it later still lets the guess happen."""
+    isn't configured yet, or when the AI budget/kill-switch currently blocks
+    spending (assistant.budget_block_reason) -- both are temporary
+    conditions, so a later save should still get its one guess once either
+    clears, the same way it already does for "not configured"."""
     if asset.model_number or asset.identity_locked or not assistant.is_configured():
         return
     if asset.model_number_guess_attempted_at is not None:
         return  # already tried once -- don't pay for another LLM call on every save
     if not (asset.vendor and asset.serial_number and asset.model and asset.purchase_date):
         return
+    if assistant.budget_block_reason(session):
+        return
     asset.model_number_guess_attempted_at = utcnow_naive()
     session.add(asset)
-    guess = assistant.guess_model_number(asset)
+    guess = assistant.guess_model_number(asset, session)
     if not guess:
         return
     if guess == "N/A":
@@ -1299,6 +1304,10 @@ def _chat_panel_context(session: Session, asset: Asset, error: str | None = None
             for p in _pending_proposals(session, asset.id)
         ] if configured else [],
         "other_asset_proposals": _other_asset_proposals(session, asset.id) if configured else [],
+        # Shown even when not "configured" via an API key -- the toggle and
+        # spend figures are meaningful (and the toggle still clickable) the
+        # moment a key IS added, so there's no reason to hide them earlier.
+        "spend": assistant.spend_summary(session),
         "error": error,
     }
 
@@ -1375,6 +1384,24 @@ def asset_chat_clear(asset_id: int, request: Request, session: Session = Depends
         session.delete(row)
     session.commit()
     return templates.TemplateResponse(request, "_chat_panel.html", _chat_panel_context(session, asset))
+
+
+@router.post("/settings/ai-assistant/toggle")
+def toggle_ai_assistant(
+    request: Request, asset_id: int = Form(...), enabled: str = Form(...),
+    session: Session = Depends(get_session),
+):
+    """Global on/off switch for the assistant (assistant.set_ai_assistant_enabled)
+    -- applies to every asset's chat panel and the model-number auto-guess
+    alike, not just the one this was clicked from. asset_id is only which
+    panel to re-render, same role as panel_asset_id on the proposal routes."""
+    asset = session.get(Asset, asset_id)
+    if not asset:
+        return RedirectResponse(url="/assets")
+    assistant.set_ai_assistant_enabled(session, enabled == "true")
+    if request.headers.get("hx-request"):
+        return templates.TemplateResponse(request, "_chat_panel.html", _chat_panel_context(session, asset))
+    return RedirectResponse(url=f"/assets/{asset_id}", status_code=303)
 
 
 @router.post("/assets/{asset_id}/proposals/apply-all")

@@ -290,6 +290,21 @@ def test_chat_panel_context_separates_own_and_cross_asset_proposals(session, mon
     assert [pd["row"].id for pd in groups[0]["proposals"]] == [cross.id]
 
 
+def test_chat_panel_context_includes_spend_summary_even_when_not_configured(session, monkeypatch):
+    """The budget/kill-switch display and toggle are meaningful (and the
+    toggle stays clickable) whether or not an API key is currently set --
+    unlike transcript/proposals, spend isn't gated behind `configured`."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    asset = make_asset(session)
+
+    ctx = _chat_panel_context(session, asset)
+
+    assert ctx["configured"] is False
+    assert ctx["spend"]["enabled"] is True  # kill switch defaults to on
+    assert ctx["spend"]["day_spend"] == Decimal(0)
+
+
 def test_autofill_after_applying_only_price_is_still_blank(session):
     """Price applied but date not yet -- the auto-fill run after that single
     apply must stay a no-op until the date is present too."""
@@ -402,6 +417,11 @@ def test_valuables_query_default_is_valuable_still_shows_up(session):
 # -- _autofill_model_number (auto model-number guess on save) ----------------
 # The LLM call (assistant.guess_model_number) and is_configured are monkeypatched,
 # so these test only the orchestration/gating -- no real API call.
+# guess_model_number is now called as (asset, session), hence the `s=None` on
+# every stub below -- budget_block_reason() itself is exercised for real
+# against the empty in-memory AiUsage/AppSetting tables (default budgets are
+# well above $0 spent, and the kill switch defaults to on), except in the
+# tests that specifically target it further down.
 
 def _qualifying(session, **kw):
     d = dict(vendor="Amazon", model="Echo", serial_number="SER1",
@@ -416,7 +436,7 @@ def _notes(session, asset_id):
 
 def test_autofill_model_number_fills_guess_with_unverified_marker(session, monkeypatch):
     monkeypatch.setattr("app.assistant.is_configured", lambda: True)
-    monkeypatch.setattr("app.assistant.guess_model_number", lambda a: "Echo (3rd Gen)")
+    monkeypatch.setattr("app.assistant.guess_model_number", lambda a, s=None: "Echo (3rd Gen)")
     asset = _qualifying(session)
 
     _autofill_model_number(session, asset)
@@ -428,7 +448,7 @@ def test_autofill_model_number_fills_guess_with_unverified_marker(session, monke
 
 def test_autofill_model_number_writes_na_cleanly(session, monkeypatch):
     monkeypatch.setattr("app.assistant.is_configured", lambda: True)
-    monkeypatch.setattr("app.assistant.guess_model_number", lambda a: "N/A")
+    monkeypatch.setattr("app.assistant.guess_model_number", lambda a, s=None: "N/A")
     asset = _qualifying(session)
 
     _autofill_model_number(session, asset)
@@ -438,7 +458,7 @@ def test_autofill_model_number_writes_na_cleanly(session, monkeypatch):
 
 def test_autofill_model_number_noop_when_guess_none(session, monkeypatch):
     monkeypatch.setattr("app.assistant.is_configured", lambda: True)
-    monkeypatch.setattr("app.assistant.guess_model_number", lambda a: None)
+    monkeypatch.setattr("app.assistant.guess_model_number", lambda a, s=None: None)
     asset = _qualifying(session)
 
     _autofill_model_number(session, asset)
@@ -450,7 +470,7 @@ def test_autofill_model_number_noop_when_guess_none(session, monkeypatch):
 def test_autofill_model_number_skips_when_already_set(session, monkeypatch):
     monkeypatch.setattr("app.assistant.is_configured", lambda: True)
     monkeypatch.setattr("app.assistant.guess_model_number",
-                        lambda a: (_ for _ in ()).throw(AssertionError("should not be called")))
+                        lambda a, s=None: (_ for _ in ()).throw(AssertionError("should not be called")))
     asset = _qualifying(session, model_number="EXISTING")
 
     _autofill_model_number(session, asset)
@@ -461,7 +481,7 @@ def test_autofill_model_number_skips_when_already_set(session, monkeypatch):
 def test_autofill_model_number_skips_locked_identity(session, monkeypatch):
     monkeypatch.setattr("app.assistant.is_configured", lambda: True)
     monkeypatch.setattr("app.assistant.guess_model_number",
-                        lambda a: (_ for _ in ()).throw(AssertionError("should not be called")))
+                        lambda a, s=None: (_ for _ in ()).throw(AssertionError("should not be called")))
     asset = _qualifying(session, identity_locked=True)
 
     _autofill_model_number(session, asset)
@@ -472,7 +492,7 @@ def test_autofill_model_number_skips_locked_identity(session, monkeypatch):
 def test_autofill_model_number_skips_when_a_field_missing(session, monkeypatch):
     monkeypatch.setattr("app.assistant.is_configured", lambda: True)
     monkeypatch.setattr("app.assistant.guess_model_number",
-                        lambda a: (_ for _ in ()).throw(AssertionError("should not be called")))
+                        lambda a, s=None: (_ for _ in ()).throw(AssertionError("should not be called")))
     asset = _qualifying(session, serial_number=None)  # not fully documented
 
     _autofill_model_number(session, asset)
@@ -483,7 +503,7 @@ def test_autofill_model_number_skips_when_a_field_missing(session, monkeypatch):
 def test_autofill_model_number_skips_when_not_configured(session, monkeypatch):
     monkeypatch.setattr("app.assistant.is_configured", lambda: False)
     monkeypatch.setattr("app.assistant.guess_model_number",
-                        lambda a: (_ for _ in ()).throw(AssertionError("should not be called")))
+                        lambda a, s=None: (_ for _ in ()).throw(AssertionError("should not be called")))
     asset = _qualifying(session)
 
     _autofill_model_number(session, asset)
@@ -494,13 +514,29 @@ def test_autofill_model_number_skips_when_not_configured(session, monkeypatch):
     assert asset.model_number_guess_attempted_at is None
 
 
+def test_autofill_model_number_skips_when_budget_blocked(session, monkeypatch):
+    """Same "don't burn the attempt" rule as not-configured: a budget/kill-switch
+    block is a temporary condition, so a later save should still get its guess
+    once the block clears."""
+    monkeypatch.setattr("app.assistant.is_configured", lambda: True)
+    monkeypatch.setattr("app.assistant.budget_block_reason", lambda s: "Today's AI budget is used up.")
+    monkeypatch.setattr("app.assistant.guess_model_number",
+                        lambda a, s=None: (_ for _ in ()).throw(AssertionError("should not be called")))
+    asset = _qualifying(session)
+
+    _autofill_model_number(session, asset)
+
+    assert asset.model_number is None
+    assert asset.model_number_guess_attempted_at is None
+
+
 def test_autofill_model_number_does_not_retry_after_a_miss(session, monkeypatch):
     """A guess that comes back unknown stamps the attempt timestamp, so a later
     save doesn't pay for another ~10s LLM call. This is the re-fire bug fix."""
     monkeypatch.setattr("app.assistant.is_configured", lambda: True)
     calls = {"n": 0}
 
-    def _guess(a):
+    def _guess(a, s=None):
         calls["n"] += 1
         return None
 
@@ -518,7 +554,7 @@ def test_autofill_model_number_does_not_retry_after_a_miss(session, monkeypatch)
 
 def test_autofill_model_number_stamps_attempt_on_success(session, monkeypatch):
     monkeypatch.setattr("app.assistant.is_configured", lambda: True)
-    monkeypatch.setattr("app.assistant.guess_model_number", lambda a: "Echo (3rd Gen)")
+    monkeypatch.setattr("app.assistant.guess_model_number", lambda a, s=None: "Echo (3rd Gen)")
     asset = _qualifying(session)
 
     _autofill_model_number(session, asset)

@@ -26,6 +26,16 @@
 </div>
 {% endmacro %}
 <div id="chat-panel">
+<div class="ai-budget-bar">
+  <span class="ai-budget-figure" title="{{ 'Includes at least one call the price list can\'t cost -- actual spend may be higher.' if spend.day_partial else '' }}">Today: ${{ "{:.2f}".format(spend.day_spend) }}{{ "+" if spend.day_partial else "" }} / ${{ "{:.2f}".format(spend.day_limit) }}</span>
+  <span class="ai-budget-figure" title="{{ 'Includes at least one call the price list can\'t cost -- actual spend may be higher.' if spend.month_partial else '' }}">This month: ${{ "{:.2f}".format(spend.month_spend) }}{{ "+" if spend.month_partial else "" }} / ${{ "{:.2f}".format(spend.month_limit) }}</span>
+  <form method="post" action="/settings/ai-assistant/toggle"
+        hx-post="/settings/ai-assistant/toggle" hx-target="#chat-panel" hx-swap="outerHTML">
+    <input type="hidden" name="asset_id" value="{{ asset.id }}">
+    <input type="hidden" name="enabled" value="{{ 'false' if spend.enabled else 'true' }}">
+    <button type="submit" class="link-button">{{ "Turn assistant off" if spend.enabled else "Turn assistant on" }}</button>
+  </form>
+</div>
 {% if not configured %}
   <p class="hint">Set <code>ANTHROPIC_API_KEY</code> (or <code>OPENROUTER_API_KEY</code> as a fallback) in <code>.env</code> to enable the investigation assistant.</p>
 {% else %}

@@ -31,6 +31,7 @@ above: it's keyed by site *name* (e.g. "default"), not the v1 site UUID, and
 its response is a flat {"data": [...]} with no pagination envelope.
 """
 
+import logging
 import os
 from typing import Any
 
@@ -38,6 +39,15 @@ import httpx
 
 API_PREFIX = "/proxy/network/integration/v1"
 LEGACY_API_PREFIX = "/proxy/network/api"
+
+logger = logging.getLogger(__name__)
+
+# Hard cap on pages per _paginate() call, purely as a backstop against a
+# malformed/adversarial response (see the offset-not-advancing guard below) --
+# a home network's clients/devices/networks lists are a few dozen entries at
+# limit=200, i.e. one page in the normal case. Generous enough to never bite
+# a real (if unusually large) result set.
+_MAX_PAGES = 500
 
 
 class UnifiClient:
@@ -71,7 +81,7 @@ class UnifiClient:
         params.setdefault("limit", 200)
         offset = 0
         results: list[dict[str, Any]] = []
-        while True:
+        for _ in range(_MAX_PAGES):
             params["offset"] = offset
             resp = self._client.get(f"{API_PREFIX}{path}", params=params)
             resp.raise_for_status()
@@ -79,9 +89,29 @@ class UnifiClient:
             data = page.get("data", [])
             results.extend(data)
             total = page.get("totalCount", len(results))
-            offset += page.get("limit", len(data) or 1)
-            if not data or offset >= total:
+            next_offset = offset + page.get("limit", len(data) or 1)
+            if not data or next_offset >= total:
                 break
+            if next_offset <= offset:
+                # A server-reported limit/totalCount that doesn't actually
+                # advance the offset (e.g. "limit": 0 alongside non-empty
+                # data) would otherwise spin forever re-requesting the same
+                # page and growing `results` without bound -- termination
+                # here depends entirely on server-supplied values, so don't
+                # trust them to keep decreasing. Stop and return what's been
+                # collected so far rather than hang the request thread.
+                logger.warning(
+                    "UniFi pagination for %s stalled at offset=%s (next_offset=%s, "
+                    "totalCount=%s) -- stopping with %s results collected so far",
+                    path, offset, next_offset, total, len(results),
+                )
+                break
+            offset = next_offset
+        else:
+            logger.warning(
+                "UniFi pagination for %s hit the %s-page cap -- stopping early with %s results",
+                path, _MAX_PAGES, len(results),
+            )
         return results
 
     def list_sites(self) -> list[dict[str, Any]]:
