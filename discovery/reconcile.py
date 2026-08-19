@@ -117,8 +117,20 @@ def _find_asset_by_mac(session: Session, mac: str) -> Asset | None:
 
 
 def _find_asset_by_ip(session: Session, ip: str) -> Asset | None:
+    # Only matches an interface that has NO MAC of its own. IP is a weak,
+    # transient identity signal (DHCP reassigns it) -- a MAC is a strong one.
+    # Without this filter, a lease reused by a different physical device
+    # (routine on a network with cross-VLAN devices nmap can't ARP, so
+    # device.mac is None) would match the OLD device's interface here, and
+    # reconcile_into_db's `iface.mac = device.mac or iface.mac` below would
+    # then silently overwrite that interface's real MAC with the new
+    # device's -- permanently conflating two physical devices into one asset
+    # with no record of the mistake. A MAC-less interface has no stronger
+    # identity to protect, so it's still fair game for an IP match.
     iface = session.exec(
-        select(AssetInterface).where(AssetInterface.ip == ip).order_by(AssetInterface.last_seen.desc())
+        select(AssetInterface)
+        .where(AssetInterface.ip == ip, AssetInterface.mac.is_(None))
+        .order_by(AssetInterface.last_seen.desc())
     ).first()
     if iface:
         return session.get(Asset, iface.asset_id)

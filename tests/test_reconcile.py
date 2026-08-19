@@ -233,6 +233,34 @@ def test_reconcile_into_db_falls_back_to_ip_match_when_no_mac(session):
     assert len(session.exec(select(Asset)).all()) == 1
 
 
+def test_reconcile_into_db_does_not_reassign_ip_from_a_mac_bearing_interface(session):
+    """A reused DHCP lease must never let a new, MAC-less device (nmap can't
+    ARP across VLANs -- routine, not exotic) steal an existing device's
+    identity via IP alone. Before the fix, _find_asset_by_ip matched ANY
+    interface at that IP regardless of whether it already had a MAC, and
+    reconcile_into_db's `iface.mac = device.mac or iface.mac` then silently
+    overwrote the old device's real MAC -- permanently conflating two
+    physical devices under one asset id with no record of the mistake."""
+    old_device = make_asset(session, hostname="old-device", lifecycle_status=LifecycleStatus.discovered)
+    make_interface(session, old_device.id, mac="aa:bb:cc:00:00:01", ip="192.168.1.50")
+
+    # DHCP reassigned 192.168.1.50 to a different physical device, discovered
+    # with no MAC (cross-VLAN nmap sweep).
+    new_device = DiscoveredDevice(mac=None, ip="192.168.1.50", hostname="new-device", source="nmap")
+    result = reconcile_into_db(session, [new_device])
+
+    from sqlmodel import select
+
+    # Must NOT match the old asset -- a brand new "discovered" asset instead.
+    assert result == {"created": 1, "updated": 0, "total": 1}
+    assets = session.exec(select(Asset)).all()
+    assert len(assets) == 2
+    old_iface = session.exec(
+        select(AssetInterface).where(AssetInterface.asset_id == old_device.id)
+    ).one()
+    assert old_iface.mac == "aa:bb:cc:00:00:01"  # untouched, not overwritten to None/new
+
+
 def test_reconcile_into_db_attaches_per_vlan_gateway_ip_to_router_asset(session):
     router = make_asset(session, hostname="router", lifecycle_status=LifecycleStatus.discovered)
     make_interface(session, router.id, mac="24:5a:4c:00:00:01", ip="192.168.1.1")
