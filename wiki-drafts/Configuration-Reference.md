@@ -116,10 +116,12 @@ up in a device's hostname (e.g. devices they've personally named). Leave both
 | `BACKUP_AWS_SECRET_ACCESS_KEY` | *(empty)* | No |
 | `BACKUP_AWS_REGION` | *(empty)* | No |
 
-See the README's "Off-site database backups" section. These are expected to
-belong to an existing, full-S3-access IAM identity by deliberate choice — not
-a dedicated least-privilege one — with backup history protected by **S3
-Object Lock** on the bucket itself rather than by a restrictive IAM policy.
+These are expected to belong to an existing, full-S3-access IAM identity by
+deliberate choice — not a dedicated least-privilege one — with backup history
+protected by **S3 Object Lock** on the bucket itself rather than by a
+restrictive IAM policy. See [Backup & Disaster Recovery](Backup-and-Disaster-Recovery)
+for the full design (storage class, retention, encryption, schedule), or the
+README's "Off-site database backups" section for the setup and restore steps.
 
 > **Not read from `.env`:** `BACKUP_KEEP_LOCAL` (local dump retention count)
 > is a `backup-db.sh` shell variable read from the *process* environment —

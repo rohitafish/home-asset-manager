@@ -626,7 +626,7 @@ month. It's silent on success, same as the log rotator; anything in
 `logs/backup.error.log` means a run failed.
 
 **How you know it's working day to day:** the **Since last DB backup** card
-on the **Summary** page (turns red past 36 hours), and a `last_backup`/
+on the **Summary** page (turns red past 26 hours), and a `last_backup`/
 `backup_stale` field on `/health`'s JSON response (this never affects
 `/health`'s status code -- `redeploy.sh` uses it as a deploy gate, and a
 stale backup shouldn't make an unrelated deploy look broken). On a plain dev
