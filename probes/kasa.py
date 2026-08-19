@@ -20,6 +20,7 @@ that plainly rather than pretending the device isn't there.
 
 import json
 import socket
+import time
 
 from probes.base import DEFAULT_TIMEOUT, ProbeOutcome
 
@@ -70,9 +71,20 @@ def applies_to(asset, interfaces, services) -> bool:
     return any(s.port == 9999 for s in services)
 
 
-def _recv_exact(sock: socket.socket, n: int) -> bytes:
+def _recv_exact(sock: socket.socket, n: int, deadline: float) -> bytes:
+    # `sock`'s own timeout (set by the caller) bounds each individual recv(),
+    # not the whole read -- a device that drips one byte per (timeout - eps)
+    # never trips it, and length can be up to 65536 bytes, so that's a
+    # hang measured in hours, not seconds, on a socket that looks "active"
+    # the whole time. `deadline` is the actual wall-clock budget for the
+    # entire read; shrinking settimeout() to what's left each iteration is
+    # what makes that budget real regardless of how the bytes arrive.
     buf = bytearray()
     while len(buf) < n:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("timed out waiting for the full response")
+        sock.settimeout(remaining)
         chunk = sock.recv(n - len(buf))
         if not chunk:
             raise ConnectionError("connection closed early")
@@ -82,13 +94,14 @@ def _recv_exact(sock: socket.socket, n: int) -> bytes:
 
 def run(ip: str, timeout: float = DEFAULT_TIMEOUT) -> ProbeOutcome:
     request = _encrypt(json.dumps(_ALLOWED_REQUEST).encode())
+    deadline = time.monotonic() + timeout
     try:
         with socket.create_connection((ip, 9999), timeout=timeout) as sock:
             sock.sendall(request)
-            length = int.from_bytes(_recv_exact(sock, 4), "big")
+            length = int.from_bytes(_recv_exact(sock, 4, deadline), "big")
             if length <= 0 or length > 65536:
                 return ProbeOutcome(ok=False, summary="Unexpected response length from port 9999.")
-            body = _recv_exact(sock, length)
+            body = _recv_exact(sock, length, deadline)
     except (TimeoutError, ConnectionRefusedError, OSError):
         return ProbeOutcome(
             ok=False,
