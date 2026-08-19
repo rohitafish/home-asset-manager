@@ -33,8 +33,10 @@ refusing to restart.
 This is informational only — it never affects `/health`'s status code or
 `redeploy.sh`'s deploy gate, so it won't block a deploy or make an unrelated
 problem look broken. It just means the last off-site backup is older than
-expected; check `scripts/backup-db.sh`'s logs and your `BACKUP_*` config
-(see [Configuration Reference](Configuration-Reference#off-site-database-backups-optional)).
+26 hours; check `scripts/backup-db.sh`'s logs and your `BACKUP_*` config (see
+[Configuration Reference](Configuration-Reference#off-site-database-backups-optional)),
+or [Backup & Disaster Recovery](Backup-and-Disaster-Recovery) for how the
+staleness threshold and the success marker actually work.
 
 ---
 
