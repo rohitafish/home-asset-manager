@@ -18,6 +18,21 @@ constraint, and once one side of a dismissal is gone the "these two are
 different devices" judgement no longer refers to anything -- there's a fresh
 survivor+other pair for find_same_device_candidates() to score from scratch.
 
+ChangeProposal is a THIRD shape again: it's in ASSET_CHILD_MODELS (so the
+generic loop below handles its `asset_id` -- the change's target), but it
+also carries a second FK, `origin_asset_id` (which asset's chat the proposal
+was drafted from -- differs from asset_id for a cross-asset proposal, e.g.
+one invoice analysed on asset A proposing a field on asset B). Unlike
+CIRelationship/SameDeviceDismissal, a proposal whose *origin* asset is gone
+but whose *target* asset is still alive is still a meaningful record, so
+it's detached (origin_asset_id -> NULL, the column is nullable) rather than
+deleted on delete, and repointed rather than dropped on merge. This was
+missed for a long time -- both FKs point at the same table, but only one of
+them is named asset_id, and the generic loop only ever looks at that one
+column name. If a future model has more than one FK to Asset, it needs the
+same explicit treatment; don't assume `model.asset_id` is the only column
+that matters.
+
 AiUsage is also handled separately (not in this list): it's the AI spend
 ledger (see app/assistant.py's _log_usage/budget_block_reason), and deleting
 an asset must never erase the record of money already spent -- that's a
@@ -81,6 +96,17 @@ def delete_asset_cascade(session: Session, asset_id: int) -> None:
     ).all():
         session.delete(dismissal)
 
+    # ChangeProposal's second FK -- see the module docstring. The loop above
+    # already deleted any proposal whose *target* (asset_id) was this asset;
+    # a surviving proposal whose *origin* was this asset still targets a
+    # different, still-live asset, so detach the now-dangling reference
+    # instead of deleting a real change record.
+    for proposal in session.exec(
+        select(ChangeProposal).where(ChangeProposal.origin_asset_id == asset_id)
+    ).all():
+        proposal.origin_asset_id = None
+        session.add(proposal)
+
     session.flush()
     asset = session.get(Asset, asset_id)
     if asset:
@@ -128,6 +154,17 @@ def reassign_asset_children(session: Session, survivor_id: int, duplicate_id: in
         )
     ).all():
         session.delete(dismissal)
+
+    # ChangeProposal's second FK -- see the module docstring and the mirror
+    # block in delete_asset_cascade. The loop above already repointed
+    # asset_id == duplicate_id; repoint origin_asset_id too, for a proposal
+    # whose target survived this merge but was drafted from the duplicate's
+    # chat.
+    for proposal in session.exec(
+        select(ChangeProposal).where(ChangeProposal.origin_asset_id == duplicate_id)
+    ).all():
+        proposal.origin_asset_id = survivor_id
+        session.add(proposal)
 
     session.flush()
 

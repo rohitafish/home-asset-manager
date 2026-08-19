@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -44,6 +45,19 @@ def engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    # SQLite does not enforce foreign keys by default -- without this, a
+    # bug that leaves a dangling FK (e.g. a second FK column a cascade
+    # helper forgot about) passes every test silently and only surfaces as
+    # a real ForeignKeyViolation against Postgres in production. See
+    # app/asset_children.py's module docstring for the recurring bug class
+    # this exists to catch.
+    @event.listens_for(eng, "connect")
+    def _enable_sqlite_fk(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     SQLModel.metadata.create_all(eng)
     return eng
 
