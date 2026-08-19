@@ -29,9 +29,20 @@ KEEP_LOCAL="${BACKUP_KEEP_LOCAL:-7}"
 # IAM identity (s3-user), by deliberate choice -- see README/AGENTS.md for
 # why that's offset by S3 Object Lock further down rather than a
 # least-privilege IAM policy.
+#
+# Deliberately always exits 0, even when the key isn't found: under
+# set -euo pipefail, `grep -m1 ... | cut ...` exits non-zero when grep finds
+# no match, and pipefail propagates that through the pipeline. A plain
+# `VAR="$(_env_var KEY)"` assignment (unlike `export VAR="$(...)"`, whose
+# own exit status masks the substitution's) then trips `set -e` and exits
+# the whole script right there -- BEFORE the `:?` guards below that exist
+# specifically to name the missing key, and before the `trap ... ERR` that
+# writes to logs/backup.error.log. A missing BACKUP_S3_BUCKET used to kill
+# the job silently with a zero-byte error log that reads as a clean run.
+# Let the `:?` guards be the only thing that catches a missing value.
 _env_var() {
   [ -f "$REPO_DIR/.env" ] || return 0
-  grep -m1 "^${1}=" "$REPO_DIR/.env" | cut -d= -f2-
+  grep -m1 "^${1}=" "$REPO_DIR/.env" | cut -d= -f2- || true
 }
 
 export AWS_ACCESS_KEY_ID="$(_env_var BACKUP_AWS_ACCESS_KEY_ID)"

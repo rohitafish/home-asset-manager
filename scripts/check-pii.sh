@@ -92,14 +92,31 @@ else
 fi
 
 if [ "$MODE" = "full" ]; then
-  COMMITS="$(git rev-list --all 2>/dev/null)"
+  COMMITS="$(git rev-list --all 2>&1)"
+  REV_LIST_STATUS=$?
   LABEL="full history"
 else
-  COMMITS="$(git rev-list "$RANGE" 2>/dev/null)"
+  COMMITS="$(git rev-list "$RANGE" 2>&1)"
+  REV_LIST_STATUS=$?
   LABEL="range $RANGE"
 fi
 
 echo "== PII check: $LABEL =="
+
+# An unresolvable range (git rev-list exits non-zero, e.g. a local sha the
+# remote advertised but this checkout hasn't fetched) is NOT the same thing
+# as a genuinely empty range -- treating them the same used to mean a push
+# whose range couldn't be resolved sailed through with zero PII/secret
+# scanning while printing a green "ok ... nothing to check" line. Fail loud
+# instead: this is exactly the "reported clean while carrying real values"
+# shape this script exists to prevent, just one level up.
+if [ "$REV_LIST_STATUS" -ne 0 ]; then
+  fail "$LABEL: could not resolve commit range ($COMMITS)"
+  echo
+  echo "== Summary =="
+  echo "  $FAILS FAIL(s)"
+  exit 1
+fi
 
 if [ -z "$COMMITS" ]; then
   ok "$LABEL: nothing to check (no commits in range)"
