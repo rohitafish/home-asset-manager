@@ -103,6 +103,31 @@ def test_delete_asset_cascade_removes_same_device_dismissals(session):
     assert session.get(Asset, other.id) is not None
 
 
+def test_delete_asset_cascade_detaches_origin_asset_id_on_cross_asset_proposal(session):
+    """ChangeProposal has a SECOND FK to Asset (origin_asset_id -- which chat
+    a proposal was drafted from, distinct from asset_id -- the change's
+    target -- for a cross-asset proposal, e.g. one invoice analysed on asset
+    A proposing a field on asset B). Deleting the origin asset must not
+    delete the proposal (its target is still alive and the change record is
+    still real) or leave a dangling FK -- it must null origin_asset_id.
+    Regression test for a real ForeignKeyViolation on delete; only catchable
+    now that conftest.py's engine enables PRAGMA foreign_keys=ON."""
+    origin = make_asset(session, hostname="origin-of-the-chat")
+    target = make_asset(session, hostname="target-of-the-change")
+    proposal = ChangeProposal(
+        asset_id=target.id, origin_asset_id=origin.id, kind="set_field", payload_json="{}"
+    )
+    session.add(proposal)
+    session.commit()
+
+    delete_asset_cascade(session, origin.id)
+    session.commit()  # must not raise ForeignKeyViolation
+
+    assert session.get(Asset, target.id) is not None  # target survives
+    session.refresh(proposal)
+    assert proposal.origin_asset_id is None  # dangling reference detached, not the row deleted
+
+
 def test_delete_asset_cascade_safe_with_no_dependents(session):
     asset = make_asset(session, hostname="lonely")
     delete_asset_cascade(session, asset.id)
@@ -192,6 +217,30 @@ def test_reassign_asset_children_deletes_same_device_dismissals(session):
     session.commit()
 
     assert session.exec(select(SameDeviceDismissal)).all() == []
+
+
+def test_reassign_asset_children_repoints_origin_asset_id_on_cross_asset_proposal(session):
+    """Mirror of the delete-side test: a proposal whose target survived the
+    merge on a DIFFERENT asset, but was drafted from the duplicate's chat,
+    must have origin_asset_id repointed to the survivor -- not left dangling
+    (the general ASSET_CHILD_MODELS loop only repoints asset_id, and this
+    proposal's asset_id was never the duplicate, so that loop never touches
+    it)."""
+    survivor = make_asset(session, hostname="survivor")
+    duplicate = make_asset(session, hostname="duplicate")
+    target = make_asset(session, hostname="unrelated-target")
+    proposal = ChangeProposal(
+        asset_id=target.id, origin_asset_id=duplicate.id, kind="set_field", payload_json="{}"
+    )
+    session.add(proposal)
+    session.commit()
+
+    reassign_asset_children(session, survivor_id=survivor.id, duplicate_id=duplicate.id)
+    session.commit()
+
+    session.refresh(proposal)
+    assert proposal.origin_asset_id == survivor.id
+    assert proposal.asset_id == target.id  # target FK untouched -- it was never the duplicate
 
 
 def test_reassign_asset_children_noop_when_ids_match(session):
