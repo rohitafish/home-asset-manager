@@ -13,6 +13,7 @@ VLAN and is exactly as read-only as the broadcast form.
 import logging
 import re
 import socket
+import time
 from urllib.parse import urlparse
 
 import httpx
@@ -102,10 +103,18 @@ def run(ip: str, timeout: float = DEFAULT_TIMEOUT) -> ProbeOutcome:
                 client.stream("GET", location, follow_redirects=False) as resp,
             ):
                 if resp.status_code == 200:
+                    # `timeout` above bounds each individual read, not the
+                    # whole streamed body (httpx applies a single float
+                    # timeout to connect/read/write/pool independently) --
+                    # a device dripping one chunk per (timeout - eps) would
+                    # otherwise never trip either that or the byte cap below.
+                    # This deadline is the actual wall-clock budget for the
+                    # whole fetch.
+                    deadline = time.monotonic() + timeout
                     body = b""
                     for chunk in resp.iter_bytes():
                         body += chunk
-                        if len(body) >= _MAX_LOCATION_BYTES:
+                        if len(body) >= _MAX_LOCATION_BYTES or time.monotonic() > deadline:
                             break
                     text = body[:_MAX_LOCATION_BYTES].decode(errors="replace")
                     for tag, key in [
