@@ -34,17 +34,48 @@ def _require_nmap() -> str:
     return path
 
 
+# Bounded grace period for draining output after a kill -- see _run_nmap.
+_KILL_GRACE_SECONDS = 10
+
+
 def _run_nmap(args: list[str], use_sudo: bool = False, timeout: int = 1800) -> str:
     nmap_path = _require_nmap()
     # -n: non-interactive. Fails fast with a clear error instead of hanging if
     # the scoped NOPASSWD sudoers rule for nmap isn't present (see README).
     cmd = (["sudo", "-n", nmap_path] if use_sudo else [nmap_path]) + args
-    result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=timeout, check=False
+    # Not plain subprocess.run(..., timeout=timeout): on a timeout, run()
+    # kills only the direct child and then calls an UNTIMED communicate() to
+    # drain output before re-raising. With use_sudo=True the direct child is
+    # `sudo`, which cannot propagate SIGKILL to the root `nmap` it spawned --
+    # that orphaned root process keeps the inherited stdout/stderr pipes
+    # open, so the untimed communicate() blocks until it exits on its own,
+    # giving `timeout` no actual effect on this path. A caller in the
+    # request path (a sync FastAPI route, run in the shared threadpool)
+    # would then hang indefinitely instead of failing after `timeout`
+    # seconds, and enough stuck requests exhaust the pool and stop the app
+    # serving anything.
+    #
+    # start_new_session=True + an explicit, bounded second communicate()
+    # caps the worst case at timeout + _KILL_GRACE regardless of what the
+    # orphaned nmap does. It does NOT fix the orphan itself -- killing a
+    # root child from here would need its own sudoers rule (sudo kill),
+    # which is a separate, undone piece of hardening; this only guarantees
+    # the caller stops waiting.
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True
     )
-    if result.returncode != 0:
-        raise RuntimeError(f"nmap failed ({result.returncode}): {result.stderr.strip()}")
-    return result.stdout
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.communicate(timeout=_KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass  # gave it a bounded grace period; move on regardless
+        raise
+    if proc.returncode != 0:
+        raise RuntimeError(f"nmap failed ({proc.returncode}): {(stderr or '').strip()}")
+    return stdout
 
 
 def _parse_host_addresses(host_el: ET.Element) -> dict:
