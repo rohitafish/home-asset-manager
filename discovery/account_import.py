@@ -115,21 +115,29 @@ def load_account_file(path: str | Path) -> list[AccountDevice]:
         if not section:
             continue
         source_document = section.get("source_document", "")
-        for entry in section.get("devices", []):
-            devices.append(
-                AccountDevice(
-                    vendor=vendor,
-                    account_name=entry["account_name"],
-                    model=entry.get("model"),
-                    model_number=entry.get("model_number"),
-                    serial=entry.get("serial"),
-                    registered=_parse_date(entry.get("registered")),
-                    asset_id=entry.get("asset_id"),
-                    hostname=entry.get("hostname"),
-                    source_document=source_document,
-                    location=entry.get("location"),
+        for idx, entry in enumerate(section.get("devices", [])):
+            try:
+                devices.append(
+                    AccountDevice(
+                        vendor=vendor,
+                        account_name=entry["account_name"],
+                        model=entry.get("model"),
+                        model_number=entry.get("model_number"),
+                        serial=entry.get("serial"),
+                        registered=_parse_date(entry.get("registered")),
+                        asset_id=entry.get("asset_id"),
+                        hostname=entry.get("hostname"),
+                        source_document=source_document,
+                        location=entry.get("location"),
+                    )
                 )
-            )
+            except (KeyError, ValueError) as exc:
+                # entry["account_name"] is a bare index (not .get()), and
+                # _parse_date's strptime has no try/except -- a typo in this
+                # hand-maintained file (a missing key, "2024-3-1" instead of
+                # zero-padded) used to exit with a bare KeyError/ValueError
+                # naming neither the vendor nor which record was malformed.
+                raise ValueError(f"{vendor}.devices[{idx}] in {path} is malformed: {exc}") from exc
     return devices
 
 
