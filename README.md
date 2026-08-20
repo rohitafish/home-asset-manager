@@ -42,9 +42,9 @@ it needs real access to the LAN:
   costs it nothing and containerising it avoids managing a native install.
 - Vulnerability enrichment matches nmap-detected service versions against the
   live **NVD CVE API** (keyword search), then layers on **FIRST EPSS**
-  scores and the **CISA KEV** catalogue. (The original plan considered the
-  `vulscan`/`vulners` nmap NSE scripts; NVD's own API turned out simpler to
-  integrate correctly and to verify, so that's what's implemented.)
+  scores and the **CISA KEV** catalogue. The NVD API is used directly rather
+  than nmap's own `vulscan`/`vulners` NSE scripts, since it's simpler to
+  integrate correctly and to verify results against.
 
 ### Reconciliation across discovery sources
 
@@ -99,9 +99,9 @@ brew services start colima
 # a current `python@3.x` as a runtime dependency, linked as the unversioned
 # `python3` ahead of macOS's own /usr/bin/python3 (Xcode Command Line Tools,
 # commonly 3.9.x) once Homebrew's shellenv is on PATH. 3.9 also works if you
-# land there some other way (verified), but it's past its own upstream
-# end-of-life (Oct 2025) -- not the target to aim for. `./scripts/preflight.sh`
-# below checks which one you're actually on.
+# land there some other way, but it's past its own upstream end-of-life
+# (Oct 2025) -- not the target to aim for. `./scripts/preflight.sh` below
+# checks which one you're actually on.
 cd home-asset-manager   # wherever you cloned this repo
 python3 -m venv .venv
 source .venv/bin/activate
@@ -127,16 +127,16 @@ alembic upgrade head
 
 ### Keeping Homebrew packages current: `scripts/mini-brew-upgrade.sh`
 
-On the always-on Mini, don't run a bare `brew upgrade` -- a manual one once
-briefly broke the live app (a lazily-compiled Jinja2 template hit a codec
-lookup against Python files that Homebrew's cleanup had just deleted out
-from under the still-running process). `scripts/mini-brew-upgrade.sh` stops
-the app service first, upgrades with cleanup deferred, restarts, then runs
-`preflight.sh` to confirm nothing broke -- instead of relying on remembering
-to do all that by hand every time. `-y` skips the confirmation prompt,
-`--no-preflight` skips the doctor run. Only meaningful on a machine running
-the `com.assetmgt.app` LaunchAgent -- it refuses to run anywhere else. See
-AGENTS.md's "Deployment topology" for the full incident and reasoning.
+On the always-on host, don't run a bare `brew upgrade` -- Homebrew's own
+cleanup step can delete files still open in a running process's memory, and
+an interpreter or a lazily-compiled template hitting one of those deleted
+files mid-request will break the live app until it's restarted.
+`scripts/mini-brew-upgrade.sh` stops the app service first, upgrades with
+cleanup deferred, restarts, then runs `preflight.sh` to confirm nothing
+broke -- instead of relying on remembering to do all that by hand every
+time. `-y` skips the confirmation prompt, `--no-preflight` skips the doctor
+run. Only meaningful on a machine running the `com.assetmgt.app`
+LaunchAgent -- it refuses to run anywhere else.
 
 ### Checking the install: `scripts/preflight.sh`
 
@@ -251,12 +251,13 @@ source .venv/bin/activate
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-If you run this *on the Mini itself* to reproduce something against the real
-data, change `--port 8000` to `8001` — the live service already holds 8000 —
-and know that it is **not** an isolated sandbox: it reads the live `.env` and
-so talks to the live Postgres, with `--reload` re-executing on every save.
-Spot-check read-only paths that way; run anything that writes data on a dev
-machine against its own database. (See AGENTS.md's "Deployment topology".)
+If you run this *on your deployment host itself* to reproduce something
+against the real data, change `--port 8000` to `8001` — the live service
+already holds 8000 — and know that it is **not** an isolated sandbox: it
+reads the live `.env` and so talks to the live Postgres, with `--reload`
+re-executing on every save. Spot-check read-only paths that way; run
+anything that writes data on a dev machine against its own database
+instead.
 
 **For always-on LAN access (the intended real deployment):**
 
@@ -310,8 +311,12 @@ launchctl load ~/Library/LaunchAgents/com.assetmgt.logrotate.plist
 
 This runs `scripts/rotate-logs.sh` hourly, gzip-archiving and truncating
 each log in place once it passes 10 MB, keeping the last 5 archives. It
-truncates rather than renames deliberately -- see the script's header
-comment and AGENTS.md if you're tempted to reach for `newsyslog` instead.
+truncates rather than renames deliberately -- launchd holds an open
+append-mode file handle on the exact inode for the life of the app process,
+and renaming the live file would leave it writing into the archived copy
+while the new file stays empty until the next restart. See the script's
+header comment if you're tempted to reach for `newsyslog` instead, which
+renames.
 
 Postgres's own container log is capped the same way, via `docker-compose.yml`'s
 `logging:` block (`max-size: 10m`, `max-file: 5`) -- Docker's default
@@ -320,9 +325,10 @@ Postgres failure that log grows exactly as unbounded as the app's did.
 
 ### Power outages and unattended restart
 
-The Mini restarts itself automatically after a power failure (macOS's "restart
-after power failure" setting, `pmset -g` → `autorestart 1`), and sleep is
-disabled, so the hardware side of unattended recovery is already correct.
+The host can restart itself automatically after a power failure (macOS's
+"restart after power failure" setting, `pmset -g` → `autorestart 1`), and
+sleep disabled, so the hardware side of unattended recovery is
+straightforward.
 
 **But if FileVault is enabled, the app will not come back until someone logs
 in at the console.** `com.assetmgt.app`, `homebrew.mxcl.colima`, and everything
@@ -334,26 +340,24 @@ volume. Auto-login is also unavailable whenever FileVault is on -- macOS
 disables the two together -- so there's no way to get both full-disk
 encryption and unattended restart at once.
 
-This project keeps FileVault on and accepts the manual-login requirement: the
-Mini's disk holds `.env` (including `APP_ADMIN_PASSWORD` and the off-site
+This is a real tradeoff worth making deliberately rather than skipping past:
+the host's disk holds `.env` (including `APP_ADMIN_PASSWORD` and the off-site
 backup's AWS credentials) plus the full asset inventory and vulnerability
-findings, and unencrypted-at-rest isn't an acceptable trade for a few hours of
-unattended uptime. A UPS sized to ride out typical outages is the intended
-mitigation instead -- keep the Mini running through short outages rather than
+findings, so unencrypted-at-rest isn't a good trade for a few hours of
+unattended uptime in most cases. If you keep FileVault on and accept the
+manual-login requirement, a UPS sized to ride out typical outages is the
+better mitigation -- keep the host running through short outages rather than
 trying to make it restart unattended through long ones.
 
-If you do find the dashboard unreachable after an outage: check `last` and
+If you find the dashboard unreachable after an outage, check `last` and
 `sysctl -n kern.boottime` for the actual boot and login times before
-diagnosing further. `logs/app.error.log` will show a handful of Postgres
-`connection refused` tracebacks from `com.assetmgt.app` racing Colima's
-startup (expected, see `scripts/com.assetmgt.app.plist`'s `ThrottleInterval`
-comment) -- those cover only the last minute or two after login, not the
-outage itself, and are a symptom of the FileVault wait above, not a separate
-bug.
+diagnosing further -- a handful of Postgres `connection refused` tracebacks
+in `logs/app.error.log` right after login is expected (the app racing
+Colima's own startup) and isn't a separate bug.
 
-### Shutting down or rebooting the Mini gracefully
+### Shutting down or rebooting the host gracefully
 
-When you deliberately reboot or shut down the Mini -- a maintenance restart, a
+When you deliberately reboot or shut down the host -- a maintenance restart, a
 manual OS update, moving the machine -- stop Colima first. A normal macOS
 shutdown ( → Shut Down, or `sudo shutdown -r now`) is already graceful in
 that it sends every process a `SIGTERM` and flushes disks; it is nothing like
@@ -361,11 +365,9 @@ pulling power. But macOS only waits a few seconds after that `SIGTERM` before
 escalating to `SIGKILL`, and Colima's lightweight VM (the lima/vz guest that
 runs Postgres) often needs longer than that to tear down. If it gets killed
 mid-stop, it can be left in a half-stopped state that its LaunchAgent then
-refuses to restart into on the next boot -- `colima start` loops on `vz driver
-is running but host agent is not` / `exit status 1` (see
-`/opt/homebrew/var/log/colima.log`), Postgres never comes up, and the app
-crash-loops on `port 5432 ... connection refused`. Recovery is a manual
-`colima start` on the Mini (then `launchctl kickstart -k
+refuses to restart into on the next boot, and the app then crash-loops on
+`port 5432 ... connection refused` since Postgres never comes up. Recovery is
+a manual `colima start` on the host (then `launchctl kickstart -k
 gui/$(id -u)/com.assetmgt.app`), which you can avoid entirely by stopping
 Colima cleanly up front.
 
@@ -390,30 +392,28 @@ previous section).
 
 ### Keeping the host responsive
 
-After the above outage, the Mini was barely usable for several minutes once
-someone actually logged in -- worth measuring rather than guessing at, since
-the instinct is to assume the app itself is the cost.
+After an unclean shutdown, a host can feel sluggish for several minutes once
+someone actually logs back in -- worth understanding rather than assuming the
+app itself is the cost.
 
 **It isn't.** Measured at steady state: the app process runs at ~0.1% CPU /
 0.1% memory, and Colima's four VM-support processes sit at ~0% CPU / ~0.7%
 memory combined. Colima itself is already configured conservatively
 (`cpu: 2`, `memory: 1` GB, `vz` + `virtiofs` in `~/.colima/default/colima.yaml`).
-None of assetmgt's processes appeared anywhere in the top 15 CPU consumers
-during the actual slowdown -- the load was macOS's own post-crash
-housekeeping, all triggered by the unclean shutdown, not by this app:
+Any post-reboot slowdown is macOS's own housekeeping catching up, not this
+app:
 
-- **Spotlight** (`mdworker`/`mds`/`mds_stores`) reindexing after the unclean
-  shutdown invalidated its index -- the single largest contributor observed.
-- **Time Machine** (`backupd`) catching up on the backup run the outage caused
-  it to miss.
-- **Chrome** restoring its previous session as a Login Item.
-- **`mobileassetd`** (Apple's OS/asset update downloader) and
-  **`modelcatalogd`** (Apple Intelligence's model catalog), both kicking off
-  at login.
+- **Spotlight** (`mdworker`/`mds`/`mds_stores`) reindexing after an unclean
+  shutdown invalidates its index.
+- **Time Machine** (`backupd`) catching up on any backup run an outage
+  caused it to miss.
+- Login Items (browsers, etc.) restoring their previous session.
+- Apple's own background services (OS/asset update downloads, on-device
+  model catalogs) kicking off at login.
 - Antivirus real-time scanning, if installed.
 
-Load fell from a peak of ~44 back to normal within about ten minutes on its
-own, with no intervention.
+This settles back to normal on its own within several minutes, with no
+intervention needed.
 
 Two exclusions are worth making regardless, since they cost nothing to give
 up: exclude `~/.colima` and this repo's `.venv` from both Time Machine and
@@ -441,30 +441,30 @@ the backup drive too -- but `mdfind -onlyin` against it returns nothing.
 macOS already excludes Time Machine volumes from indexing; that flag is
 misleading, not a real gap.)
 
-The rest of what showed up -- Chrome as a Login Item, automatic update
-downloads, Apple Intelligence, antivirus scan scheduling -- are host
-preferences, not something this app needs one way or the other. Worth
-tuning if login-time responsiveness matters more than having them ready
-immediately, but that trade-off belongs to whoever uses this particular Mac,
-not to this project.
+The rest of the list above -- Login Items, automatic update downloads,
+on-device model catalogs, antivirus scan scheduling -- are host preferences,
+not something this app needs one way or the other. Worth tuning if
+login-time responsiveness matters more than having them ready immediately,
+but that trade-off belongs to whoever uses the machine, not to this
+project.
 
 ### Off-site database backups
 
 The database is the only thing here that isn't reconstructable from git --
 everything you've recorded (serial numbers, purchase prices, warranty dates,
 the whole investigation log) lives in one Postgres volume on one Mac. Time
-Machine backing up the Mini does **not** protect it: Postgres runs inside a
+Machine backing up the host does **not** protect it: Postgres runs inside a
 Colima VM, so Time Machine only ever sees one large opaque VM disk image, not
 the database files inside it -- a snapshot taken mid-write has no
 crash-consistency guarantee and has never been proven restorable. If the
-Mini were lost or damaged at the same time as (or instead of) its Time
+host were lost or damaged at the same time as (or instead of) its Time
 Machine drive, the inventory would be gone for good.
 
 This is deliberately a *durability* answer, not an *availability* one: after
 a real disaster the app is down until you rebuild a host, and that's fine --
-the app has to run on the LAN for nmap to work at all, so there was never a
-version of this that kept the dashboard itself reachable through a lost
-Mini. What this protects is the data.
+the app has to run on the LAN for nmap to work at all, so there's no way to
+keep the dashboard itself reachable through a lost host. What this protects
+is the data.
 
 **What it costs:** at the database's current size (under 9 MB), thirty daily
 dumps plus six monthly ones add up to well under $0.01/month on S3. Don't
@@ -482,7 +482,7 @@ This setup reuses an existing, full-S3-access IAM identity rather than
 provisioning a new least-privilege one -- a deliberate choice, offset by S3
 **Object Lock** (Compliance mode) instead of a scoped IAM policy. Object
 Lock is enforced by S3 itself: once an object is written, *nothing* --
-not this credential, not a compromised Mini, not the AWS account owner, not
+not this credential, not a compromised host, not the AWS account owner, not
 AWS support -- can delete or overwrite it before its retention date. That's
 a stronger guarantee than an IAM policy gives against a credential with full
 access, but it comes with a real constraint: **Object Lock can only be
@@ -494,9 +494,8 @@ means picking the wrong region/name isn't a quick fix later -- pick
 deliberately.
 
 The bucket, versioning, encryption, public access block, and lifecycle
-rules are set up via `aws-cli` rather than the console -- ask your assistant
-to run this once real credentials are in place (see below), or run the
-equivalent `aws s3api` commands yourself:
+rules are set up via `aws-cli` rather than the console. Run these once real
+credentials are in place (see below):
 
 ```bash
 aws s3api create-bucket --bucket YOUR-BUCKET-NAME --region YOUR-REGION \
@@ -561,10 +560,11 @@ writes a delete marker and makes the old copy *noncurrent*, which is what
 transition -- at ~1-2 MB per object it costs *more* than S3 Standard, due
 to per-object minimums and retrieval fees.)
 
-**On the Mini**, add these four values to `.env` (not `~/.aws/credentials`
--- this backup job reads its AWS config directly out of `.env`, alongside
-this app's other secrets, since it's using an existing shared identity
-rather than a dedicated one):
+**On the deployment host**, add these four values to `.env` (not
+`~/.aws/credentials` -- this backup job reads its AWS config directly out of
+`.env`, alongside this app's other secrets). You can reuse an existing
+full-access identity as described above, or a dedicated, more narrowly
+scoped one if you'd rather not share credentials across purposes:
 
 ```bash
 BACKUP_S3_BUCKET=YOUR-BUCKET-NAME
@@ -574,7 +574,7 @@ BACKUP_AWS_REGION=YOUR-REGION
 ```
 
 As with every other secret in `.env`, this file is gitignored and excluded
-from `redeploy.sh`'s rsync -- add these values directly on the Mini, not on
+from `redeploy.sh`'s rsync -- add these values directly on the host, not on
 a dev machine.
 
 #### Installing the backup LaunchAgent
@@ -616,7 +616,7 @@ no-op (this is what makes running three times a day safe against the
 COMPLIANCE Object Lock, which would reject a same-key re-upload). Each run
 dumps the database with `pg_dump -Fc` from inside the Postgres container,
 keeps the last 7 dumps locally in `backups/` (gitignored, and excluded from
-`redeploy.sh`'s rsync -- that directory belongs to the Mini and is never
+`redeploy.sh`'s rsync -- that directory belongs to the host and is never
 synced from a dev machine) and uploads to `s3://YOUR-BUCKET-NAME/daily/` with
 Object Lock retention 30 days out. It also keeps one longer-lived copy per
 calendar month in `monthly/` (locked 186 days): the first successful daily of
@@ -635,7 +635,7 @@ the deployed instance runs the nightly job.
 
 #### Restoring
 
-**Onto the existing Mini** (e.g. after a bad bulk edit or merge):
+**Onto the existing host** (e.g. after a bad bulk edit or merge):
 
 ```bash
 ssh mini && cd ~/claudecode/assetmgt
@@ -655,7 +655,7 @@ export AWS_SECRET_ACCESS_KEY=$(grep -m1 '^BACKUP_AWS_SECRET_ACCESS_KEY=' .env | 
 export AWS_DEFAULT_REGION=$(grep -m1 '^BACKUP_AWS_REGION=' .env | cut -d= -f2-)
 
 # Fetch the dump you want.
-aws s3 cp s3://YOUR-BUCKET-NAME/daily/assetmgt-2026-07-28.dump /tmp/restore.dump
+aws s3 cp s3://YOUR-BUCKET-NAME/daily/assetmgt-YYYY-MM-DD.dump /tmp/restore.dump
 
 # Drop and recreate the database, then restore into it. --force terminates
 # any lingering connections; --no-owner tolerates a different POSTGRES_USER.
@@ -679,11 +679,11 @@ was taken (a column or table added by a migration since), producing a
 schema that matches neither the dump nor `alembic upgrade head`.
 
 **On a brand-new machine from zero** -- the actual disaster this exists
-for, e.g. the Mini itself was lost or destroyed: see
+for, e.g. the host itself was lost or destroyed: see
 ["Installing on a new Mac"](#installing-on-a-new-mac) below for the full
-runbook. (If you're here because of a bad bulk edit or merge on a Mini that's
-otherwise fine, you want the "Onto the existing Mini" instructions above, not
-this.)
+runbook. (If you're here because of a bad bulk edit or merge on a host
+that's otherwise fine, you want the "Onto the existing host" instructions
+above, not this.)
 
 **Test this once, into a disposable database, so "we have backups" is a
 verified fact and not a hope:**
@@ -724,19 +724,19 @@ local `/tmp/verify.dump` copy needs cleaning up.
 **What isn't backed up:** `.env` -- it holds `APP_ADMIN_PASSWORD`,
 `UNIFI_API_KEY`, `NVD_API_KEY`, `ANTHROPIC_API_KEY`/`OPENROUTER_API_KEY`, and
 the `BACKUP_AWS_*` credentials themselves, and it's gitignored *and* excluded from
-`redeploy.sh`'s rsync, so after losing the Mini it exists nowhere. A
+`redeploy.sh`'s rsync, so after losing the host it exists nowhere. A
 restore brings back all the *data*, but the app still won't start (and the
 next backup can't run) without `.env` recreated from elsewhere. Copy its
 contents into your password manager now -- there's no code fix for this,
 just something to actually go and do.
 
-**Keeping the Mini's `.env` and the template in sync.** Because the Mini's
+**Keeping the host's `.env` and the template in sync.** Because the host's
 `.env` is never synced, a key you add there (a new API key, say) is invisible
 to your dev machine and to `.env.example`. `scripts/env-structure.sh` closes
 that gap safely -- it compares the *key names, order and headings* across your
-Mac, the Mini and `.env.example` and never moves a value (the Mini is queried
-for key names only, over ssh, and re-checked locally so no secret can come
-back):
+Mac, the deployment host and `.env.example` and never moves a value (the host
+is queried for key names only, over ssh, and re-checked locally so no secret
+can come back):
 
 ```bash
 ./scripts/env-structure.sh                        # three-way report
@@ -747,23 +747,24 @@ back):
 placeholder and comment verbatim, and each *new* key is appended as an empty
 `KEY=` with a `TODO` for you to document -- its real value is never copied.
 Review the printed diff, fill in the `TODO`s with publish-safe placeholders,
-then commit. (A heading you edited on the Mini has to be re-typed here by hand,
-by design -- free-text typed on the Mini is exactly where a stray secret or
-household name could hide, so it's never copied into a tracked file.)
+then commit. (A heading you edited on the host has to be re-typed here by
+hand, by design -- free-text typed on the host is exactly where a stray
+secret or personal identifier could hide, so it's never copied into a
+tracked file.)
 
 ## Installing on a new Mac
 
-This is the runbook for the actual disaster the backup exists for: the Mini
+This is the runbook for the actual disaster the backup exists for: the host
 itself is lost, destroyed, or being replaced, and you're starting from a
 brand-new machine with nothing on it but this git repo and an S3 bucket. (If
-the Mini is fine and you just need to undo a bad bulk edit or merge, use
-["Onto the existing Mini"](#restoring) above instead -- this section assumes
-there's no existing install to fall back into.)
+the existing host is fine and you just need to undo a bad bulk edit or
+merge, use ["Onto the existing host"](#restoring) above instead -- this
+section assumes there's no existing install to fall back into.)
 
 **Before you start:** the credentials you need to download the backup --
 `BACKUP_S3_BUCKET`, `BACKUP_AWS_ACCESS_KEY_ID`, `BACKUP_AWS_SECRET_ACCESS_KEY`,
 `BACKUP_AWS_REGION` -- live only in `.env`, which (as noted just above) is
-*not* part of the backup and doesn't survive losing the Mini. Get these, and
+*not* part of the backup and doesn't survive losing the host. Get these, and
 everything else `.env` held, out of your password manager first -- this
 runbook can't start without them.
 
@@ -811,26 +812,21 @@ A couple of things a fresh clone doesn't give you that "One-time setup" glosses 
   canonical list of keys -- this file is not part of the backup and never
   has been (see "What isn't backed up" above). `APP_ADMIN_PASSWORD` must be
   a real value, not left unset or as the placeholder `change-me` -- the app
-  now refuses to start otherwise. `UNIFI_API_KEY` and `NVD_API_KEY` need
+  refuses to start otherwise. `UNIFI_API_KEY` and `NVD_API_KEY` need
   regenerating rather than copying (see their setup sections above); make
   sure `DEFAULT_OWNER`/`SECONDARY_OWNER_NAME`/`SECONDARY_OWNER_HOSTNAME_KEYWORD`
   match what the old instance used, or newly discovered assets start getting
   assigned differently than the restored history implies.
 - **Install the pre-push hook** (the last line above) -- git never clones or
   syncs hooks, so a fresh checkout has no PII/test/lint gate on `git push`
-  until you copy it into place. `./scripts/preflight.sh` (next) now checks for
-  this and warns if it's missing or has drifted from the tracked template. See
-  AGENTS.md's "PII / privacy" for the full rationale.
+  until you copy it into place. `./scripts/preflight.sh` (next) checks for
+  this and warns if it's missing or has drifted from the tracked template.
 
 Worth a checkpoint here, before investing effort in the restore below:
 
 ```bash
 ./scripts/preflight.sh
 ```
-
-`logs/` is tracked in git (via a `.gitkeep`), so unlike a `.env` you have to
-rebuild by hand, it's just *there* after the clone -- nothing to do for it
-here.
 
 ```bash
 docker compose up -d
@@ -861,13 +857,13 @@ a monthly one instead:
 aws s3 ls s3://YOUR-BUCKET-NAME/daily/
 aws s3 ls s3://YOUR-BUCKET-NAME/monthly/
 
-aws s3 cp s3://YOUR-BUCKET-NAME/daily/assetmgt-2026-07-29.dump /tmp/restore.dump
+aws s3 cp s3://YOUR-BUCKET-NAME/daily/assetmgt-YYYY-MM-DD.dump /tmp/restore.dump
 ```
 
-`daily/` holds 30 days of dumps, `monthly/` holds 186 -- if the Mini had
+`daily/` holds 30 days of dumps, `monthly/` holds 186 -- if the host had
 already been down for a while, `monthly/` may be the only copy left.
 
-Unlike restoring onto an existing Mini, there's no `dropdb`/`createdb` step
+Unlike restoring onto an existing host, there's no `dropdb`/`createdb` step
 here -- `docker compose up -d` above already created an empty `assetmgt`
 database, so restore straight into it:
 
@@ -986,7 +982,7 @@ the investigation assistant and notes use to refer to it (e.g. "asset #33"), so
 the list is easy to cross-reference. (Internet-facing isn't a list column; it's
 on each asset's detail page and **Edit** form.) Vendor/OEM normally
 comes from nmap's MAC OUI lookup, with a hostname-based fallback (e.g.
-"Alex's iPhone 15 Plus" → Apple) for devices where that can never work --
+"Jordan's iPhone" → Apple) for devices where that can never work --
 notably anything using a private/randomized Wi-Fi address, which
 deliberately doesn't match a real manufacturer OUI. UniFi's own
 infrastructure devices (APs, switches, the gateway) are always tagged
@@ -1087,15 +1083,12 @@ manual entry via the asset's **Edit** page:
   finds nothing, it records why in the discovery run history rather than
   guessing.
 
-Everything else — iPhones, iPads, Apple Watch, the Tesla Powerwall, and any
-other asset a collector can't reach — is manual entry only. An earlier plan
-for this feature was to import Apple's [Mactracker](https://mactracker.ca)
-app's own database, since it already tracks this kind of data; that turned
-out not to work as a source. Mactracker's bundled model catalog is
-encrypted, and its "My Models" sync files (local and iCloud) sit behind
-macOS's file-access permissions in a way SSH can't cross — and in practice
-only one entry in it (this Mac mini) was still a current asset anyway, which
-`system_profiler` now covers directly and more reliably.
+Everything else — iPhones, iPads, Apple Watch, a connected home battery
+system, and any other asset a collector can't reach — is manual entry only.
+(Third-party Mac model catalogs like [Mactracker](https://mactracker.ca)
+aren't a reliable source for this either — their data is typically locked
+behind their own app's sync and permissions model — so `system_profiler`
+above is the more direct route for the one asset it can cover.)
 
 Tick **Lock identity** on an asset's Edit page to stop either collector from
 overwriting a serial/model you've corrected or entered by hand — it guards
@@ -1136,8 +1129,8 @@ python -m discovery.cli revalue          # dry run: prints the diff, writes noth
 python -m discovery.cli revalue --apply  # writes, one timeline note per change
 ```
 
-(run it where the database lives — the Mini — see "Deployment topology" in
-AGENTS.md). Each write records an `AssetNote` with the old and new figure, so
+(run it where the database lives, i.e. on the deployment host, not a dev
+checkout elsewhere). Each write records an `AssetNote` with the old and new figure, so
 a value the rule overwrites is always recoverable from the asset's timeline.
 
 The rule is **new-for-old**: what an equivalent *new* item costs today, which
@@ -1169,11 +1162,11 @@ Two things worth doing before you rely on the numbers for a claim:
 
 1. **Confirm the sum insured is new-for-old**, per above — this is the whole
    point of the figure.
-2. **A fixed home battery (e.g. the Tesla Powerwall) usually sits under
-   *buildings* cover, not contents**, and is often over a single-article
-   limit, so it may need specifying separately. It's also the largest single
-   value here — one call to the insurer to place it correctly is worth more
-   than any formula.
+2. **A fixed home battery system usually sits under *buildings* cover, not
+   contents**, and is often over a single-article limit, so it may need
+   specifying separately. It's also likely among the largest single values
+   in your inventory — one call to the insurer to place it correctly is
+   worth more than any formula.
 
 ### Same-device correlation (Investigate)
 
@@ -1268,7 +1261,7 @@ ssh mini "grep 'app.assistant' ~/claudecode/assetmgt/logs/app.log"
 ```
 
 ```
-2026-08-09 07:33:09 INFO  app.assistant asset=12 iter=0 via=anthropic
+YYYY-MM-DD HH:MM:SS INFO  app.assistant asset=12 iter=0 via=anthropic
                           in=2 out=5 cache_read=15257 cache_write=33
 ```
 
@@ -1286,8 +1279,9 @@ Reading it:
   conversation is normal; that call is populating the cache.
 - **`cache_read=0` on repeat turns for the same asset** means something is
   changing the static prefix between calls and the cache never hits. That is
-  a real (and expensive) bug -- see the note in `_replay`/`run_chat_turn`
-  about building the system prompt once per turn.
+  a real (and expensive) bug -- the fix is generally to make sure the system
+  prompt and tool definitions are built once and reused unchanged across a
+  conversation's turns, not rebuilt (even slightly differently) each time.
 - **`cache_read=n/a`** means the provider didn't report the field at all,
   which is deliberately distinguished from a genuine zero: it indicates the
   endpoint doesn't support prompt caching, not that the cache missed.
@@ -1316,8 +1310,8 @@ imports this data from a hand-transcribed file instead.
 
 1. Save an export from each vendor's device list into `devices/` at the repo
    root (a screenshot, a PDF, whatever the vendor's site gives you). This
-   directory is gitignored — it holds serials and room names, which belong in
-   `.pii-denylist` (see `AGENTS.md`), not in git history.
+   directory is gitignored — it holds serials and room names, which belong
+   in `.pii-denylist`, not in git history.
 2. Transcribe the devices you want imported into `devices/accounts.json`:
    ```jsonc
    {
@@ -1410,14 +1404,14 @@ UniFi may never have resolved a friendly name for.
   knows the Sonos wire format.
 - Seeds from Sonos IPs already in the inventory (any asset whose vendor or
   hostname mentions "sonos", or with a port-1400 `AssetService`) —
-  deliberately never multicast/SSDP, since this network's VLANs don't carry
-  it (the same reason `probes/ssdp.py`'s M-SEARCH is unicast).
+  deliberately never multicast/SSDP, since many segmented home networks
+  (VLANs, guest networks, Wi-Fi client isolation) don't carry multicast
+  traffic reliably (the same reason `probes/ssdp.py`'s M-SEARCH is unicast).
 - A bonded satellite reports its *group's* room name in its own zone data,
   not its own identity, so this collector never invents a hostname for one
   — only a visible/primary player gets a hostname suggestion, and even then
-  only on first discovery: `sonos_household` is deliberately absent from
-  `_HOSTNAME_SOURCE_PRIORITY` in `discovery/reconcile.py`, so it can never
-  rename an asset that already has a name from any other source.
+  only on first discovery: it can never rename an asset that already has a
+  name from any other source.
 - `python -m discovery.cli sonos` (no `--apply`) prints what it found
   without writing; `--apply` reconciles it into the inventory the normal way
   (`reconcile_into_db`, tracked as a `DiscoveryRun` like every other
@@ -1443,7 +1437,7 @@ pip install -r requirements.txt -r requirements-dev.txt
 ### Test suite (`pytest`)
 
 ```bash
-pytest                     # the whole suite (~255 tests)
+pytest                     # the whole suite
 pytest tests/test_reconcile.py            # one module
 pytest -k valuables -q                    # by keyword
 ```
@@ -1500,46 +1494,34 @@ cp scripts/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 template. `check-pii.sh` also runs standalone (`scripts/check-pii.sh --full`
 audits all history); it detects known PII (`.pii-denylist`), structural PII,
 and secrets (vendor-prefixed keys, your own `.env` values, a committed
-`.env`). See AGENTS.md's "PII / privacy" for the full rationale, and
-`scripts/env-structure.sh` for reconciling `.env` structure across machines
-without moving values.
-
-### Where the deeper "why" lives
-
-`AGENTS.md` carries the contributor guidance that isn't end-user-facing —
-deployment topology, the PII/secret model, git/GitHub conventions, and log
-rotation. Start there before a non-trivial change.
-
-## About this document
-
-`README.md` is the only copy — edit it directly. The dashboard's **README**
-page renders it fresh from this file on every request (`app/readme_render.py`),
-so the in-app version is always in sync automatically; there's no separate
-file to regenerate or keep up to date. The in-app page's table of contents is
-generated the same way, straight from this file's own headings (via
-python-markdown's `toc` extension) — nothing to keep in sync there either.
-GitHub's own file viewer has a built-in outline button for the same purpose,
-so this file doesn't carry a hand-written contents list of its own.
+`.env`). See `scripts/env-structure.sh` for reconciling `.env` structure
+across machines without moving values.
 
 ## Notes on scope
 
 This deliberately scales down enterprise Asset and Vulnerability management
-standards for a ~50-device home network: discovery is manual/on-demand rather than
-continuous, there's no dedicated vulnerability-scanning appliance
-(Greenbone/OpenVAS), and CVE matching is best-effort keyword matching on
-nmap's service-version banners rather than authoritative CPE matching — treat
-findings as a prioritized starting point to investigate, not a certified scan
-report. Enrichment only runs against services where nmap reported *both* a
-product name and a version (a bare product name alone produced confirmed
-false positives during development). If a finding looks implausible, check
-its `evidence` field for the exact service match it was based on before
+standards for a home network of a few dozen devices: discovery is
+manual/on-demand rather than continuous, there's no dedicated
+vulnerability-scanning appliance (Greenbone/OpenVAS), and CVE matching is
+best-effort keyword matching on nmap's service-version banners rather than
+authoritative CPE matching — treat findings as a prioritized starting point
+to investigate, not a certified scan report. Enrichment only runs against
+services where nmap reported *both* a product name and a version, not a
+bare product name alone. If a finding looks implausible, check its
+`evidence` field for the exact service match it was based on before
 treating it as real.
 
 ## Contributing and security
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md), and read its
-privacy section before your first commit. To report a security vulnerability, use
-GitHub's [**Report a vulnerability**](https://github.com/rohitafish/home-asset-manager/security/policy)
+privacy section before your first commit. `README.md` is the only copy of this
+document — the dashboard's **README** page renders it live from this file on
+every request, so there's nothing separate to keep in sync. Contributor- and
+deployment-oriented notes that don't belong in this end-user-facing README —
+topology, the PII/secret model, git/GitHub conventions, log rotation — live in
+[AGENTS.md](AGENTS.md); start there before a non-trivial change. To report a
+security vulnerability, use GitHub's
+[**Report a vulnerability**](https://github.com/rohitafish/home-asset-manager/security/policy)
 button rather than opening a public issue — see [SECURITY.md](SECURITY.md) for what
 to include.
 
