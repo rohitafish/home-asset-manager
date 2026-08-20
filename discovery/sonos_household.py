@@ -42,6 +42,7 @@ from discovery.normalize import DiscoveredDevice
 from discovery.reconcile import reconcile_into_db
 from probes.sonos_api import (
     SonosPlayer,
+    _is_fetchable_lan_ip,
     enrich_from_device_description,
     fetch_zone_group_state,
     parse_zone_group_members,
@@ -108,6 +109,21 @@ def to_discovered_devices(players: list[SonosPlayer]) -> list[DiscoveredDevice]:
     devices = []
     for p in players:
         if not p.mac:
+            continue
+        if not _is_fetchable_lan_ip(p.ip):
+            # Each player entry in a GetZoneGroupState response is
+            # self-reported by whatever device answered the seed IP, not
+            # independently verified by a fresh connection to p.ip itself --
+            # a compromised/spoofed responder can claim arbitrary "other
+            # players" with attacker-chosen ip values, and reconcile_into_db
+            # would otherwise merge that straight into the asset inventory
+            # as real evidence. Reusing the same LAN-IP guard
+            # fetch_device_description's caller already applies to this
+            # field (probes/sonos_api.py) closes the same trust boundary for
+            # this second consumer of it.
+            logger.debug(
+                "Sonos player %s has an unfetchable/spoofed-looking ip=%r, skipping", p.mac, p.ip,
+            )
             continue
         hostname = None
         if not p.is_satellite and p.room_name:

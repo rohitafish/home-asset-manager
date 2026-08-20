@@ -67,6 +67,31 @@ def test_paginate_stops_when_a_later_page_comes_back_empty(monkeypatch):
     assert [r["id"] for r in results] == [1]
 
 
+def test_paginate_survives_an_explicit_null_limit(monkeypatch):
+    """Regression test: `.get("limit", default)` only falls back to
+    `default` when the key is ABSENT -- a response with an explicit
+    `"limit": null` (key present, value None) still returned None here,
+    and `offset + None` raised TypeError before the stall guard could even
+    run."""
+    pages = [
+        {"data": [{"id": 1}, {"id": 2}], "totalCount": 3, "limit": None},
+        {"data": [{"id": 3}], "totalCount": 3, "limit": None},
+    ]
+    calls = {"n": 0}
+
+    def fake_get(url, params=None):
+        resp = _FakeResponse(pages[calls["n"]])
+        calls["n"] += 1
+        return resp
+
+    client = _client()
+    monkeypatch.setattr(client._client, "get", fake_get)
+
+    results = client._paginate("/sites/x/clients")  # must not raise
+
+    assert [r["id"] for r in results] == [1, 2, 3]
+
+
 def test_paginate_stops_and_warns_when_offset_does_not_advance(monkeypatch, caplog):
     """A page reporting "limit": 0 alongside non-empty data must not spin
     forever re-requesting the same page and growing results without bound --

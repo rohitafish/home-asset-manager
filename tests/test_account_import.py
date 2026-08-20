@@ -4,8 +4,10 @@ accounts.json -- see AGENTS.md's PII section: a value used for the first
 time in a fixture isn't caught by .pii-denylist, so this file must never
 carry a real one)."""
 
+import json
 from datetime import date
 
+import pytest
 from conftest import make_asset, make_interface
 from sqlmodel import select
 
@@ -13,10 +15,70 @@ from app.models import AssetNote, Location
 from discovery.account_import import (
     AccountDevice,
     apply_changes,
+    load_account_file,
     plan_changes,
     resolve_asset,
     sonos_serial_to_mac,
 )
+
+# -- load_account_file --------------------------------------------------------
+# Regression coverage: a typo in this hand-maintained JSON file (a missing
+# key, a malformed date) used to exit with a bare KeyError/ValueError naming
+# neither the vendor nor which record was at fault.
+
+
+def test_load_account_file_names_the_offending_record_on_a_missing_key(tmp_path):
+    path = tmp_path / "accounts.json"
+    path.write_text(json.dumps({
+        "amazon": {
+            "source_document": "test",
+            "devices": [
+                {"account_name": "Echo Dot"},
+                {"model": "Fire TV"},  # missing required account_name
+            ],
+        },
+    }))
+
+    with pytest.raises(ValueError) as exc:
+        load_account_file(path)
+    assert "amazon.devices[1]" in str(exc.value)
+    assert str(path) in str(exc.value)
+
+
+def test_load_account_file_names_the_offending_record_on_a_bad_date(tmp_path):
+    path = tmp_path / "accounts.json"
+    path.write_text(json.dumps({
+        "sonos": {
+            "source_document": "test",
+            "devices": [
+                # strptime's %m/%d are lenient about missing zero-padding
+                # ("2024-3-1" parses fine) -- this needs a date that's
+                # actually unparseable to exercise the error path.
+                {"account_name": "Living Room", "registered": "1st March 2024"},
+            ],
+        },
+    }))
+
+    with pytest.raises(ValueError) as exc:
+        load_account_file(path)
+    assert "sonos.devices[0]" in str(exc.value)
+
+
+def test_load_account_file_parses_well_formed_entries(tmp_path):
+    path = tmp_path / "accounts.json"
+    path.write_text(json.dumps({
+        "amazon": {
+            "source_document": "test",
+            "devices": [{"account_name": "Echo Dot", "registered": "2024-03-01"}],
+        },
+    }))
+
+    devices = load_account_file(path)
+
+    assert len(devices) == 1
+    assert devices[0].account_name == "Echo Dot"
+    assert devices[0].registered == date(2024, 3, 1)
+
 
 # -- sonos_serial_to_mac ----------------------------------------------------
 

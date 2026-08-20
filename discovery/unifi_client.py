@@ -100,7 +100,18 @@ class UnifiClient:
             data = page.get("data", [])
             results.extend(data)
             total = page.get("totalCount", len(results))
-            next_offset = offset + page.get("limit", len(data) or 1)
+            # `.get("limit", default)` only falls back to `default` when the
+            # key is ABSENT -- an explicit `"limit": null` in the response
+            # still returns None here, and `offset + None` raises TypeError,
+            # which the stall guard three lines below can't reach since it
+            # never executes. Checking `is None` explicitly (not `or`)
+            # matters: an explicit `"limit": 0` must still fall through to
+            # the stall guard below via next_offset == offset, exactly as
+            # it always has -- `or` would treat that 0 the same as a
+            # missing/null limit and mask the stall this guard exists to
+            # catch (see test_paginate_stops_and_warns_when_offset_does_not_advance).
+            limit = page.get("limit")
+            next_offset = offset + (limit if limit is not None else (len(data) or 1))
             if not data or next_offset >= total:
                 break
             if next_offset <= offset:

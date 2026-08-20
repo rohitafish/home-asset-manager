@@ -66,9 +66,12 @@ def test_to_discovered_devices_skips_players_with_no_mac():
     assert to_discovered_devices(players) == []
 
 
+_LAN_LOCATION = "http://192.168.1.50:1400/xml/device_description.xml"
+
+
 def test_to_discovered_devices_suppresses_hostname_for_satellite():
     satellite = SonosPlayer(
-        uuid="RINCON_X", room_name="Living Room", location_url=None,
+        uuid="RINCON_X", room_name="Living Room", location_url=_LAN_LOCATION,
         mac="aa:bb:cc:dd:ee:01", channel=None, ht_channel="SW",
         is_satellite=True, invisible=True, model="Sonos Sub",
     )
@@ -80,7 +83,7 @@ def test_to_discovered_devices_suppresses_hostname_for_satellite():
 
 def test_to_discovered_devices_names_visible_member_with_room():
     member = SonosPlayer(
-        uuid="RINCON_X", room_name="Kitchen", location_url=None,
+        uuid="RINCON_X", room_name="Kitchen", location_url=_LAN_LOCATION,
         mac="aa:bb:cc:dd:ee:02", channel="LF,RF", ht_channel=None,
         is_satellite=False, invisible=False, model="Sonos One",
     )
@@ -93,12 +96,46 @@ def test_to_discovered_devices_avoids_redundant_room_in_name():
     # (e.g. "Move" is itself the room name in the Tesla-Powerwall-adjacent
     # Sonos Move case) shouldn't get a doubled-up "Move (Move)" hostname.
     member = SonosPlayer(
-        uuid="RINCON_X", room_name="Move", location_url=None,
+        uuid="RINCON_X", room_name="Move", location_url=_LAN_LOCATION,
         mac="aa:bb:cc:dd:ee:03", channel=None, ht_channel=None,
         is_satellite=False, invisible=False, model="Sonos Move",
     )
     devices = to_discovered_devices([member])
     assert devices[0].hostname == "Sonos Move"
+
+
+def test_to_discovered_devices_skips_a_player_with_no_ip():
+    """A player with no location_url (so p.ip is None) has no LAN address
+    to verify -- skip it rather than pass a None ip through to
+    reconcile_into_db. Distinct from the spoofed-ip regression test below:
+    this is the "absent" case, that one is the "present but untrustworthy"
+    case."""
+    member = SonosPlayer(
+        uuid="RINCON_X", room_name="Kitchen", location_url=None,
+        mac="aa:bb:cc:dd:ee:04", channel=None, ht_channel=None,
+        is_satellite=False, invisible=False, model="Sonos One",
+    )
+    assert to_discovered_devices([member]) == []
+
+
+def test_to_discovered_devices_skips_a_player_with_a_spoofed_looking_ip():
+    """Regression test: each player entry in a GetZoneGroupState response is
+    self-reported by whatever device answered the seed IP, not
+    independently verified -- a compromised/spoofed responder could
+    otherwise claim an arbitrary "other player" pointed at, say, localhost
+    or a public address, and have it merged into the asset inventory as
+    real evidence via reconcile_into_db."""
+    for spoofed in (
+        "http://127.0.0.1:1400/xml/device_description.xml",       # loopback
+        "http://8.8.8.8:1400/xml/device_description.xml",         # public
+        "http://169.254.1.1:1400/xml/device_description.xml",     # link-local
+    ):
+        member = SonosPlayer(
+            uuid="RINCON_X", room_name="Kitchen", location_url=spoofed,
+            mac="aa:bb:cc:dd:ee:05", channel=None, ht_channel=None,
+            is_satellite=False, invisible=False, model="Sonos One",
+        )
+        assert to_discovered_devices([member]) == [], f"must skip {spoofed}"
 
 
 # -- run_sonos_household_discovery -----------------------------------------------
