@@ -201,6 +201,34 @@ def test_reassign_asset_children_drops_self_reference_and_dupes(session):
     assert rels == []
 
 
+def test_reassign_asset_children_dedupes_mirror_rows_on_the_related_side_too(session):
+    """Regression test: survivor and duplicate were EACH already linked to a
+    third asset X before the merge -- (survivor,X)/(X,survivor) and
+    (duplicate,X)/(X,duplicate) mirror pairs all pre-exist. Repointing turns
+    (duplicate,X)->(survivor,X) and (X,duplicate)->(X,survivor), leaving TWO
+    (survivor,X) rows and TWO (X,survivor) rows. The old dedupe pass only
+    ever queried asset_id == survivor_id, so it caught the (survivor,X)
+    duplicate but never even looked at the (X,survivor) rows -- both of
+    those survived. Exactly one legitimate mirror pair must remain, in
+    either direction."""
+    survivor = make_asset(session, hostname="survivor")
+    duplicate = make_asset(session, hostname="duplicate")
+    x = make_asset(session, hostname="x")
+    session.add(CIRelationship(asset_id=survivor.id, related_asset_id=x.id, relationship_type="same_physical_device"))
+    session.add(CIRelationship(asset_id=x.id, related_asset_id=survivor.id, relationship_type="same_physical_device"))
+    session.add(CIRelationship(asset_id=duplicate.id, related_asset_id=x.id, relationship_type="same_physical_device"))
+    session.add(CIRelationship(asset_id=x.id, related_asset_id=duplicate.id, relationship_type="same_physical_device"))
+    session.commit()
+
+    reassign_asset_children(session, survivor_id=survivor.id, duplicate_id=duplicate.id)
+    session.commit()
+
+    rels = session.exec(select(CIRelationship)).all()
+    pairs = {(r.asset_id, r.related_asset_id) for r in rels}
+    assert pairs == {(survivor.id, x.id), (x.id, survivor.id)}
+    assert len(rels) == 2  # both directions of the one real mirror pair, no dupes
+
+
 def test_reassign_asset_children_deletes_same_device_dismissals(session):
     """Unlike every model in ASSET_CHILD_MODELS, a dismissal referencing the
     merged-away duplicate is deleted, not repointed onto the survivor --

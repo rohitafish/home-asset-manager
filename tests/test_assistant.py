@@ -36,6 +36,7 @@ from app.assistant import (
 )
 from app.models import (
     AiUsage,
+    Asset,
     AssetNote,
     ChangeProposal,
     ChatMessage,
@@ -829,6 +830,30 @@ def test_log_usage_db_failure_does_not_raise(session, monkeypatch):
         1, 0, False, SimpleNamespace(input_tokens=1, output_tokens=1),
         session=session, call_site="chat", model="claude-opus-5",
     )
+
+
+def test_log_usage_rolls_back_a_failed_commit_so_the_session_stays_usable(session):
+    """Regression test: unlike the monkeypatched RuntimeError above (which
+    never touches the DB, so it can't leave SQLAlchemy in a "pending
+    rollback" state), this forces a REAL failed commit -- asset_id 999999
+    doesn't exist, violating AiUsage's FK (conftest.py's engine enables
+    PRAGMA foreign_keys=ON). Without session.rollback() in _log_usage's
+    except block, the session is left pending-rollback, and the caller's
+    OWN commit right after this function returns -- the actual chat turn's
+    messages, in the real code path -- would raise PendingRollbackError
+    instead of succeeding: exactly the "takes down the whole turn" outcome
+    this function's docstring says a transient ledger-write failure must
+    not cause."""
+    _log_usage(  # must not raise
+        999999, 0, False, SimpleNamespace(input_tokens=1, output_tokens=1),
+        session=session, call_site="chat", model="claude-opus-5",
+    )
+
+    # The session must still be usable -- an unrelated commit right after
+    # must succeed, not raise PendingRollbackError.
+    asset = make_asset(session, hostname="after-the-failed-log-usage")
+    session.commit()  # must not raise
+    assert session.get(Asset, asset.id) is not None
 
 
 # -- budget_block_reason / spend_summary / the kill switch -------------------
