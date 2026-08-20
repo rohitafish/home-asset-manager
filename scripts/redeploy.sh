@@ -112,13 +112,13 @@ DEPLOY_MSG="deploy: $(git -C "$LOCAL_DIR" rev-parse --short HEAD) $(date -u +%Y-
 ssh "$HOST" "cd $REMOTE_DIR && { git fetch origin --quiet || true; } && git checkout -q -B deployed && git add -A && git commit -q --allow-empty -m '$DEPLOY_MSG'" \
   || echo "!!! Could not record the deployed tree in the Mini's git -- deploy still succeeded via rsync, but 'git status' there may look dirty until this is fixed." >&2
 
-echo "==> Installing any new/updated dependencies"
-ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && pip install -q -r requirements.txt"
-
-echo "==> Running any new migrations"
-ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && alembic upgrade head"
-
 echo "==> Checking for an in-progress discovery run"
+# Deliberately BEFORE the pip install/migration steps below, not after: this
+# check runs against the Mini's EXISTING venv/code (still valid -- it doesn't
+# need anything from the deploy that's about to happen), so declining here
+# leaves the schema untouched too, not just the running process. It used to
+# run after migrations had already been applied, so declining still left the
+# live (pre-restart) process running against a schema it no longer matched.
 RUNNING=$(ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && python -c \"
 from sqlmodel import Session, select
 from app.db import engine
@@ -134,16 +134,32 @@ if [ -n "$RUNNING" ]; then
   read -p "Restart anyway? [y/N] " -n 1 -r
   echo
   if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Aborted. Code is synced but the service was not restarted."
+    echo "Aborted. Code is synced (and the deployed-tree commit above already"
+    echo "happened), but dependencies were not installed, migrations were not"
+    echo "run, and the service was not restarted."
     exit 1
   fi
 fi
+
+echo "==> Installing any new/updated dependencies"
+ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && pip install -q -r requirements.txt"
+
+echo "==> Running any new migrations"
+ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && alembic upgrade head"
 
 echo "==> Restarting the app service"
 ssh "$HOST" "launchctl kickstart -k gui/\$(id -u)/com.assetmgt.app"
 
 sleep 2
 echo "==> Health check"
-ssh "$HOST" "curl -s http://127.0.0.1:8000/health && echo"
+# -f (not plain -s): curl exits 0 for ANY HTTP status without it, including a
+# 500 from a dead Postgres/Colima (see AGENTS.md) -- the deploy would then
+# print the 500 body and "==> Done" as if it were healthy. mini-brew-upgrade.sh
+# already uses -sf for this identical check; this brings the two in line.
+if ! ssh "$HOST" "curl -sf http://127.0.0.1:8000/health && echo"; then
+  echo "!!! Health check failed -- the app did not come back up cleanly after" >&2
+  echo "!!! the restart. Check logs/app.error.log and logs/app.log on the Mini." >&2
+  exit 1
+fi
 
 echo "==> Done"

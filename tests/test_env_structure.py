@@ -163,6 +163,24 @@ def test_write_without_env_exits_1_and_keeps_file(sandbox):
     assert (sandbox / ".env.example").read_text() == original
 
 
+def test_empty_candidate_refuses_instead_of_writing_a_blank_file(sandbox):
+    """Regression test: _verify_candidate's whitelist loop trivially
+    "passes" an empty file (its while-read loop body never runs), so a
+    failed _build_example -- here, triggered by .env.example going missing
+    partway through, the same shape as it being briefly unreadable -- used
+    to be able to `mv` a zero-byte candidate over the tracked template while
+    still printing "wrote .env.example" as if it had succeeded."""
+    _write_env(sandbox, "DATABASE_URL=x\n")
+    (sandbox / ".env.example").unlink()  # _build_example's input source
+
+    proc = _run(sandbox, "--write-example", "--from", "local")
+
+    assert proc.returncode == 1, f"an empty candidate must be refused:\n{proc.stdout}\n{proc.stderr}"
+    assert "empty" in proc.stdout
+    assert not (sandbox / ".env.example").exists(), "must not create a blank file"
+    assert not list(sandbox.glob(".env.example.tmp.*")), "temp file must be cleaned up"
+
+
 # --- report mode -----------------------------------------------------------
 
 def test_report_never_prints_a_value(sandbox):
@@ -207,6 +225,22 @@ def test_unknown_argument_exits_2(sandbox):
     proc = _run(sandbox, "--bogus")
 
     assert proc.returncode == 2
+
+
+@pytest.mark.parametrize("flag", ["--host", "--from"])
+def test_flag_missing_operand_fails_instead_of_hanging(sandbox, flag):
+    """Regression test: --host/--from as the last argument used to make
+    `shift 2` silently fail and return non-zero -- with no `set -e`, $#
+    never reached 0 and the argument-parsing loop spun forever. A timeout
+    here is a correctness assertion, not just test hygiene: a hang would
+    otherwise make this test itself hang instead of failing cleanly."""
+    proc = subprocess.run(
+        ["bash", "scripts/env-structure.sh", flag],
+        cwd=sandbox, capture_output=True, text=True, timeout=10,
+    )
+
+    assert proc.returncode == 2
+    assert "requires an argument" in proc.stderr
 
 
 # --- the ssh boundary: values must never survive local re-validation -------

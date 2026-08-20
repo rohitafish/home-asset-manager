@@ -47,11 +47,19 @@ FROM="local"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --host) HOST="$2"; shift 2 ;;
+    # The `[ $# -ge 2 ] || ...` guards on --host/--from matter: without one,
+    # the flag as the LAST argument makes `shift 2` silently fail (only one
+    # argument left) and return non-zero -- with no `set -e` here, $# never
+    # reaches 0 and the while loop above spins forever with no output.
+    --host)
+      [ $# -ge 2 ] || { echo "--host requires an argument" >&2; exit 2; }
+      HOST="$2"; shift 2 ;;
     --no-remote) USE_REMOTE=0; shift ;;
     --strict) STRICT=1; shift ;;
     --write-example) MODE="write"; shift ;;
-    --from) FROM="$2"; shift 2 ;;
+    --from)
+      [ $# -ge 2 ] || { echo "--from requires an argument" >&2; exit 2; }
+      FROM="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --prune) PRUNE=1; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
@@ -179,9 +187,13 @@ write_example() {
     *) echo "Unknown --from: $FROM (want local|remote)" >&2; return 2 ;;
   esac
 
-  # stale temp from a previously killed run, then a fresh one in the repo root
-  # (same filesystem => the final mv is an atomic rename).
-  rm -f "$REPO_DIR"/.env.example.tmp.* 2>/dev/null
+  # Stale temp from a previously killed run, THEN a fresh one in the repo
+  # root (same filesystem => the final mv is an atomic rename). Scoped to
+  # files older than 10 minutes, not a blanket glob: an unscoped `rm -f
+  # .env.example.tmp.*` deletes every PID's temp file, including a
+  # concurrently-running instance's in-flight one -- the exact race $$ in
+  # the filename below is supposed to prevent.
+  find "$REPO_DIR" -maxdepth 1 -name '.env.example.tmp.*' -mmin +10 -delete 2>/dev/null
   # NOT `local`: the EXIT trap fires after this function returns, when a local
   # would be out of scope (leaving the temp behind). $$ keeps concurrent runs
   # from colliding.
@@ -189,6 +201,15 @@ write_example() {
   trap 'rm -f "$tmp"' EXIT INT TERM
 
   _build_example "$source_keys" > "$tmp"
+
+  # _verify_candidate's whitelist loop trivially "passes" an empty file (the
+  # loop body never runs) -- without this check, a failed _build_example
+  # (e.g. an unreadable .env.example) can `mv` a zero-byte file over the
+  # tracked template while still reporting "wrote .env.example" as success.
+  if [ ! -s "$tmp" ]; then
+    fail "generated .env.example candidate is empty -- original left untouched"
+    return 1
+  fi
 
   if ! _verify_candidate "$tmp"; then
     fail "generated .env.example failed its safety check -- original left untouched"
@@ -269,13 +290,15 @@ _verify_candidate() {
     warn "candidate contains a secret-shaped string"; return 1
   fi
   if [ -f "$REPO_DIR/.pii-denylist" ]; then
-    while IFS= read -r term; do
+    # `|| [ -n "$term" ]`: same "don't drop a newline-less last line" fix as
+    # check-pii.sh's identical reads -- see there for why.
+    while IFS= read -r term || [ -n "$term" ]; do
       case "$term" in ''|'#'*) continue ;; esac
       if grep -iFq -- "$term" "$f"; then warn "candidate contains a .pii-denylist term"; return 1; fi
     done < "$REPO_DIR/.pii-denylist"
   fi
   # structural whitelist
-  while IFS= read -r line; do
+  while IFS= read -r line || [ -n "$line" ]; do
     [ -z "$line" ] && continue
     grep -Fqx -- "$line" "$EXAMPLE" && continue             # verbatim from template
     case "$line" in
