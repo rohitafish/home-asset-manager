@@ -141,6 +141,7 @@ by hand.
 
 ## Reporting a vulnerability
 
-Please don't open a public issue. See
-[SECURITY.md](https://github.com/rohitafish/home-asset-manager/blob/main/SECURITY.md)
-for how to report privately.
+Please don't open a public issue. Use GitHub's
+[**Report a vulnerability**](https://github.com/rohitafish/home-asset-manager/security/policy)
+button — see [SECURITY.md](https://github.com/rohitafish/home-asset-manager/blob/main/SECURITY.md)
+for what to include.
