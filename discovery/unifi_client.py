@@ -76,6 +76,17 @@ class UnifiClient:
     def close(self):
         self._client.close()
 
+    # Lets call sites use `with UnifiClient() as client:` so an exception
+    # from resolve_site_id/list_* (a 401 after key rotation, a TLS failure,
+    # a controller reboot) still closes the pooled httpx.Client -- both
+    # existing call sites used to call close() only at the end of the happy
+    # path, silently leaking the connection pool on every failed attempt.
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
     def _paginate(self, path: str, params: dict | None = None) -> list[dict[str, Any]]:
         params = dict(params or {})
         params.setdefault("limit", 200)

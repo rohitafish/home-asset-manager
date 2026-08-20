@@ -11,12 +11,21 @@ from conftest import make_asset
 from sqlmodel import select
 
 from app.assistant import apply_proposal
-from app.models import AssetNote, AssetType, ChangeProposal, Criticality, Location
+from app.models import (
+    AssetNote,
+    AssetType,
+    ChangeProposal,
+    Criticality,
+    DiscoveryRun,
+    Location,
+)
 from app.routers.dashboard import (
     _WARRANTY_LEAVING_SOON_DAYS,
     _autofill_model_number,
     _autofill_replacement_value,
     _chat_panel_context,
+    _clean_enum_filter,
+    _discovery_already_running,
     _parse_date_field,
     _parse_money_field,
     _pending_proposals,
@@ -101,6 +110,46 @@ def test_parse_money_field_thousands_separator():
 
 def test_parse_money_field_unparseable_is_none():
     assert _parse_money_field("not-a-price") is None
+
+
+# -- _clean_enum_filter -------------------------------------------------------
+# Regression coverage: comparing an unrecognised string straight against a
+# Postgres enum column (asset_type/criticality/lifecycle_status/status) used
+# to raise InvalidTextRepresentation -- a 500 -- for something as mundane as
+# a stale bookmark from before a value was renamed.
+
+
+def test_clean_enum_filter_keeps_a_recognised_value():
+    assert _clean_enum_filter("critical", ["critical", "high", "medium", "low"]) == "critical"
+
+
+def test_clean_enum_filter_drops_an_unrecognised_value():
+    assert _clean_enum_filter("urgent", ["critical", "high", "medium", "low"]) is None
+
+
+def test_clean_enum_filter_drops_empty_and_none():
+    assert _clean_enum_filter("", ["critical"]) is None
+    assert _clean_enum_filter(None, ["critical"]) is None
+
+
+# -- _discovery_already_running -----------------------------------------------
+
+
+def test_discovery_already_running_false_with_no_runs(session):
+    assert _discovery_already_running(session) is False
+
+
+def test_discovery_already_running_true_while_a_run_is_in_progress(session):
+    session.add(DiscoveryRun(source="nmap"))  # status defaults to "running"
+    session.commit()
+    assert _discovery_already_running(session) is True
+
+
+def test_discovery_already_running_false_once_completed_or_failed(session):
+    session.add(DiscoveryRun(source="nmap", status="completed"))
+    session.add(DiscoveryRun(source="unifi", status="failed"))
+    session.commit()
+    assert _discovery_already_running(session) is False
 
 
 # -- _autofill_replacement_value --------------------------------------------

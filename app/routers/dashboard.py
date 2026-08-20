@@ -108,6 +108,19 @@ def _parse_location_id(value: str | None) -> int | None:
         return None
 
 
+def _clean_enum_filter(value: str | None, valid_values: list[str]) -> str | None:
+    """Same lenient contract as _parse_location_id, for the asset_type/
+    criticality/lifecycle_status/status filters below: comparing an
+    unrecognised string straight against a Postgres enum column raises
+    InvalidTextRepresentation (a 500), and a stale bookmark or a saved link
+    from before an enum value was renamed is exactly how a real request
+    ends up with one. Drop it -- treat it as "no filter" -- rather than
+    raise."""
+    if value and value in valid_values:
+        return value
+    return None
+
+
 def _autofill_replacement_value(asset: Asset) -> None:
     """Fill replacement_value from purchase price/date when the user left it
     blank. A no-op if it's already set, or if valuation can't produce a figure
@@ -262,6 +275,10 @@ def assets_list(
     sort: str = "last_seen",
     direction: str = "desc",
 ):
+    asset_type = _clean_enum_filter(asset_type, ASSET_TYPES)
+    criticality = _clean_enum_filter(criticality, CRITICALITIES)
+    lifecycle_status = _clean_enum_filter(lifecycle_status, LIFECYCLE_STATUSES)
+
     query = select(Asset)
     if asset_type:
         query = query.where(Asset.asset_type == asset_type)
@@ -767,6 +784,7 @@ def findings_list(
     session: Session = Depends(get_session),
     status: str | None = "open",
 ):
+    status = _clean_enum_filter(status, FINDING_STATUSES)
     query = select(Finding)
     if status:
         query = query.where(Finding.status == status)
@@ -822,8 +840,30 @@ def discovery_page(request: Request, session: Session = Depends(get_session)):
     return templates.TemplateResponse(request, "discovery.html", {"runs": runs})
 
 
+def _discovery_already_running(session: Session) -> bool:
+    """Best-effort guard against two discovery runs racing -- a second
+    browser tab, or an impatient re-click during a slow enrichment run.
+    Without this, two concurrent reconcile_into_db calls can each do "MAC
+    not found -> create Asset" before either commits (there's no unique
+    constraint on AssetInterface.mac), silently creating the same "new"
+    device twice.
+
+    NOT airtight: this is a check-then-act race, not a lock -- a true fix
+    needs a DB-level advisory lock or a unique partial index. What this
+    does buy: it narrows the window from "however long a full run takes"
+    (minutes) down to the gap between this check and the collector's own
+    _tracked_run insert (milliseconds), which is the realistic trigger
+    (an impatient re-click) rather than a determined race."""
+    return (
+        session.exec(select(DiscoveryRun).where(DiscoveryRun.status == "running")).first()
+        is not None
+    )
+
+
 @router.post("/discovery/run/unifi")
-def discovery_run_unifi():
+def discovery_run_unifi(session: Session = Depends(get_session)):
+    if _discovery_already_running(session):
+        return RedirectResponse(url="/discovery", status_code=303)
     from discovery.cli import run_unifi_discovery
 
     try:
@@ -837,7 +877,9 @@ def discovery_run_unifi():
 
 
 @router.post("/discovery/run/nmap")
-def discovery_run_nmap():
+def discovery_run_nmap(session: Session = Depends(get_session)):
+    if _discovery_already_running(session):
+        return RedirectResponse(url="/discovery", status_code=303)
     from discovery.cli import run_nmap_discovery
 
     try:
@@ -848,7 +890,9 @@ def discovery_run_nmap():
 
 
 @router.post("/discovery/run/nmap-privileged")
-def discovery_run_nmap_privileged():
+def discovery_run_nmap_privileged(session: Session = Depends(get_session)):
+    if _discovery_already_running(session):
+        return RedirectResponse(url="/discovery", status_code=303)
     from discovery.cli import run_nmap_discovery
 
     try:
@@ -859,7 +903,9 @@ def discovery_run_nmap_privileged():
 
 
 @router.post("/discovery/run/local-mac")
-def discovery_run_local_mac():
+def discovery_run_local_mac(session: Session = Depends(get_session)):
+    if _discovery_already_running(session):
+        return RedirectResponse(url="/discovery", status_code=303)
     from discovery.cli import run_local_host_discovery
 
     try:
@@ -870,7 +916,9 @@ def discovery_run_local_mac():
 
 
 @router.post("/discovery/run/enrich")
-def discovery_run_enrich():
+def discovery_run_enrich(session: Session = Depends(get_session)):
+    if _discovery_already_running(session):
+        return RedirectResponse(url="/discovery", status_code=303)
     from discovery.cli import run_enrichment
 
     try:
@@ -881,7 +929,9 @@ def discovery_run_enrich():
 
 
 @router.post("/discovery/run/sonos")
-def discovery_run_sonos():
+def discovery_run_sonos(session: Session = Depends(get_session)):
+    if _discovery_already_running(session):
+        return RedirectResponse(url="/discovery", status_code=303)
     from discovery.cli import run_sonos_discovery
 
     try:
@@ -892,7 +942,9 @@ def discovery_run_sonos():
 
 
 @router.post("/discovery/run/all")
-def discovery_run_all():
+def discovery_run_all(session: Session = Depends(get_session)):
+    if _discovery_already_running(session):
+        return RedirectResponse(url="/discovery", status_code=303)
     from discovery.cli import run_all_discovery
 
     run_all_discovery()  # each collector already records its own DiscoveryRun outcome

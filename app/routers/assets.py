@@ -9,6 +9,7 @@ from app.models import (
     Asset,
     AssetInterface,
     AssetService,
+    AssetType,
     CIRelationship,
     Criticality,
     LifecycleStatus,
@@ -25,7 +26,7 @@ router = APIRouter(
 @router.get("", response_model=list[Asset])
 def list_assets(
     session: Session = Depends(get_session),
-    asset_type: str | None = None,
+    asset_type: AssetType | None = None,
     criticality: Criticality | None = None,
     lifecycle_status: LifecycleStatus | None = None,
 ):

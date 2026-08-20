@@ -5,7 +5,9 @@ monkeypatching them on the discovery.cli namespace is enough."""
 import logging
 
 import pytest
+from sqlmodel import select
 
+from app.models import Asset, AssetType
 from discovery import cli
 
 
@@ -86,3 +88,57 @@ def test_tracked_run_logs_failure_as_warning_and_reraises(session, caplog):
     assert failed, "expected a failure breadcrumb"
     assert failed[0].levelno == logging.WARNING
     assert "boom" in failed[0].getMessage()
+
+
+def test_tracked_run_rolls_back_partial_work_on_failure(session):
+    """Regression test: without session.rollback() in the except block, a
+    partially-completed collector's uncommitted work would get flushed by
+    the finally block's own bookkeeping commit right along with it, as if a
+    half-finished reconcile batch were a complete one. Also confirms the
+    DiscoveryRun row itself lands on status="failed" rather than a
+    PendingRollbackError from a poisoned session replacing the real one and
+    leaving it stuck "running" forever."""
+    with pytest.raises(RuntimeError), cli._tracked_run("nmap", session) as run:
+        session.add(Asset(asset_type=AssetType.end_user_device, hostname="half-done"))
+        raise RuntimeError("collector exploded mid-batch")
+
+    session.refresh(run)
+    assert run.status == "failed"
+    assert "collector exploded mid-batch" in run.summary
+    # The partial work must not have landed alongside the failure bookkeeping.
+    assert session.exec(select(Asset).where(Asset.hostname == "half-done")).first() is None
+
+
+class _LeakyUnifiClientStub:
+    """Stands in for UnifiClient: tracks whether it was closed, and its
+    first call raises -- reproducing "an exception from resolve_site_id/
+    list_*", the exact trigger for the httpx-client leak this pins."""
+    closed_count = 0
+
+    def __init__(self):
+        self.closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.closed = True
+        _LeakyUnifiClientStub.closed_count += 1
+
+    def resolve_site_id(self, site):
+        raise RuntimeError("UniFi controller unreachable")
+
+
+def test_get_network_context_closes_the_client_even_on_failure(monkeypatch):
+    """Regression test: client.close() used to be called only at the end of
+    the happy path, so an exception from resolve_site_id/list_* silently
+    leaked the pooled httpx.Client's connections on every failed attempt --
+    the try/except around the whole function swallows the exception, so
+    nothing ever surfaced the leak."""
+    _LeakyUnifiClientStub.closed_count = 0
+    monkeypatch.setattr(cli, "UnifiClient", _LeakyUnifiClientStub)
+
+    result = cli._get_network_context()  # must not raise -- degrades to empty
+
+    assert result == ([], set(), None)
+    assert _LeakyUnifiClientStub.closed_count == 1

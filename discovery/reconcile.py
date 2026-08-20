@@ -27,6 +27,19 @@ def merge_by_ip(*device_lists: list[DiscoveredDevice]) -> list[DiscoveredDevice]
             if existing is None:
                 by_ip[device.ip] = device
                 continue
+            if existing.mac and device.mac and existing.mac != device.mac:
+                # Both entries carry a MAC, and they differ: this is two
+                # distinct physical devices that happen to share an IP right
+                # now (a stale UniFi client-list entry that hasn't aged out,
+                # or a device that moved wired<->wireless), not one device
+                # seen twice. Merging them would silently keep whichever MAC
+                # `or` picked and discard the other -- the dropped device's
+                # last_seen then stops updating, and it starts decaying out
+                # of the Summary page's coverage metric as if it had left
+                # the network. MAC dominates IP as an identity signal here,
+                # same reasoning as merge_by_mac's own docstring.
+                standalone.append(device)
+                continue
             existing.mac = existing.mac or device.mac
             existing.hostname = existing.hostname or device.hostname
             existing.asset_type = existing.asset_type or device.asset_type
