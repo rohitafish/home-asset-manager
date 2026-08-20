@@ -22,6 +22,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app import ai_pricing
@@ -331,7 +332,12 @@ def budget_block_reason(session: Session) -> str | None:
     if day_spend >= AI_DAILY_BUDGET_USD:
         return (
             f"Today's AI budget (${AI_DAILY_BUDGET_USD:.2f}) is used up "
-            f"(${day_spend:.2f} spent) -- resets at midnight."
+            # The window is computed from naive-UTC `now` (this app's
+            # deliberate convention, see AGENTS.md), so "midnight" alone is
+            # wrong for the Europe/London UI under BST -- the real reset is
+            # 01:00 local for roughly half the year. Wording fix only; the
+            # window itself is untouched.
+            f"(${day_spend:.2f} spent) -- resets at midnight UTC."
         )
     month_spend, _ = _period_spend(session, datetime(now.year, now.month, 1))
     if month_spend >= AI_MONTHLY_BUDGET_USD:
@@ -589,6 +595,12 @@ def _tool_run_probe(session: Session, asset_id: int) -> Any:
     return results
 
 
+# purchase_price/replacement_value are Numeric(12, 2) columns (app/models.py)
+# -- 12 total digits, 2 after the decimal point, so this is the exact ceiling
+# a value can't exceed without a NumericValueOutOfRange from psycopg.
+_MAX_MONEY_VALUE = Decimal("9999999999.99")
+
+
 def _coerce_proposal_value(field_name: str, raw_value: str) -> tuple[Any, str | None]:
     """Returns (coerced_value, error). ALLOWED_PROPOSAL_FIELDS only gates
     *which* field a proposal may touch -- criticality/lifecycle_status are
@@ -622,9 +634,19 @@ def _coerce_proposal_value(field_name: str, raw_value: str) -> tuple[Any, str | 
     if field_name in ("purchase_price", "replacement_value"):
         cleaned = raw_value.strip().lstrip("£$€").replace(",", "")
         try:
-            return Decimal(cleaned).quantize(Decimal("0.01")), None
+            value = Decimal(cleaned).quantize(Decimal("0.01"))
         except (InvalidOperation, ValueError):
             return None, f"'{raw_value}' is not a valid amount for {field_name}."
+        # Numeric(12, 2) column -- bound it here so an oversized value (a
+        # misread invoice line, e.g. missing a decimal point) comes back to
+        # Claude as a tool error, not a bare 500 the moment a human clicks
+        # Apply (see this function's docstring).
+        if value < 0 or value > _MAX_MONEY_VALUE:
+            return None, (
+                f"'{raw_value}' is out of range for {field_name} "
+                f"(must be between 0 and {_MAX_MONEY_VALUE})."
+            )
+        return value, None
     return raw_value, None
 
 
@@ -750,7 +772,15 @@ def _request_safe_blocks(content: Any) -> Any:
 
 def _replay(session: Session, asset_id: int) -> list[dict]:
     rows = session.exec(
-        select(ChatMessage).where(ChatMessage.asset_id == asset_id).order_by(ChatMessage.created_at)
+        select(ChatMessage)
+        .where(ChatMessage.asset_id == asset_id)
+        # id as a tiebreaker, not just created_at: two rows written in the
+        # same microsecond within a turn would otherwise order
+        # nondeterministically -- if a tool_result ever sorted before its
+        # tool_use, _replay would reconstruct an invalid transcript and the
+        # next API call would 400. id is already the primary key, so this
+        # is free.
+        .order_by(ChatMessage.created_at, ChatMessage.id)
     ).all()
     messages = [
         {"role": r.role, "content": _request_safe_blocks(json.loads(r.content_json))}
@@ -1089,7 +1119,15 @@ def chat_transcript(session: Session, asset_id: int) -> list[dict]:
     as a one-line description per tool call (see describe_tool_call) rather than
     shown raw."""
     rows = session.exec(
-        select(ChatMessage).where(ChatMessage.asset_id == asset_id).order_by(ChatMessage.created_at)
+        select(ChatMessage)
+        .where(ChatMessage.asset_id == asset_id)
+        # id as a tiebreaker, not just created_at: two rows written in the
+        # same microsecond within a turn would otherwise order
+        # nondeterministically -- if a tool_result ever sorted before its
+        # tool_use, _replay would reconstruct an invalid transcript and the
+        # next API call would 400. id is already the primary key, so this
+        # is free.
+        .order_by(ChatMessage.created_at, ChatMessage.id)
     ).all()
     view = []
     for row in rows:
@@ -1217,8 +1255,13 @@ def apply_proposal(session: Session, proposal: ChangeProposal) -> None:
         asset = session.get(Asset, proposal.asset_id)
         if asset:
             name = payload["location_name"].strip()
+            # Exact case-insensitive match, not ilike: ilike treats % and _
+            # as wildcards, so a proposed name containing an underscore
+            # (copied from a device/document) could silently match an
+            # unrelated existing location and file the asset in the wrong
+            # room with no visible sign anything went wrong.
             location = session.exec(
-                select(Location).where(Location.name.ilike(name))
+                select(Location).where(func.lower(Location.name) == name.lower())
             ).first()
             if not location:
                 location = Location(name=name)
@@ -1237,11 +1280,31 @@ def apply_proposal(session: Session, proposal: ChangeProposal) -> None:
 
     elif proposal.kind == "link_same_device":
         a, b = payload["asset_id_a"], payload["asset_id_b"]
-        if session.get(Asset, a) and session.get(Asset, b):
+        asset_a, asset_b = session.get(Asset, a), session.get(Asset, b)
+        if asset_a and asset_b:
             link_assets(session, a, b, detail=payload.get("detail"))
             note = "Linked to asset #{} as the same physical device."
             session.add(AssetNote(asset_id=a, author="claude", body=note.format(b)))
             session.add(AssetNote(asset_id=b, author="claude", body=note.format(a)))
+        else:
+            # One (or both) of the two assets was deleted between proposing
+            # and applying. Without this branch, execution falls through to
+            # the unconditional "applied" below with nothing having
+            # happened -- the user is told the link landed when it silently
+            # didn't. Discard instead, and note it on whichever side
+            # survived (there may be none, if both are gone).
+            missing = [str(x) for x, present in ((a, asset_a), (b, asset_b)) if not present]
+            for survivor in (asset_a, asset_b):
+                if survivor:
+                    session.add(AssetNote(
+                        asset_id=survivor.id, author="claude",
+                        body="Could not apply the same-device link: asset(s) "
+                             + ", ".join(f"#{m}" for m in missing) + " no longer exist.",
+                    ))
+            proposal.status = "discarded"
+            proposal.applied_at = utcnow_naive()
+            session.add(proposal)
+            return
 
     proposal.status = "applied"
     proposal.applied_at = utcnow_naive()

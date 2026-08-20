@@ -43,6 +43,16 @@ def require_admin(
     now = time.monotonic()
     recent = [t for t in _failures.get(client_ip, []) if now - t < _WINDOW_SECONDS]
 
+    # Opportunistic global sweep, piggybacked on every request: an IP that
+    # fails once and never returns would otherwise sit in this dict forever
+    # -- only a *successful* login (below) or hitting the throttle branch
+    # prunes anything, and neither touches an IP whose failures have
+    # already all aged out. Cheap: this dict never holds more entries than
+    # distinct client IPs that have ever failed a login, which on this
+    # app's LAN-only deployment is naturally small.
+    for ip in [k for k, ts in _failures.items() if all(now - t >= _WINDOW_SECONDS for t in ts)]:
+        _failures.pop(ip, None)
+
     if len(recent) >= _MAX_FAILURES:
         _failures[client_ip] = recent  # keep the pruned window; don't grow it
         logger.warning(

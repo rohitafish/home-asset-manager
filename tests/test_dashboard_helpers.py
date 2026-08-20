@@ -112,6 +112,22 @@ def test_parse_money_field_unparseable_is_none():
     assert _parse_money_field("not-a-price") is None
 
 
+def test_parse_money_field_nan_is_none():
+    """Regression test: Decimal("NaN").quantize(...) returns Decimal('NaN')
+    without raising -- the one input the except clause doesn't catch.
+    Postgres stores NaN happily, poisoning any SUM() over the column."""
+    assert _parse_money_field("NaN") is None
+    assert _parse_money_field("nan") is None
+
+
+def test_parse_money_field_infinity_is_none():
+    assert _parse_money_field("Infinity") is None
+
+
+def test_parse_money_field_negative_is_none():
+    assert _parse_money_field("-50.00") is None
+
+
 # -- _clean_enum_filter -------------------------------------------------------
 # Regression coverage: comparing an unrecognised string straight against a
 # Postgres enum column (asset_type/criticality/lifecycle_status/status) used

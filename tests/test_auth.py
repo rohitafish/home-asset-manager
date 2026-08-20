@@ -96,6 +96,28 @@ def test_successful_login_clears_failures():
     assert "10.0.0.5" not in auth._failures
 
 
+def test_stale_failure_entries_are_swept_on_any_request(monkeypatch):
+    """Regression test: an IP that fails once and never returns used to sit
+    in _failures forever -- only a *successful* login or hitting the
+    throttle branch pruned anything, and neither touches an IP whose
+    failures have already all aged out of the window. A request from ANY
+    client (not just the stale one) should sweep it."""
+    fake_now = [1000.0]
+    monkeypatch.setattr(auth.time, "monotonic", lambda: fake_now[0])
+
+    with pytest.raises(HTTPException):
+        auth.require_admin(_request(client=("10.0.0.99", 1)), _creds(password="wrong"))
+    assert "10.0.0.99" in auth._failures
+
+    # Time passes well beyond the window -- that IP's one failure is now stale.
+    fake_now[0] += auth._WINDOW_SECONDS + 1
+
+    # A request from a completely different client must still sweep it.
+    auth.require_admin(_request(client=("10.0.0.100", 1)), _creds())
+
+    assert "10.0.0.99" not in auth._failures
+
+
 # --- require_same_origin ---------------------------------------------------
 
 def test_safe_method_is_always_allowed():

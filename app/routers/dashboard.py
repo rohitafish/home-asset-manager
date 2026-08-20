@@ -89,9 +89,18 @@ def _parse_money_field(value: str) -> Decimal | None:
     if not value:
         return None
     try:
-        return Decimal(value).quantize(Decimal("0.01"))
+        parsed = Decimal(value).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError):
         return None
+    # Decimal("NaN").quantize(...) returns Decimal('NaN') without raising --
+    # the one input this function's except clause doesn't catch. Postgres's
+    # numeric column stores NaN happily, which then poisons any SUM() over
+    # it (the Valuables page's totals render as NaN for the whole estate).
+    # A negative amount is equally never a real purchase price/replacement
+    # value, so treat both the same as unparseable: "no value".
+    if not parsed.is_finite() or parsed < 0:
+        return None
+    return parsed
 
 
 def _parse_location_id(value: str | None) -> int | None:
