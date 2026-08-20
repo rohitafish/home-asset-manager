@@ -12,7 +12,7 @@ from conftest import make_asset
 from sqlmodel import select
 
 import discovery.cve_enrich as cve_enrich
-from app.models import AssetService, Finding
+from app.models import AssetService, Finding, FindingStatus, Severity
 from discovery.cve_enrich import enrich_findings_from_services
 
 
@@ -70,6 +70,72 @@ def test_a_shared_query_result_creates_findings_for_every_matching_service(sessi
     assert summary["vulnerabilities_created"] == 1  # one Vulnerability row, reused
 
 
+def _run_with_score(session, monkeypatch, score):
+    monkeypatch.setattr(
+        cve_enrich, "search_nvd_by_keyword",
+        lambda client, keyword, results_limit=5: [
+            {
+                "cve_id": "CVE-2020-0001", "cvss_score": score, "cvss_version": "3.1",
+                "description": "d", "published_date": None,
+            },
+        ],
+    )
+    return enrich_findings_from_services(session)
+
+
+def test_open_finding_is_rescored_when_the_vulnerability_gets_worse(session, monkeypatch):
+    """Regression test: a Finding used to be frozen at whatever severity/SLA
+    applied when it was first created -- a CVE later revised to a much
+    higher CVSS score (or added to KEV) kept displaying at its original,
+    lower severity with the original, now-too-late SLA due date, even
+    though the underlying Vulnerability row WAS refreshed every run."""
+    asset = make_asset(session)
+    session.add(AssetService(asset_id=asset.id, port=80, product="nginx", version="1.18.0"))
+    session.commit()
+    _stub_kev_and_epss(monkeypatch)
+
+    _run_with_score(session, monkeypatch, 3.0)  # low
+    finding = session.exec(select(Finding)).one()
+    assert finding.severity == Severity.low
+    original_detected = finding.detected_date
+    original_due = finding.sla_due_date
+
+    _run_with_score(session, monkeypatch, 9.8)  # critical, on a later run
+    session.refresh(finding)
+
+    assert finding.severity == Severity.critical
+    assert finding.detected_date == original_detected  # detection time itself is untouched
+    assert finding.sla_due_date != original_due  # recomputed for the new severity
+    # ...from the ORIGINAL detection date, not "now" -- re-scoring must not
+    # also silently grant extra time by resetting the SLA clock.
+    assert finding.sla_due_date == cve_enrich.sla_due_date(
+        Severity.critical, finding.exposure, original_detected
+    )
+
+
+def test_mitigated_finding_is_not_rescored(session, monkeypatch):
+    """A finding a human has already mitigated/accepted/closed keeps their
+    call -- re-scoring only applies to still-open findings."""
+    asset = make_asset(session)
+    session.add(AssetService(asset_id=asset.id, port=80, product="nginx", version="1.18.0"))
+    session.commit()
+    _stub_kev_and_epss(monkeypatch)
+
+    _run_with_score(session, monkeypatch, 3.0)
+    finding = session.exec(select(Finding)).one()
+    finding.status = FindingStatus.mitigated
+    session.add(finding)
+    session.commit()
+    original_due = finding.sla_due_date
+
+    _run_with_score(session, monkeypatch, 9.8)
+    session.refresh(finding)
+
+    assert finding.severity == Severity.low  # untouched
+    assert finding.sla_due_date == original_due  # untouched
+    assert finding.status == FindingStatus.mitigated
+
+
 def test_different_versions_still_query_separately(session, monkeypatch):
     a1 = make_asset(session)
     a2 = make_asset(session)
@@ -108,3 +174,52 @@ def test_max_keywords_env_cap_limits_distinct_queries(session, monkeypatch):
 
     assert len(calls) == 2  # capped, not one query per one of the 5 distinct keywords
     assert summary["nvd_queries"] == 2
+
+
+# -- search_nvd_by_keyword's rate-limit pacing --------------------------------
+
+
+class _FakeNvdResponse:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"vulnerabilities": []}
+
+
+class _FakeNvdClient:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+    def get(self, *args, **kwargs):
+        return _FakeNvdResponse(self.status_code)
+
+
+def test_search_nvd_by_keyword_paces_even_on_a_403(monkeypatch):
+    """A 403 is exactly what NVD returns when the keyless 5-req/30s rate
+    limit is exceeded. Regression test: the pacing sleep used to live after
+    the 404/403 early return, so the very request that got throttled was
+    the one request that skipped pacing -- every remaining keyword in a run
+    would then fire back-to-back, each getting another 403."""
+    monkeypatch.delenv("NVD_API_KEY", raising=False)
+    sleeps = []
+    monkeypatch.setattr(cve_enrich.time, "sleep", lambda s: sleeps.append(s))
+
+    result = cve_enrich.search_nvd_by_keyword(_FakeNvdClient(403), "some keyword")
+
+    assert result == []
+    assert sleeps == [6.0]
+
+
+def test_search_nvd_by_keyword_paces_on_the_happy_path_too(monkeypatch):
+    monkeypatch.setenv("NVD_API_KEY", "test-key")
+    sleeps = []
+    monkeypatch.setattr(cve_enrich.time, "sleep", lambda s: sleeps.append(s))
+
+    result = cve_enrich.search_nvd_by_keyword(_FakeNvdClient(200), "some keyword")
+
+    assert result == []  # no vulnerabilities in the fake response
+    assert sleeps == [0.2]  # the shorter, API-key pace

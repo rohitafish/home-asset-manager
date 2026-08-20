@@ -31,6 +31,23 @@ def test_merge_by_ip_fills_missing_fields_only():
     assert device.source == "nmap+unifi_client"
 
 
+def test_merge_by_ip_keeps_devices_with_different_macs_separate():
+    """Regression test: two entries sharing an IP but carrying DIFFERENT,
+    both-non-empty MACs are two distinct physical devices (a stale UniFi
+    client-list entry, or a device that moved wired<->wireless), not one
+    device seen twice. `existing.mac = existing.mac or device.mac` used to
+    silently keep whichever MAC was seen first and discard the other --
+    the dropped device's last_seen then never updates again."""
+    a = DiscoveredDevice(ip="192.168.1.50", mac="24:5a:4c:00:00:01", hostname="device-a", source="unifi_client")
+    b = DiscoveredDevice(ip="192.168.1.50", mac="aa:bb:cc:00:00:02", hostname="device-b", source="unifi_client")
+
+    merged = merge_by_ip([a], [b])
+
+    assert len(merged) == 2  # not collapsed into one
+    macs = {d.mac for d in merged}
+    assert macs == {"24:5a:4c:00:00:01", "aa:bb:cc:00:00:02"}  # both MACs survive
+
+
 def test_merge_by_ip_dedups_by_ip_and_combines_source():
     a = DiscoveredDevice(ip="192.168.1.50", source="nmap")
     b = DiscoveredDevice(ip="192.168.1.50", source="nmap")

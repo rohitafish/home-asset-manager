@@ -113,34 +113,44 @@ def search_nvd_by_keyword(
     api_key = os.environ.get("NVD_API_KEY")
     if api_key:
         headers["apiKey"] = api_key
-    resp = client.get(
-        NVD_API,
-        params={"keywordSearch": keyword, "resultsPerPage": results_limit},
-        headers=headers,
-        timeout=30.0,
-    )
-    if resp.status_code == 404 or resp.status_code == 403:
-        return []
-    resp.raise_for_status()
-    out = []
-    for item in resp.json().get("vulnerabilities", []):
-        cve = item["cve"]
-        score, version = _best_cvss(cve)
-        description = next(
-            (d["value"] for d in cve.get("descriptions", []) if d["lang"] == "en"), None
+    # The pacing sleep at the end used to be skippable via the 404/403 early
+    # return below -- and 403 is exactly what NVD returns once the keyless
+    # 5-req/30s rate limit is exceeded, so the first 403 in a run used to
+    # remove the only thing pacing every request after it. The run would
+    # then fire the rest of its keywords (up to CVE_ENRICH_MAX_KEYWORDS) back
+    # to back, each getting another 403, and silently report
+    # candidate_cves=0 as if nothing had matched rather than "we got
+    # throttled." try/finally guarantees the sleep runs on every path.
+    try:
+        resp = client.get(
+            NVD_API,
+            params={"keywordSearch": keyword, "resultsPerPage": results_limit},
+            headers=headers,
+            timeout=30.0,
         )
-        out.append(
-            {
-                "cve_id": cve["id"],
-                "cvss_score": score,
-                "cvss_version": version,
-                "description": description,
-                "published_date": cve.get("published"),
-            }
-        )
-    # be gentle with NVD's rate limit (5 req/30s without an API key)
-    time.sleep(0.2 if api_key else 6.0)
-    return out
+        if resp.status_code == 404 or resp.status_code == 403:
+            return []
+        resp.raise_for_status()
+        out = []
+        for item in resp.json().get("vulnerabilities", []):
+            cve = item["cve"]
+            score, version = _best_cvss(cve)
+            description = next(
+                (d["value"] for d in cve.get("descriptions", []) if d["lang"] == "en"), None
+            )
+            out.append(
+                {
+                    "cve_id": cve["id"],
+                    "cvss_score": score,
+                    "cvss_version": version,
+                    "description": description,
+                    "published_date": cve.get("published"),
+                }
+            )
+        return out
+    finally:
+        # be gentle with NVD's rate limit (5 req/30s without an API key)
+        time.sleep(0.2 if api_key else 6.0)
 
 
 def enrich_findings_from_services(session: Session) -> dict[str, int]:
@@ -253,6 +263,23 @@ def enrich_findings_from_services(session: Session) -> dict[str, int]:
                     )
                 ).first()
                 if existing:
+                    # vuln.severity/kev_flag were just refreshed above (this
+                    # run's fresh CVSS/KEV data), but a Finding created from
+                    # an earlier run was frozen at whatever severity applied
+                    # THEN -- so a CVE later added to KEV, or revised to a
+                    # higher CVSS score, kept displaying at its original
+                    # (lower) severity with the original (now too-late) SLA
+                    # due date. Only touch an open finding -- one a human has
+                    # already mitigated/accepted/closed keeps their call,
+                    # and the due date is recomputed from the ORIGINAL
+                    # detected_date, not today, so re-scoring doesn't also
+                    # silently grant extra time.
+                    if existing.status == FindingStatus.open and existing.severity != vuln.severity:
+                        existing.severity = vuln.severity
+                        existing.sla_due_date = sla_due_date(
+                            vuln.severity, exposure, existing.detected_date
+                        )
+                        session.add(existing)
                     continue
                 finding = Finding(
                     asset_id=svc.asset_id,

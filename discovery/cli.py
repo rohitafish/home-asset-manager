@@ -76,6 +76,16 @@ def _tracked_run(source: str, session: Session):
         yield run
         run.status = "completed"
     except Exception as exc:
+        # Without this, the finally block's bookkeeping commit below either
+        # (a) flushes whatever the collector had already session.add()-ed
+        # before failing, as if a half-finished reconcile batch were a
+        # complete one, or (b) itself raises PendingRollbackError -- if the
+        # failure was DB-level -- which replaces this exception and leaves
+        # `run` stuck at status="running" forever, since nothing ever
+        # commits the "failed" status. `run` is already a committed row
+        # (the session.commit() at the top of this function), so a fresh
+        # SELECT after rollback re-fetches it cleanly.
+        session.rollback()
         run.status = "failed"
         run.summary = str(exc)
         raise
@@ -104,11 +114,10 @@ def _get_network_context() -> tuple[list[tuple], set[str], str | None]:
     the nmap path, which otherwise has no dependency on UniFi at all and
     should still work standalone."""
     try:
-        client = UnifiClient()
-        site_id = client.resolve_site_id(os.environ.get("UNIFI_SITE", "default"))
-        networks = client.list_networks_with_subnets(site_id)
-        infra_devices = client.list_devices(site_id)
-        client.close()
+        with UnifiClient() as client:
+            site_id = client.resolve_site_id(os.environ.get("UNIFI_SITE", "default"))
+            networks = client.list_networks_with_subnets(site_id)
+            infra_devices = client.list_devices(site_id)
         return (
             build_subnet_map(networks),
             build_gateway_ip_set(networks),
@@ -125,25 +134,24 @@ def _get_network_context() -> tuple[list[tuple], set[str], str | None]:
 def run_unifi_discovery() -> dict:
     with Session(engine) as session, _tracked_run("unifi", session) as run:
         site_name = os.environ.get("UNIFI_SITE", "default")
-        client = UnifiClient()
-        site_id = client.resolve_site_id(site_name)
-        clients = client.list_clients(site_id)
-        infra_devices = client.list_devices(site_id)
-        infra_normalized = normalize_unifi_devices(infra_devices)
+        with UnifiClient() as client:
+            site_id = client.resolve_site_id(site_name)
+            clients = client.list_clients(site_id)
+            infra_devices = client.list_devices(site_id)
+            infra_normalized = normalize_unifi_devices(infra_devices)
 
-        # Serials/SKUs only exist on the legacy Controller API (see
-        # unifi_client.py) -- best-effort, since it's a bonus on top of
-        # the v1 data the rest of discovery depends on.
-        legacy_devices = []
-        try:
-            legacy_raw = client.list_devices_legacy(site_name)
-            legacy_devices = normalize_unifi_devices_legacy(legacy_raw)
-            infra_normalized = merge_by_mac(infra_normalized, legacy_devices)
-        except Exception:
-            # Legacy serial/SKU enrichment is a bonus; a failure here must not
-            # sink the run, but shouldn't vanish silently either.
-            logger.warning("UniFi legacy serial/SKU fetch failed", exc_info=True)
-        client.close()
+            # Serials/SKUs only exist on the legacy Controller API (see
+            # unifi_client.py) -- best-effort, since it's a bonus on top of
+            # the v1 data the rest of discovery depends on.
+            legacy_devices = []
+            try:
+                legacy_raw = client.list_devices_legacy(site_name)
+                legacy_devices = normalize_unifi_devices_legacy(legacy_raw)
+                infra_normalized = merge_by_mac(infra_normalized, legacy_devices)
+            except Exception:
+                # Legacy serial/SKU enrichment is a bonus; a failure here must not
+                # sink the run, but shouldn't vanish silently either.
+                logger.warning("UniFi legacy serial/SKU fetch failed", exc_info=True)
 
         devices = merge_by_ip(normalize_unifi_clients(clients), infra_normalized)
         subnet_map, gateway_ips, gateway_mac = _get_network_context()
