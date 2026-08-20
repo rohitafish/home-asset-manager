@@ -898,6 +898,16 @@ def _log_usage(
         ))
         session.commit()
     except Exception:
+        # Without this, a failed commit leaves the session in SQLAlchemy's
+        # "pending rollback" state -- the caller's NEXT session.commit() (the
+        # actual chat turn, a few lines after this function returns) would
+        # then raise PendingRollbackError instead of succeeding, turning a
+        # transient ledger-write hiccup into exactly the "takes down the
+        # whole turn" outcome this function's docstring says must not
+        # happen. Rolling back here only discards the failed AiUsage insert
+        # -- the turn's own messages are added/committed separately by the
+        # caller, after this function returns.
+        session.rollback()
         logger.exception(
             "Failed to persist AiUsage row for asset=%s call_site=%s -- spend for this "
             "call is only in the log line above, not the ledger.", asset_id, call_site,

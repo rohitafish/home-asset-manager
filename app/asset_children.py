@@ -172,9 +172,24 @@ def reassign_asset_children(session: Session, survivor_id: int, duplicate_id: in
     # itself (e.g. the survivor was already linked to the duplicate as
     # "same_physical_device") or a duplicate of a relationship the survivor
     # already had. Both are cleanup artifacts of the merge, not real data.
+    #
+    # Must check BOTH asset_id and related_asset_id == survivor_id. Example:
+    # survivor S and duplicate D were each already linked to some third asset
+    # X, i.e. mirror pairs (S,X)/(X,S) and (D,X)/(X,D) all pre-exist. The
+    # repoint loop above turns (D,X)->(S,X) and (X,D)->(X,S), leaving TWO
+    # (S,X) rows and TWO (X,S) rows. Querying asset_id == survivor_id alone
+    # only ever sees the (S,X)-shaped rows -- the (X,S) duplicate pair is
+    # invisible to it and survives uncaught. The dedupe key stays DIRECTED
+    # (not normalized to (min,max,type)): (S,X) and (X,S) are the two real,
+    # legitimate halves of one mirrored link (see correlate.py's
+    # link_assets), not duplicates of each other -- only two rows sharing
+    # the exact same (asset_id, related_asset_id, type) are.
     seen = set()
     for rel in session.exec(
-        select(CIRelationship).where(CIRelationship.asset_id == survivor_id)
+        select(CIRelationship).where(
+            (CIRelationship.asset_id == survivor_id)
+            | (CIRelationship.related_asset_id == survivor_id)
+        )
     ).all():
         key = (rel.asset_id, rel.related_asset_id, rel.relationship_type)
         if rel.asset_id == rel.related_asset_id or key in seen:

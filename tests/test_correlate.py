@@ -66,6 +66,24 @@ def test_locally_administered_macs_excluded_from_adjacency():
     assert signals == []
 
 
+def test_non_hex_mac_does_not_raise():
+    """AssetInterface.mac isn't guaranteed canonical hex -- normalize_mac
+    passes non-12-hex-digit input through verbatim (discovery/normalize.py).
+    A collector artifact sharing a valid-hex OUI prefix (so it passes the
+    locally-administered check and the [:8] prefix comparison) but carrying
+    non-hex characters past that must not crash the whole scoring pass --
+    it must simply not score, same as any other pair with no evidence."""
+    a = _asset()
+    b = _asset()
+    ifaces_a = [_iface(mac="24:5a:4c:00:00:01")]
+    ifaces_b = [_iface(mac="24:5a:4c:zz:zz:zz")]  # valid OUI prefix, garbage past it
+
+    score, signals = _score_pair(a, b, ifaces_a, ifaces_b, set())  # must not raise
+
+    assert score == 0
+    assert signals == []
+
+
 def test_mac_adjacency_scores_when_not_locally_administered():
     """Sanity check for the positive case the exclusion above is carved out
     of: a real OUI with numerically adjacent MACs is the classic wired+

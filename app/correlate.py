@@ -110,8 +110,18 @@ def _is_locally_administered(mac: str) -> bool:
     return bool(first_octet & 0x02)
 
 
-def _mac_int(mac: str) -> int:
-    return int(mac.replace(":", ""), 16)
+def _mac_int(mac: str) -> int | None:
+    # discovery/normalize.py's normalize_mac passes non-12-hex-digit input
+    # through verbatim rather than rejecting it, so AssetInterface.mac is
+    # NOT guaranteed to be canonical hex by the time it reaches here -- a
+    # collector artifact (e.g. an incomplete/placeholder MAC-ish string)
+    # would otherwise raise ValueError straight out of _score_pair, 500ing
+    # the whole /assets/investigate page from one bad row. Same guard shape
+    # as _is_locally_administered just above.
+    try:
+        return int(mac.replace(":", ""), 16)
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -158,7 +168,10 @@ def _score_pair(
                 continue
             if mac_a[:8].lower() != mac_b[:8].lower():
                 continue
-            if abs(_mac_int(mac_a) - _mac_int(mac_b)) <= 4:
+            int_a, int_b = _mac_int(mac_a), _mac_int(mac_b)
+            if int_a is None or int_b is None:
+                continue
+            if abs(int_a - int_b) <= 4:
                 signals.append(Signal(
                     f"Same OUI, MACs {mac_a} / {mac_b} differ by ≤4 — the classic "
                     "wired+wireless dual-NIC pattern", 45,
