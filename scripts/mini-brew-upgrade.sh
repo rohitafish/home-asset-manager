@@ -135,8 +135,15 @@ echo "==> Upgrading"
 HOMEBREW_NO_INSTALL_CLEANUP=1 brew upgrade
 
 echo "==> Restarting the app"
-trap - EXIT
+# bootstrap_app called explicitly BEFORE clearing the trap, not after: the
+# whole point of `trap 'bootstrap_app || true' EXIT` above is that a Ctrl-C
+# or failure anywhere in the restart window still brings the app back --
+# clearing the trap first would reopen exactly that window for the one
+# operation it exists to protect. Only remove the safety net once the
+# restart attempt has actually happened (regardless of its own outcome --
+# bootstrap_app already retries and reports on failure internally).
 bootstrap_app
+trap - EXIT
 
 # If python@3.x was among the upgraded formulae, .venv/pyvenv.cfg's
 # recorded `executable=` path may now point at a deleted Cellar directory

@@ -138,11 +138,35 @@ _put_object_with_retries() {
 # Fail loudly: set -e alone exits silently on e.g. Docker not running,
 # leaving nothing in logs/backup.error.log to act on.
 trap 'echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh FAILED at line $LINENO" >&2; _diagnose || true' ERR
-# Never leave a truncated dump behind that a later restore could mistake for good.
-trap 'rm -f "$TMP"' EXIT
+# Never leave a truncated dump behind that a later restore could mistake for
+# good; release the lock acquired below too.
+trap 'rm -f "$TMP"; rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
 mkdir -p "$BACKUP_DIR"
 cd "$REPO_DIR"   # `docker compose exec` resolves the project from the cwd
+
+# Lock against a manual run overlapping a launchd tick. No two ticks of the
+# SAME label ever run concurrently under launchd, but this script's own
+# comments already anticipate a manual re-run -- and the idempotency guard
+# below only skips once the day's object is already IN S3, not while a
+# sibling run is still mid-pg_dump. Two processes racing that window could
+# interleave writes into the same $TMP path, and whatever lands under
+# COMPLIANCE Object Lock can't be corrected for its full retention (30/186
+# days) -- the one artifact in this whole system that's genuinely unfixable
+# after the fact. `mkdir` is atomic (no new dependency, unlike flock).
+LOCK_DIR="$BACKUP_DIR/.lock"
+# A stale lock (the process holding it was killed before the EXIT trap could
+# run -- e.g. SIGKILL, an unclean shutdown) would otherwise block every
+# future run forever. 2 hours is generous slack over what a single run
+# actually takes (a ~9MB dump plus at most ~2.5 minutes of upload retries).
+if [ -d "$LOCK_DIR" ] && [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +120 2>/dev/null)" ]; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh: removing a stale lock older than 2h ($LOCK_DIR)" >&2
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+fi
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh: another run already holds the lock -- exiting (not an error)" >&2
+  exit 0
+fi
 
 # Idempotency / catch-up guard. If today's off-site daily already exists, this
 # run is a duplicate -- a catch-up tick (see the plist's multiple

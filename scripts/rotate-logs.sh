@@ -35,6 +35,14 @@ rotate_one() {
     fi
   done
 
+  # Accepted, inherent limitation of copy-then-truncate as a technique (not
+  # something missed): any bytes the app appends between the cp finishing
+  # and the truncate below are lost -- there's a real, if small, gap
+  # between "read everything currently in the file" and "empty it". The
+  # real `logrotate` utility documents this identical caveat for its own
+  # `copytruncate` mode. Not worth changing the rotation strategy over for
+  # a multi-millisecond window on a low-volume log -- see this file's
+  # header comment for why rename (which would close this gap) isn't used.
   cp "$log" "$log.1"
   : > "$log"
   gzip -f "$log.1"
