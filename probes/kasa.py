@@ -118,29 +118,40 @@ def run(ip: str, timeout: float = DEFAULT_TIMEOUT) -> ProbeOutcome:
     except (ValueError, UnicodeDecodeError):
         return ProbeOutcome(ok=False, summary="Could not decode response from port 9999.")
 
-    sysinfo = payload.get("system", {}).get("get_sysinfo", {})
-    if not sysinfo:
-        return ProbeOutcome(ok=False, summary="Device responded but sent no sysinfo.")
+    # Everything below assumes payload/sysinfo/each children element is a
+    # dict -- true for every real Kasa response, but not guaranteed by
+    # "valid JSON": a well-formed-JSON-but-differently-shaped response
+    # (e.g. a bare list, or {"system": "err"}) raises AttributeError/
+    # TypeError here, which would otherwise escape run() -- violating
+    # probes/base.py's "must never raise" contract. The caller's own safety
+    # net still catches it, but the user then sees a raw Python error
+    # string instead of the diagnostic summary every other path produces.
+    try:
+        sysinfo = payload.get("system", {}).get("get_sysinfo", {})
+        if not sysinfo:
+            return ProbeOutcome(ok=False, summary="Device responded but sent no sysinfo.")
 
-    sysinfo = _redact(sysinfo)
-    facts = {
-        "alias": sysinfo.get("alias"),
-        "model": sysinfo.get("model"),
-        "dev_name": sysinfo.get("dev_name"),
-        "sw_ver": sysinfo.get("sw_ver"),
-        "hw_ver": sysinfo.get("hw_ver"),
-        "mac": sysinfo.get("mac") or sysinfo.get("mic_mac"),
-        "relay_state": sysinfo.get("relay_state"),
-        "on_time": sysinfo.get("on_time"),
-        "rssi": sysinfo.get("rssi"),
-        "protocol": "kasa_legacy_9999",
-    }
-    if sysinfo.get("children"):
-        facts["children"] = [
-            {"id": c.get("id"), "alias": c.get("alias"), "state": c.get("state")}
-            for c in sysinfo["children"]
-        ]
-    facts = {k: v for k, v in facts.items() if v is not None}
+        sysinfo = _redact(sysinfo)
+        facts = {
+            "alias": sysinfo.get("alias"),
+            "model": sysinfo.get("model"),
+            "dev_name": sysinfo.get("dev_name"),
+            "sw_ver": sysinfo.get("sw_ver"),
+            "hw_ver": sysinfo.get("hw_ver"),
+            "mac": sysinfo.get("mac") or sysinfo.get("mic_mac"),
+            "relay_state": sysinfo.get("relay_state"),
+            "on_time": sysinfo.get("on_time"),
+            "rssi": sysinfo.get("rssi"),
+            "protocol": "kasa_legacy_9999",
+        }
+        if sysinfo.get("children"):
+            facts["children"] = [
+                {"id": c.get("id"), "alias": c.get("alias"), "state": c.get("state")}
+                for c in sysinfo["children"]
+            ]
+        facts = {k: v for k, v in facts.items() if v is not None}
+    except (AttributeError, TypeError):
+        return ProbeOutcome(ok=False, summary="Device sent a response in an unexpected shape.")
 
     suggestions = []
     if facts.get("alias"):

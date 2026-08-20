@@ -55,7 +55,16 @@ RANGE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --full) MODE="full"; shift ;;
-    --range) RANGE="$2"; shift 2 ;;
+    --range)
+      # Without this check, --range as the LAST argument makes `shift 2`
+      # silently fail (only one argument left to shift) and return non-zero
+      # -- with no `set -e` here, $# never reaches 0 and the while loop
+      # above spins forever burning a CPU core, with no output and no hint
+      # what happened.
+      [ $# -ge 2 ] || { echo "--range requires an argument" >&2; exit 2; }
+      RANGE="$2"
+      shift 2
+      ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -79,7 +88,12 @@ fi
 DENYLIST_FILE="$REPO_DIR/.pii-denylist"
 DENYLIST_TERMS=()
 if [ -f "$DENYLIST_FILE" ]; then
-  while IFS= read -r line; do
+  # `|| [ -n "$line" ]`: plain `read` returns non-zero on EOF without a
+  # trailing newline, which would otherwise silently drop the file's last
+  # line -- and the most recently added term (added *because* it just
+  # leaked) is exactly the one most likely to be on a newline-less last
+  # line in a hand-edited file.
+  while IFS= read -r line || [ -n "$line" ]; do
     [ -z "$line" ] && continue
     case "$line" in \#*) continue ;; esac
     DENYLIST_TERMS+=("$line")
@@ -216,7 +230,10 @@ fi
 # The FAIL names the key and file, never the value.
 ENV_FILE="$REPO_DIR/.env"
 if [ -f "$ENV_FILE" ]; then
-  while IFS= read -r line; do
+  # Same "don't drop a newline-less last line" fix as the denylist read
+  # above -- the newest key in a hand-edited .env is exactly the one most
+  # likely to be on that last line.
+  while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in ''|'#'*) continue ;; esac
     case "$line" in *=*) ;; *) continue ;; esac
     key="${line%%=*}"

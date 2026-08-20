@@ -320,6 +320,35 @@ def test_clean_range_exits_zero(repo):
     assert "0 FAIL(s)" in proc.stdout
 
 
+def test_unresolvable_range_fails_loudly_instead_of_reading_as_clean(repo):
+    """Regression test: git rev-list on a range it can't resolve (e.g. a
+    remote sha this checkout hasn't fetched -- exactly what the pre-push
+    hook builds from) used to be indistinguishable from a genuinely empty
+    range, since only the output was checked, never rev-list's exit status.
+    That printed "ok ... nothing to check" and exited 0 -- a push going
+    through with zero PII/secret scanning, looking like a pass."""
+    proc = _run_proc(repo, "this-does-not-exist..HEAD")
+
+    assert proc.returncode == 1, f"an unresolvable range must FAIL, not read as clean:\n{proc.stdout}"
+    assert "FAIL" in proc.stdout
+    assert "nothing to check" not in proc.stdout
+
+
+def test_range_flag_missing_operand_fails_instead_of_hanging(repo):
+    """Regression test: --range as the last argument used to make `shift 2`
+    silently fail and return non-zero -- with no `set -e`, $# never reached
+    0 and the argument-parsing loop spun forever. A timeout here is a
+    correctness assertion, not just test hygiene: a hang would otherwise
+    make this test itself hang instead of failing cleanly."""
+    proc = subprocess.run(
+        ["bash", "scripts/check-pii.sh", "--range"],
+        cwd=repo, capture_output=True, text=True, timeout=10,
+    )
+
+    assert proc.returncode == 2
+    assert "requires an argument" in proc.stderr
+
+
 # --- Hex/MAC normalisation -------------------------------------------------
 #
 # These pin the miss that motivated the rule: the literal denylist grep is
@@ -364,6 +393,24 @@ def test_hex_mac_value_is_never_printed(repo):
         f"the matched MAC must be withheld:\n{proc.stdout}"
     )
     assert "value withheld" in proc.stdout
+
+
+def test_denylist_term_without_trailing_newline_still_matches(repo):
+    """Regression test: `while IFS= read -r line; do ... done < file` drops
+    a file's last line when it has no trailing newline (`read` returns
+    non-zero on EOF-without-newline). A hand-edited, gitignored
+    .pii-denylist is exactly the kind of file that can end up without one --
+    and the most recently added term (added *because* it just leaked) is
+    the one most likely to be on that last line."""
+    gi = repo / ".gitignore"
+    gi.write_text(gi.read_text() + ".pii-denylist\n")
+    (repo / ".pii-denylist").write_bytes(b"Jordan Lee\nnewest-real-secret-value")  # no trailing \n
+    rng = _commit_file(repo, "probes/thing.py", 'token = "newest-real-secret-value"\n')
+
+    proc = _run_proc(repo, rng)
+
+    assert proc.returncode == 1, f"the newline-less last term must still be caught:\n{proc.stdout}"
+    assert "probes/thing.py" in proc.stdout
 
 
 def test_short_denylist_entry_never_becomes_a_mac_needle(repo):
