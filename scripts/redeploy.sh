@@ -41,7 +41,18 @@ fi
 # edit made on the Mini -- which rsync --delete would silently overwrite.
 # git status --porcelain ignores gitignored paths (.env, devices/, .pii-denylist),
 # so this only fires on tracked or genuinely-untracked content.
-DIRTY="$(ssh "$HOST" "cd $REMOTE_DIR && git status --porcelain")"
+#
+# Explicit `if !` around the assignment, not a bare `DIRTY=$(...)`: under
+# set -e, a plain assignment's own exit status IS the substitution's --
+# unlike `export VAR=$(...)`, whose exit status masks it (see backup-db.sh's
+# _env_var for the same distinction). A missing/renamed $REMOTE_DIR made the
+# `cd` inside fail and killed the script right here with no message, unlike
+# every other failure mode this preflight section goes out of its way to name.
+if ! DIRTY="$(ssh "$HOST" "cd $REMOTE_DIR && git status --porcelain")"; then
+  echo "!!! Could not check the working tree at $HOST:$REMOTE_DIR -- does that" >&2
+  echo "!!! directory exist? (DEPLOY_REMOTE_DIR defaults to ~/claudecode/assetmgt.)" >&2
+  exit 1
+fi
 if [ -n "$DIRTY" ]; then
   if [ "${ALLOW_DIRTY_DEPLOY:-0}" = "1" ]; then
     echo "!!! ALLOW_DIRTY_DEPLOY=1 -- discarding the Mini's uncommitted changes:" >&2
