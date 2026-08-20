@@ -123,6 +123,28 @@ def test_coerce_purchase_price_invalid():
     assert "not a valid amount" in error
 
 
+def test_coerce_purchase_price_at_the_column_ceiling_is_accepted():
+    value, error = _coerce_proposal_value("purchase_price", "9999999999.99")
+    assert error is None
+    assert value == Decimal("9999999999.99")
+
+
+def test_coerce_purchase_price_rejects_a_value_too_large_for_the_column():
+    """Regression test: purchase_price/replacement_value are Numeric(12, 2)
+    columns -- an oversized value (a misread invoice line missing a decimal
+    point) used to validate cleanly here and only fail with a bare
+    NumericValueOutOfRange 500 the moment a human clicked Apply."""
+    value, error = _coerce_proposal_value("purchase_price", "12500000000")
+    assert value is None
+    assert "out of range" in error
+
+
+def test_coerce_purchase_price_rejects_negative():
+    value, error = _coerce_proposal_value("purchase_price", "-50.00")
+    assert value is None
+    assert "out of range" in error
+
+
 # -- build_asset_context --------------------------------------------------------
 
 
@@ -402,6 +424,35 @@ def test_apply_proposal_set_location_reuses_existing_location_case_insensitively
     assert asset.location_id == locations[0].id
 
 
+def test_apply_proposal_set_location_does_not_wildcard_match(session):
+    """Regression test: the old `ilike(name)` lookup treated % and _ as
+    wildcards, not literal characters -- a proposed name containing an
+    underscore could silently match an unrelated existing location (e.g.
+    "Utility_Room" matching "UtilityXRoom") and file the asset in the wrong
+    room. Must create a new, distinct location instead."""
+    from app.models import Location
+
+    asset = make_asset(session)
+    session.add(Location(name="UtilityXRoom"))  # single char where the _ would wildcard
+    session.commit()
+
+    proposal = ChangeProposal(
+        asset_id=asset.id, kind="set_location",
+        payload_json='{"location_name": "Utility_Room", "position": null}',
+    )
+    session.add(proposal)
+    session.commit()
+
+    apply_proposal(session, proposal)
+    session.commit()
+
+    locations = session.exec(select(Location)).all()
+    assert {loc.name for loc in locations} == {"UtilityXRoom", "Utility_Room"}
+    session.refresh(asset)
+    new_location = session.exec(select(Location).where(Location.name == "Utility_Room")).one()
+    assert asset.location_id == new_location.id
+
+
 def test_apply_proposal_link_same_device(session):
     a = make_asset(session)
     b = make_asset(session)
@@ -421,6 +472,54 @@ def test_apply_proposal_link_same_device(session):
     assert len(rels) == 2
     notes = session.exec(select(AssetNote)).all()
     assert len(notes) == 2
+
+
+def test_apply_proposal_link_same_device_discards_when_one_asset_is_gone(session):
+    """Regression test: if one of the two assets was deleted between
+    proposing and applying, the old code fell through to the unconditional
+    proposal.status = "applied" at the bottom with nothing having happened
+    -- the user was told the link landed when it silently didn't. Must
+    discard instead, and note it on the asset that survived."""
+    from app.models import CIRelationship
+
+    survivor = make_asset(session)
+    deleted_id = survivor.id + 999  # never created -- stands in for "since deleted"
+    proposal = ChangeProposal(
+        asset_id=survivor.id, kind="link_same_device",
+        payload_json=f'{{"asset_id_a": {survivor.id}, "asset_id_b": {deleted_id}, "detail": null}}',
+    )
+    session.add(proposal)
+    session.commit()
+
+    apply_proposal(session, proposal)
+    session.commit()
+
+    assert proposal.status == "discarded"
+    assert session.exec(select(CIRelationship)).all() == []  # nothing linked
+    notes = session.exec(select(AssetNote).where(AssetNote.asset_id == survivor.id)).all()
+    assert len(notes) == 1
+    assert "no longer exist" in notes[0].body
+    assert str(deleted_id) in notes[0].body
+
+
+def test_apply_proposal_link_same_device_discards_quietly_when_both_gone(session):
+    """Both assets gone (a rarer edge case) must still discard cleanly --
+    there's simply no asset left to attach a note to."""
+    # The proposal row's own asset_id is just "where this proposal is
+    # filed" (a real FK) -- separate from the two ids being linked, which
+    # come from payload_json and are the ones simulated as deleted here.
+    filed_on = make_asset(session)
+    proposal = ChangeProposal(
+        asset_id=filed_on.id, kind="link_same_device",
+        payload_json='{"asset_id_a": 999001, "asset_id_b": 999002, "detail": null}',
+    )
+    session.add(proposal)
+    session.commit()
+
+    apply_proposal(session, proposal)  # must not raise
+    session.commit()
+
+    assert proposal.status == "discarded"
 
 
 def test_apply_proposal_skips_non_pending(session):
@@ -468,6 +567,35 @@ def test_chat_transcript_summarizes_tool_use_and_skips_pure_tool_results(session
 
 
 # -- _replay -------------------------------------------------------------------
+
+
+def test_replay_query_breaks_created_at_ties_by_id(session, monkeypatch):
+    """Regression test: two ChatMessage rows written in the same
+    microsecond within a turn must sort deterministically -- if a
+    tool_result ever sorted before its tool_use, _replay would reconstruct
+    an invalid transcript and the next API call would 400. Asserts the
+    actual query includes id as a secondary sort key, rather than relying
+    on how a particular database happens to break ties on otherwise-equal
+    rows (not a reliable thing to depend on)."""
+    import app.assistant as assistant_module
+
+    captured = []
+    real_exec = session.exec
+
+    def spy_exec(stmt, *args, **kwargs):
+        captured.append(stmt)
+        return real_exec(stmt, *args, **kwargs)
+
+    monkeypatch.setattr(session, "exec", spy_exec)
+    asset = make_asset(session)
+
+    assistant_module._replay(session, asset.id)
+
+    assert captured, "expected _replay to query via session.exec"
+    order_by_sql = str(captured[0]).split("ORDER BY", 1)[-1]
+    assert "created_at" in order_by_sql and "id" in order_by_sql
+    # created_at must come first (the primary sort), id as the tiebreaker.
+    assert order_by_sql.index("created_at") < order_by_sql.index("id")
 
 
 def test_replay_counts_image_attachment_turn_as_a_turn_start(session):
@@ -889,6 +1017,10 @@ def test_budget_block_reason_blocks_at_daily_limit(session, monkeypatch):
 
     assert reason is not None
     assert "Today's AI budget" in reason
+    # The window is computed from naive-UTC `now`, so the message must say
+    # so explicitly -- "resets at midnight" alone is wrong under BST for
+    # the Europe/London UI this app renders everything in.
+    assert "resets at midnight UTC" in reason
 
 
 def test_budget_block_reason_blocks_at_monthly_limit(session, monkeypatch):
