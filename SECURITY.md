@@ -12,9 +12,10 @@ doing real work.
 
 Please **do not open a public issue** for a security problem.
 
-Report privately through GitHub's **Report a vulnerability** button under this
-repository's **Security** tab, which opens a private security advisory visible
-only to the maintainer. Include:
+Report privately through GitHub's [**Report a vulnerability**](https://github.com/rohitafish/home-asset-manager/security/policy)
+button (under this repository's **Security** tab, if you're navigating there
+directly), which opens a private security advisory visible only to the
+maintainer. Include:
 
 - what the issue is and where in the code it lives,
 - how to reproduce it (a minimal case is ideal),
