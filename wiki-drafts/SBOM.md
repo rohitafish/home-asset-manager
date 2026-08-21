@@ -26,7 +26,7 @@ This page explains what each pin is *for*.
 | **sqlmodel** | 0.0.39 | Combines SQLAlchemy (the SQL toolkit) with Pydantic validation in one model definition — every table in `app/models.py` (`Asset`, `Finding`, `DiscoveryRun`, ...) is a SQLModel class. |
 | **alembic** | 1.19.1 | Database migrations. Every schema change is a file under `migrations/versions/`, applied via `alembic upgrade head` — part of every `redeploy.sh` run. |
 | **psycopg**[binary] | 3.3.4 | The PostgreSQL driver SQLAlchemy talks through. `[binary]` bundles a precompiled `libpq`, so there's no separate system Postgres client library to install. |
-| **python-dotenv** | 1.2.2 | Loads `.env` into the process environment at startup. |
+| **python-dotenv** | 1.2.3 | Loads `.env` into the process environment at startup. |
 | **jinja2** | 3.1.6 | The HTML template engine behind every page in `app/templates/`, and the in-app README view (`app/readme_render.py`) that renders this repo's own `README.md` live. |
 | **python-multipart** | 0.0.32 | Required by FastAPI to parse multipart form submissions — every plain HTML form POST (asset edit, notes, discovery triggers) and the chat panel's file uploads depend on it. |
 | **httpx** | 0.28.1 | The HTTP client behind every outbound call this app makes: UniFi's API (`discovery/unifi_client.py`), a Sonos player's local UPnP/SOAP API (`probes/sonos_api.py`), the CVE/KEV/EPSS feeds (`discovery/cve_enrich.py`), and the Anthropic/OpenRouter API (`app/assistant.py`). |
