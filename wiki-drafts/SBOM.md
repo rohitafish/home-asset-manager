@@ -15,7 +15,7 @@ This page explains what each pin is *for*.
 
 | Component | Notes |
 |---|---|
-| **Python 3.12+** | The Mini (the deployed instance) runs 3.12 — the floor `ruff.toml` targets and CI tests against. The dev machine runs a newer 3.x; both are supported, see `AGENTS.md`'s "Tests" section. |
+| **Python 3.12+** | The deployed instance runs 3.12 — the floor `ruff.toml` targets and CI tests against. The dev machine runs a newer 3.x; both are supported, see `AGENTS.md`'s "Tests" section. |
 
 ## Python packages (runtime — `requirements.txt`)
 

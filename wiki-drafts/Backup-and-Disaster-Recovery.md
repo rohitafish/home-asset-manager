@@ -10,14 +10,14 @@ section — this page won't duplicate those verbatim.
 
 ## What's protected, and the trade-off accepted
 
-Time Machine backing up the Mini does **not** protect the database: Postgres
+Time Machine backing up the host does **not** protect the database: Postgres
 runs inside a Colima VM, so Time Machine only ever sees one large opaque VM
 disk image, not the database files inside it — a snapshot taken mid-write has
 no crash-consistency guarantee. `scripts/backup-db.sh` exists specifically to
 get a real, restorable copy off that Mac and into S3.
 
 This is deliberately a *durability* answer, not an *availability* one: after
-losing the Mini the app is down until you rebuild a host — it has to run on
+losing the host the app is down until you rebuild it — it has to run on
 the LAN for nmap to work at all, so there was never a version of this that
 kept the dashboard reachable through a lost host. What this protects is the
 data, not uptime.
@@ -125,7 +125,7 @@ worth escalating on the first failure.
 Two mechanisms work together, not against each other:
 
 **S3 Object Lock (Compliance mode)** is what actually stops early deletion —
-enforced by S3 itself, so nothing (this credential, a compromised Mini, the
+enforced by S3 itself, so nothing (this credential, a compromised host, the
 AWS account owner, even AWS support) can delete or overwrite a locked object
 before its retention date. It's set per-object at upload time
 (`--object-lock-mode COMPLIANCE --object-lock-retain-until-date ...`), and
@@ -158,7 +158,7 @@ lose.
 
 Nothing is kept forever, and there's no infinite-retention tier — after the
 Lifecycle window, an object is gone. The local copies kept in `backups/` on
-the Mini (the 7 most recent) are a convenience fast-path only, not the real
+the host (the 7 most recent) are a convenience fast-path only, not the real
 backup history; a restore should always pull from S3, not from the local
 directory, since that's the only copy proven to have left the host.
 
@@ -201,7 +201,7 @@ correct, not a bug; only the deployed instance runs the nightly job.
 
 **`.env` itself.** It holds `APP_ADMIN_PASSWORD`, the UniFi/NVD/AI API keys,
 and the `BACKUP_AWS_*` credentials that make this whole system work — and
-it's gitignored *and* excluded from the deploy sync, so after losing the Mini
+it's gitignored *and* excluded from the deploy sync, so after losing the host
 it exists nowhere. A restore brings back all the *data*, but the app won't
 start (and the next backup can't run) without `.env` recreated from
 somewhere else. There's no code fix for this: copy its contents into a
