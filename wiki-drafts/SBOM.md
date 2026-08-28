@@ -22,17 +22,17 @@ This page explains what each pin is *for*.
 | Component | Version | What it's for, here |
 |---|---|---|
 | **fastapi** | 0.141.1 | The web framework the whole app is built on — every route in `app/routers/`, and the dependency-injection mechanism `require_admin`/`require_same_origin` (`app/auth.py`) hook into. |
-| **uvicorn**[standard] | 0.52.3 | The ASGI server that actually runs the app as an OS process — the literal command in `com.assetmgt.app.plist`'s `ProgramArguments`, which launchd starts and supervises. `[standard]` pulls in `uvloop`/`httptools` for a faster event loop and HTTP parser. |
+| **uvicorn**[standard] | 0.52.4 | The ASGI server that actually runs the app as an OS process — the literal command in `com.assetmgt.app.plist`'s `ProgramArguments`, which launchd starts and supervises. `[standard]` pulls in `uvloop`/`httptools` for a faster event loop and HTTP parser. |
 | **sqlmodel** | 0.0.39 | Combines SQLAlchemy (the SQL toolkit) with Pydantic validation in one model definition — every table in `app/models.py` (`Asset`, `Finding`, `DiscoveryRun`, ...) is a SQLModel class. |
 | **alembic** | 1.19.1 | Database migrations. Every schema change is a file under `migrations/versions/`, applied via `alembic upgrade head` — part of every `redeploy.sh` run. |
 | **psycopg**[binary] | 3.3.4 | The PostgreSQL driver SQLAlchemy talks through. `[binary]` bundles a precompiled `libpq`, so there's no separate system Postgres client library to install. |
 | **python-dotenv** | 1.2.3 | Loads `.env` into the process environment at startup. |
 | **jinja2** | 3.1.6 | The HTML template engine behind every page in `app/templates/`, and the in-app README view (`app/readme_render.py`) that renders this repo's own `README.md` live. |
 | **python-multipart** | 0.0.32 | Required by FastAPI to parse multipart form submissions — every plain HTML form POST (asset edit, notes, discovery triggers) and the chat panel's file uploads depend on it. |
-| **httpx** | 0.28.1 | The HTTP client behind every outbound call this app makes: UniFi's API (`discovery/unifi_client.py`), a Sonos player's local UPnP/SOAP API (`probes/sonos_api.py`), the CVE/KEV/EPSS feeds (`discovery/cve_enrich.py`), and the Anthropic/OpenRouter API (`app/assistant.py`). |
+| **httpx** | 0.28.1 | The HTTP client behind every other outbound call this app makes: UniFi's API (`discovery/unifi_client.py`), a Sonos player's local UPnP/SOAP API (`probes/sonos_api.py`), and the CVE/KEV/EPSS feeds (`discovery/cve_enrich.py`). No longer used for the Anthropic/OpenRouter API — see **anthropic** below. |
 | **typer** | 0.27.1 | The CLI framework behind `discovery/cli.py` (`python -m discovery.cli ...`) — how discovery collectors run standalone or from cron, outside the web UI. |
 | **markdown** | 3.10.3 | Renders `README.md` to HTML for the in-app `/readme` route. |
-| **anthropic** | 0.122.0 | The official Anthropic API client, used by the optional investigation assistant (`app/assistant.py`) — and for the OpenRouter fallback too, since OpenRouter exposes an Anthropic-compatible endpoint. |
+| **anthropic** | 1.0.0 | The official Anthropic API client, used by the optional investigation assistant (`app/assistant.py`) — and for the OpenRouter fallback too, since OpenRouter exposes an Anthropic-compatible endpoint. As of 1.0.0 it brings its own HTTP transport, **httpx2** (a separate package from **httpx** above, pulled in transitively — not pinned directly in `requirements.txt`), so this is the one outbound call in the app that no longer rides `httpx`. |
 | **defusedxml** | 0.7.1 | Safe parsing for anything device-supplied: nmap's `-oX` output, a Sonos player's UPnP/SOAP responses. Closes the standard XML entity-expansion class of attack the stdlib parser doesn't guard against by default — see [Security Model](Security-Model). |
 
 ## Frontend
@@ -71,7 +71,7 @@ exception, pinned specifically because of the risk above.
 | Component | Version | Notes |
 |---|---|---|
 | **pytest** | 9.1.1 | The test suite under `tests/`, run by the pre-push hook and `preflight.sh`. |
-| **ruff** | 0.16.3 | Linter — `ruff.toml` pins the exact rule set. Also run by the pre-push hook and CI. |
+| **ruff** | 0.16.4 | Linter — `ruff.toml` pins the exact rule set. Also run by the pre-push hook and CI. |
 
 `scripts/redeploy.sh` only installs `requirements.txt`, so neither of these
 ships on the deployed instance — see `AGENTS.md`'s "Tests" section.
