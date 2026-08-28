@@ -2,4 +2,4 @@
 # only installs requirements.txt). Install with:
 #   pip install -r requirements.txt -r requirements-dev.txt
 pytest==9.1.1
-ruff==0.16.3
+ruff==0.16.4
