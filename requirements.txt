@@ -6,7 +6,7 @@
 # way it already bumps floors (see .github/dependabot.yml) -- exact-pin PRs
 # aren't a new workflow, just a `==` in place of a `>=` in the diff.
 fastapi==0.141.1
-uvicorn[standard]==0.52.3
+uvicorn[standard]==0.52.4
 sqlmodel==0.0.39
 alembic==1.19.1
 psycopg[binary]==3.3.4
