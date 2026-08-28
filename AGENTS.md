@@ -368,6 +368,22 @@ assistant or human contributor.
 - This repo has its own git identity, scoped locally (not global): commits
   are authored as `rohitafish <25867278+rohitafish@users.noreply.github.com>`,
   not the user's real name — keep it that way for anything pushed publicly.
+  **This scoping only protects commits made *inside* this checkout.** The
+  dev machine's *global* git identity is deliberately left unset (that's
+  the whole point of scoping it locally instead), so any OTHER clone —
+  e.g. a scratch clone of the wiki repo (see "Documentation" below) —
+  silently falls back to git's username+hostname auto-detection instead of
+  erroring, unless that clone's identity is set explicitly. This isn't
+  hypothetical: it's exactly how a real name + hostname ended up in a
+  wiki commit on 2026-08-28, fixed by force-pushing a corrected, correctly
+  signed commit over it (GitHub can still keep the original object
+  reachable by its raw SHA for a while after — no further fix available
+  short of contacting GitHub Support). `scripts/publish-wiki.sh` is what
+  now sets the wiki clone's identity correctly — use it rather than a
+  manual clone. Separately, `user.useConfigOnly=true` is set in this
+  machine's *global* git config, so *any* repo with no identity configured
+  (local or global) now fails the commit outright instead of guessing —
+  a second, independent backstop for exactly this failure mode.
 - Remote: `origin` → `https://github.com/rohitafish/home-asset-manager` — the
   canonical repo. (The original repo, `rohitafish/assetmgt`, was renamed to
   `assetmgt-archive` and kept private as a full-history backup when this repo
@@ -628,18 +644,22 @@ assistant or human contributor.
   editable *source*; editing it does **nothing** to the live wiki until it's
   separately published, and the two can silently drift exactly like
   `wiki-drafts/Security-Model.md` once did (drafted before this session's
-  signing/rulesets/headers/exact-pins work, never updated after). To
-  publish a change: clone the wiki repo to a scratch dir (`git clone
-  https://github.com/rohitafish/home-asset-manager.wiki.git`), copy the
-  updated file(s) from `wiki-drafts/` over the matching page(s) (filenames
-  map 1:1, e.g. `Security-Model.md` → the wiki's Security Model page),
-  commit, push, then delete the scratch clone — same commands as any repo,
-  no special tooling. Pushing here publishes immediately with no PR/review
-  gate, so treat it like any other publish-to-a-public-place action (confirm
-  before pushing). Whenever a change here also changes something a wiki page
-  claims — a security control, an architecture detail, a config key — check
-  `wiki-drafts/` for a page that needs the same update, the same way README/
-  AGENTS.md updates are already expected above.
+  signing/rulesets/headers/exact-pins work, never updated after).
+  **Always publish via `./scripts/publish-wiki.sh` — do not clone/copy/push
+  by hand.** It reads the commit identity from *this* repo's own local git
+  config, refuses to run if `wiki-drafts/` is dirty, shows the diff and asks
+  for confirmation before pushing (this still publishes immediately with no
+  PR/review gate, so treat it like any other publish-to-a-public-place
+  action), and asserts afterwards that the pushed commit is actually
+  authored the way it configured it. That last check exists because doing
+  this manually once (2026-08-28) leaked the real name + hostname
+  auto-detected by a bare `git clone` into a commit on the *public* wiki —
+  see "Git / GitHub" below for why a fresh clone is exposed to that even
+  though this repo itself isn't. Whenever a change here also changes
+  something a wiki page claims — a security control, an architecture
+  detail, a config key — check `wiki-drafts/` for a page that needs the
+  same update, the same way README/AGENTS.md updates are already expected
+  above.
 
 ## Asset-child tables (cascade deletion)
 - There's no `ON DELETE CASCADE` on any FK pointing at `asset.id`, so
