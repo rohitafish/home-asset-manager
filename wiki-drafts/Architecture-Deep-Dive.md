@@ -170,6 +170,7 @@ and [Security Model](Security-Model).
 - **Web app** — `uvicorn app.main:app`, routed through `app/routers/assets.py`
   (JSON-ish API surface) and `app/routers/dashboard.py` (the HTML dashboard).
 - **CLI** (`discovery/cli.py`, Typer) — `unifi`, `nmap`, `local-mac`,
-  `account-import`, `sonos`, `enrich`, `revalue`, and `all` (every discovery
-  source in one pass). Full flag reference in the README's
+  `account-import`, `sonos`, `enrich`, `revalue`, `resync-exposure`, and
+  `all` (every discovery source in one pass). Full flag reference in the
+  README's
   [CLI reference](https://github.com/rohitafish/home-asset-manager#cli-reference).

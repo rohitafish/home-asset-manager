@@ -958,7 +958,15 @@ which is exactly why none of them come back on their own.
    detected service versions against NVD/EPSS/CISA KEV.
 4. Check **Vulnerabilities** for the open findings list (grouped by
    severity, with SLA due dates and overdue flags) and **Summary** for
-   overall coverage/posture metrics.
+   overall coverage/posture metrics. Marking an asset internet-facing (or
+   not) on its **Edit** page updates any open finding's exposure/SLA due
+   date on the next vulnerability check automatically -- for a finding
+   whose underlying service no longer matches (so it's no longer revisited
+   by a normal check), backfill it directly instead:
+   ```bash
+   python -m discovery.cli resync-exposure          # dry run: prints the diff, writes nothing
+   python -m discovery.cli resync-exposure --apply  # writes, one timeline note per change
+   ```
 
 Some devices legitimately create more than one asset with no reliable way to
 auto-correlate them — e.g. a phone with a "Fixed" private Wi-Fi address gets
