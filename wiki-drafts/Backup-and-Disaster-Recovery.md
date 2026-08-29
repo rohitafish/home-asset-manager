@@ -82,6 +82,12 @@ straight through 03:15. `StartCalendarInterval` — not `StartInterval` — is
 used specifically because it re-runs a tick missed during *sleep* at the next
 wake; the daytime ticks cover the case sleep-catchup can't (power loss, not
 just sleep), and conveniently also sidestep a boot-time Docker-not-ready race.
+(The original Aug 2026 outage that motivated this turned out to be a
+sub-second power-transfer cutover rather than a real extended outage — see
+README's "Power outages and unattended restart" — and is now covered by a
+UPS before it ever reaches a reboot. FileVault stays on regardless, so a
+genuine unattended power-off still needs a login before the app comes back;
+these ticks are the correct mitigation for that case either way.)
 
 The job is **idempotent**: it `head-object`s that day's `daily/` key first
 and exits immediately if it's already there. That's what makes three ticks a

@@ -40,13 +40,54 @@ assistant or human contributor.
   install/reload launchd plists (`scripts/*.plist`) -- a plist change (new
   agent, or edits to an existing one) needs a manual `cp`/`sed`/`launchctl
   load` on the Mini, per the README's launchd setup section.
-- The Mini cannot recover from a power outage unattended: FileVault is on, and
-  `~/Library/LaunchAgents` (the app, Colima, backups) lives on the encrypted
-  Data volume, so nothing starts until someone logs in at the console. This is
-  an accepted trade-off, not an unfixed bug -- don't "fix" it by proposing a
-  system LaunchDaemon (same encrypted volume) or auto-login (mutually
-  exclusive with FileVault on macOS). See README's "Power outages and
-  unattended restart".
+  `com.assetmgt.upsmonitor.plist` is the one exception to "`~/Library/
+  LaunchAgents`" in that sentence -- it's a LaunchDaemon and installs to
+  `/Library/LaunchDaemons` with `sudo`, see README's "Running the Mini
+  headless".
+- The Mini runs headless (no display or keyboard attached) with FileVault
+  **on** and auto-login **off** -- deliberately, and don't propose disabling
+  either. `~/Library/LaunchAgents` (the app, Colima, backups) lives on the
+  encrypted Data volume, so a cold boot needs a human at the pre-boot unlock
+  screen before any of it starts -- there is no way to do that unlock over
+  the network, on macOS or otherwise. The machine also holds a signed-in
+  iCloud session, two GitHub deploy keys, `~/.aws/credentials`, and `.env`'s
+  `APP_ADMIN_PASSWORD`/backup AWS keys, so turning FileVault off to route
+  around this would trade a rare physical trip for a stolen Mini being a
+  live, fully-provisioned session instead of a brick -- not a good trade for
+  a private-home deployment. (Auto-login would also write the login password
+  to `/etc/kcpassword` under trivially-reversible obfuscation, readable from
+  recoveryOS once FileVault is off -- a second, independent reason not to
+  pair the two.) The one sanctioned exception to "no LaunchDaemons for this
+  app" is `com.assetmgt.upsmonitor` (below): it has to run with nobody logged
+  in and needs `shutdown` directly, but it never touches the encrypted volume
+  or FileVault state, so it doesn't reopen this trade-off.
+- **What actually caused the Mini's outages turned out not to be power loss
+  at all.** The house runs on a Tesla Powerwall 3, which already rides out
+  real outages for hours -- but the Powerwall Gateway takes on the order of a
+  few hundred milliseconds to detect grid loss and switch over, and the
+  Mini's internal PSU only holds up for a few milliseconds on its own. It was
+  browning out in that cutover gap, which also explains why it "sometimes
+  stayed up": survival came down to how long that particular cutover took. A
+  small UPS (`com.assetmgt.upsmonitor.plist` + `scripts/ups-shutdown.sh`, see
+  README's "Running the Mini headless") bridges exactly that gap; it is not
+  sized for extended runtime, since the Powerwall already covers that. If the
+  UPS itself runs low -- a longer outage than the Powerwall covers, or a
+  dying UPS battery -- the monitor shuts the Mini down gracefully (including
+  `colima stop`, see below) rather than letting `pmset -u haltlevel`'s
+  OS-native emergency halt do it abruptly; that backstop stays set to trigger
+  only if the monitor script itself fails outright. Recovering from that
+  shutdown, or from a genuine unattended power-off, still needs a human at
+  the console -- there's no way around that with FileVault on, see above.
+- For any reboot you *can* get ahead of remotely (OS upgrades,
+  `mini-brew-upgrade.sh`, general maintenance): `sudo fdesetup authrestart`
+  over SSH prompts for the FileVault password once, stores the unlock key for
+  exactly that one boot, and reboots straight past the pre-boot screen to the
+  macOS login window -- reachable headless via Screen Sharing (see README).
+  The key is destroyed the moment the volume unlocks and nothing is written
+  to disk, so this doesn't weaken FileVault at rest the way auto-login would;
+  the exposure window is only the few seconds of the reboot you just
+  triggered. This is now the preferred path for a planned reboot -- run
+  `colima stop` first regardless, same as any other reboot (below).
 - Even when someone *is* logged in through a reboot (e.g. an OS-upgrade
   restart), Colima can still fail to come back, taking Postgres and the app
   down with it. An abrupt shutdown SIGTERMs Colima without a graceful `colima
@@ -72,8 +113,10 @@ assistant or human contributor.
   colima stop'` (waits for a clean guest teardown, no time limit), optionally
   `launchctl bootout gui/$(id -u)/com.assetmgt.app` so the app isn't
   crash-looping against a vanishing DB (it autostarts on next boot), then
-  reboot normally. This is the safe path; the manual recovery above is only
-  for reboots you couldn't get ahead of.
+  reboot normally -- headless, that's `sudo fdesetup authrestart` (above)
+  rather than a plain `shutdown -r now`, so the pre-boot screen never comes
+  up. This is the safe path; the manual recovery above is only for reboots
+  you couldn't get ahead of.
 - **Never run a bare `brew upgrade` on the Mini -- use
   `./scripts/mini-brew-upgrade.sh`.** A manual one briefly broke the live
   app: `python@3.12` was upgraded (3.12.13_4 -> 3.12.14) while `uvicorn` was
