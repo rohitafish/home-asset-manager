@@ -67,17 +67,25 @@ assistant or human contributor.
   few hundred milliseconds to detect grid loss and switch over, and the
   Mini's internal PSU only holds up for a few milliseconds on its own. It was
   browning out in that cutover gap, which also explains why it "sometimes
-  stayed up": survival came down to how long that particular cutover took. A
-  small UPS (`com.assetmgt.upsmonitor.plist` + `scripts/ups-shutdown.sh`, see
-  README's "Running the Mini headless") bridges exactly that gap; it is not
-  sized for extended runtime, since the Powerwall already covers that. If the
-  UPS itself runs low -- a longer outage than the Powerwall covers, or a
-  dying UPS battery -- the monitor shuts the Mini down gracefully (including
-  `colima stop`, see below) rather than letting `pmset -u haltlevel`'s
-  OS-native emergency halt do it abruptly; that backstop stays set to trigger
-  only if the monitor script itself fails outright. Recovering from that
-  shutdown, or from a genuine unattended power-off, still needs a human at
-  the console -- there's no way around that with FileVault on, see above.
+  stayed up": survival came down to how long that particular cutover took.
+  The correct fix is a small UPS sized only to bridge that gap (not for
+  extended runtime, since the Powerwall already covers that) -- but pricing
+  it on Amazon UK in Aug 2026 found every pure-sine, macOS-compatible model
+  either out of stock or marked up 2-3x normal (~£300-500 for a unit that's
+  normally ~£150-180), which isn't worth it for a sub-second glitch. **The
+  accepted mitigation instead is a spare keyboard and monitor kept where the
+  Mini physically lives** (a cellar) -- a cutover-induced reboot still lands
+  at the FileVault pre-boot screen exactly as before, and someone has to walk
+  over and unlock it there. This is a real, ongoing cost of running headless
+  without a UPS, not a rare edge case -- revisit buying one if prices settle
+  or the frequency becomes annoying (see README's "Power outages and
+  unattended restart"). `com.assetmgt.upsmonitor.plist` +
+  `scripts/ups-shutdown.sh` are built, tested, and left in the repo for if
+  that happens, but **are not installed on the Mini** -- there's no UPS for
+  them to monitor. If one is ever added, the monitor shuts the Mini down
+  gracefully (including `colima stop`, see below) before it just dies,
+  rather than letting `pmset -u haltlevel`'s OS-native emergency halt do it
+  abruptly.
 - For any reboot you *can* get ahead of remotely (OS upgrades,
   `mini-brew-upgrade.sh`, general maintenance): `sudo fdesetup authrestart`
   over SSH prompts for the FileVault password once, stores the unlock key for
