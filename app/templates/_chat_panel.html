@@ -92,7 +92,7 @@
   {% if transcript %}
   <form method="post" action="/assets/{{ asset.id }}/chat/clear"
         hx-post="/assets/{{ asset.id }}/chat/clear" hx-target="#chat-panel" hx-swap="outerHTML"
-        onsubmit="return confirm('Clear this conversation?')">
+        hx-confirm="Clear this conversation?">
     <button type="submit" class="link-button">Clear chat</button>
   </form>
   {% endif %}

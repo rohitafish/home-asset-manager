@@ -29,10 +29,14 @@ WIKI_REPO_URL="${WIKI_REPO_URL:-https://github.com/rohitafish/home-asset-manager
 
 echo "==> Pre-flight checks"
 
-# The draft in wiki-drafts/ is the thing that goes through check-pii.sh and
-# the pre-push hook (both git-level, both scoped to THIS repo) -- publishing
-# an uncommitted edit would push content that never passed either. Requiring
-# a clean tree keeps every published page traceable back to a reviewed commit.
+# The draft in wiki-drafts/ should be the thing that's already gone through
+# check-pii.sh -- publishing an uncommitted edit would push content that was
+# never scanned at all. Requiring a clean tree here only proves the tree is
+# clean, though, not that it was ever scanned: check-pii.sh normally runs
+# from the pre-push hook and from CI, and NEITHER of those fires for a
+# commit that's clean locally but has never been pushed to origin. So the
+# explicit call below is the real gate -- this DIRTY check on its own used
+# to be (incorrectly) treated as sufficient.
 DIRTY="$(cd "$LOCAL_DIR" && git status --porcelain -- wiki-drafts)"
 if [ -n "$DIRTY" ]; then
   echo "!!! wiki-drafts/ has uncommitted changes:" >&2
@@ -40,6 +44,12 @@ if [ -n "$DIRTY" ]; then
   echo "!!! Commit them in this repo first (they still need to pass" >&2
   echo "!!! check-pii.sh / the pre-push hook like any other commit here)," >&2
   echo "!!! then re-run this script." >&2
+  exit 1
+fi
+
+echo "==> Running check-pii.sh"
+if ! bash "$LOCAL_DIR/scripts/check-pii.sh"; then
+  echo "!!! check-pii.sh found a problem -- see above. Fix it before publishing." >&2
   exit 1
 fi
 
@@ -86,6 +96,19 @@ trap cleanup EXIT
 echo "==> Cloning $WIKI_REPO_URL"
 git clone --quiet "$WIKI_REPO_URL" "$SCRATCH/wiki"
 
+# A malicious commit in the wiki repo (public, third-party-editable) could
+# check in a page as a symlink; the copy loop below writes the draft's
+# content to that path, and both `diff` and `cp` follow symlinks by default
+# -- so an unguarded symlink would make that write land wherever the link
+# points, outside $SCRATCH entirely, before the diff/confirmation prompt
+# further down ever runs. Refuse to touch the clone at all if one exists.
+if find "$SCRATCH/wiki" -path "$SCRATCH/wiki/.git" -prune -o -type l -print -quit | grep -q .; then
+  echo "!!! The cloned wiki contains a symlink -- refusing to publish. A page" >&2
+  echo "!!! copy could overwrite an arbitrary file outside the scratch clone." >&2
+  echo "!!! Inspect $WIKI_REPO_URL by hand before retrying." >&2
+  exit 1
+fi
+
 echo "==> Setting this clone's identity from $LOCAL_DIR's local config"
 git -C "$SCRATCH/wiki" config user.name "$GIT_NAME"
 git -C "$SCRATCH/wiki" config user.email "$GIT_EMAIL"
@@ -104,7 +127,11 @@ for page in "${PAGES[@]}"; do
     continue
   fi
   if ! diff -q "$DRAFTS_DIR/$page" "$SCRATCH/wiki/$page" >/dev/null 2>&1; then
-    cp "$DRAFTS_DIR/$page" "$SCRATCH/wiki/$page"
+    # rm then cp, not a bare overwrite -- defense in depth alongside the
+    # symlink guard above: this way the destination is always a fresh
+    # regular file, never written through whatever was there before.
+    rm -f -- "$SCRATCH/wiki/$page"
+    cp -- "$DRAFTS_DIR/$page" "$SCRATCH/wiki/$page"
     CHANGED+=("$page")
   fi
 done

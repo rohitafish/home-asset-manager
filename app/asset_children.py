@@ -122,9 +122,55 @@ def reassign_asset_children(session: Session, survivor_id: int, duplicate_id: in
         return
 
     for model in ASSET_CHILD_MODELS:
-        for row in session.exec(select(model).where(model.asset_id == duplicate_id)).all():
-            row.asset_id = survivor_id
-            session.add(row)
+        # AssetInterface/AssetService are the two child tables with a real
+        # "duplicate row" concept (a NIC or a listening port either matches
+        # one the survivor already has, or it doesn't) -- unlike
+        # Finding/AssetNote/ProbeResult/ChatMessage/ChangeProposal, which
+        # are append-only logs where a merge is never expected to collapse
+        # rows. Without this, merging two assets that both have e.g. an
+        # interface for the same IP (exactly the case correlate.py scores
+        # as a duplicate signal) left the survivor with the same NIC twice,
+        # forever -- no unique constraint on either table catches it, and
+        # reconcile_into_db's own `.first()` lookup then refreshes only one
+        # of the two copies on every subsequent discovery run.
+        if model is AssetInterface:
+            existing = {
+                (row.mac, row.ip)
+                for row in session.exec(
+                    select(AssetInterface).where(AssetInterface.asset_id == survivor_id)
+                ).all()
+            }
+            for row in session.exec(
+                select(AssetInterface).where(AssetInterface.asset_id == duplicate_id)
+            ).all():
+                key = (row.mac, row.ip)
+                if key in existing:
+                    session.delete(row)
+                    continue
+                row.asset_id = survivor_id
+                session.add(row)
+                existing.add(key)
+        elif model is AssetService:
+            existing = {
+                (row.port, row.protocol)
+                for row in session.exec(
+                    select(AssetService).where(AssetService.asset_id == survivor_id)
+                ).all()
+            }
+            for row in session.exec(
+                select(AssetService).where(AssetService.asset_id == duplicate_id)
+            ).all():
+                key = (row.port, row.protocol)
+                if key in existing:
+                    session.delete(row)
+                    continue
+                row.asset_id = survivor_id
+                session.add(row)
+                existing.add(key)
+        else:
+            for row in session.exec(select(model).where(model.asset_id == duplicate_id)).all():
+                row.asset_id = survivor_id
+                session.add(row)
 
     for usage in session.exec(select(AiUsage).where(AiUsage.asset_id == duplicate_id)).all():
         usage.asset_id = survivor_id
