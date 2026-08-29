@@ -18,6 +18,7 @@ from discovery.account_import import (
     load_account_file,
     plan_changes,
     resolve_asset,
+    run_account_import,
     sonos_serial_to_mac,
 )
 
@@ -343,3 +344,100 @@ def test_apply_skips_location_when_name_not_found(session):
 
     assert asset.location_id is None
     assert any("no Location named" in s for s in plan[0].skipped)
+
+
+# -- format_plan + run_account_import: the dry-run gate ------------------------
+# The third of the three plan-then-apply importers (see the matching sections
+# in tests/test_revaluation.py and tests/test_exposure_resync.py). Same shape,
+# same risk: plan_changes and apply_changes were covered, the wrapper holding
+# the `if dry_run: return` gate was not.
+#
+# This one also goes through load_account_file, so unlike its two siblings it
+# needs a real file on disk -- which is the point: `account-import` without
+# --apply is the command someone runs to check a freshly transcribed
+# accounts.json, on the promise that it only reads.
+
+
+def _accounts_file(tmp_path, asset_id):
+    path = tmp_path / "accounts.json"
+    path.write_text(json.dumps({
+        "amazon": {
+            "source_document": "test",
+            "devices": [{
+                "account_name": "Kitchen Echo",
+                "model": "Echo",
+                "model_number": "2nd generation",
+                "serial": "FAKE0000000A",
+                "asset_id": asset_id,
+            }],
+        },
+    }))
+    return path
+
+
+def test_run_dry_run_reports_the_change_without_making_it(session, tmp_path):
+    asset = make_asset(session, hostname="Kitchen Echo")
+    path = _accounts_file(tmp_path, asset.id)
+
+    summary = run_account_import(path, dry_run=True, session=session)
+
+    assert summary["applied"] is False
+    assert summary["records"] == 1
+    session.refresh(asset)
+    assert asset.serial_number is None, "a dry run must not write"
+    assert asset.model_number is None
+    assert session.exec(select(AssetNote)).all() == []
+
+
+def test_run_defaults_to_a_dry_run(session, tmp_path):
+    asset = make_asset(session, hostname="Kitchen Echo")
+    path = _accounts_file(tmp_path, asset.id)
+
+    summary = run_account_import(path, session=session)
+
+    assert summary["applied"] is False
+    session.refresh(asset)
+    assert asset.serial_number is None
+
+
+def test_run_with_dry_run_false_actually_applies(session, tmp_path):
+    asset = make_asset(session, hostname="Kitchen Echo")
+    path = _accounts_file(tmp_path, asset.id)
+
+    summary = run_account_import(path, dry_run=False, session=session)
+
+    assert summary["applied"] is True
+    assert summary["matched"] == 1
+    assert summary["updated"] == 1
+    session.refresh(asset)
+    assert asset.serial_number == "FAKE0000000A"
+
+
+def test_format_plan_shows_each_field_transition_for_an_update(session, tmp_path):
+    asset = make_asset(session, hostname="Kitchen Echo")
+    path = _accounts_file(tmp_path, asset.id)
+
+    plan_text = run_account_import(path, dry_run=True, session=session)["plan"]
+
+    assert "UPDATE" in plan_text
+    assert "Kitchen Echo" in plan_text
+    assert "serial_number: None -> 'FAKE0000000A'" in plan_text
+
+
+def test_format_plan_explains_why_a_record_went_unmatched(session, tmp_path):
+    """An unmatched record is the common case on a first import and the whole
+    reason to read the diff -- it has to say which record and why, not just
+    drop the row."""
+    path = tmp_path / "accounts.json"
+    path.write_text(json.dumps({
+        "amazon": {
+            "source_document": "test",
+            "devices": [{"account_name": "Unpinned Echo"}],
+        },
+    }))
+
+    plan_text = run_account_import(path, dry_run=True, session=session)["plan"]
+
+    assert "UNMATCHED" in plan_text
+    assert "Unpinned Echo" in plan_text
+    assert "must be matched by hand" in plan_text
