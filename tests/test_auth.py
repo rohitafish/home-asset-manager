@@ -1,10 +1,15 @@
 """Unit tests for app/auth.py's require_admin (Basic auth + brute-force
 throttle) and require_same_origin (CSRF guard).
 
-The app deliberately has no route-level TestClient (see conftest.py), so these
-exercise the dependency callables directly against a minimally-constructed
-Starlette Request rather than through a live app -- same spirit as the rest of
-the suite, which unit-tests functions, not routes.
+These exercise the dependency callables directly against a minimally-
+constructed Starlette Request, which is the only way to reach the cases a
+real client can't easily produce: a non-ASCII username, a blank configured
+password, the throttle's sliding window, an aged-out sweep entry.
+
+That the guards are actually *attached* to the routers is a separate
+question, and a callable-level test cannot answer it -- see
+tests/test_route_security.py, which drives the same two dependencies through
+the real app on every route.
 """
 
 import pytest

@@ -1,7 +1,7 @@
 """Orchestration tests for discovery.cli.run_all_discovery -- the one seam not
-covered by the per-collector test modules. No TestClient / no real network:
-run_all_discovery looks its run_* wrappers up as module globals, so
-monkeypatching them on the discovery.cli namespace is enough."""
+covered by the per-collector test modules. No real network: run_all_discovery
+looks its run_* wrappers up as module globals, so monkeypatching them on the
+discovery.cli namespace is enough."""
 import logging
 
 import pytest

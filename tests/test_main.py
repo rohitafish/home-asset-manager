@@ -1,9 +1,10 @@
 """Unit test for app/main.py's security response headers.
 
-Tests the header-setting function directly against a plain Response, the
-same way app/auth.py's require_admin/require_same_origin are tested as
-callables rather than through a live app (see tests/test_auth.py's
-docstring -- this app has no route-level TestClient).
+Tests the header-setting function directly against a plain Response: these
+pin the *content* of the policy, which is easier to read as a set of
+assertions on a bare Response than as assertions on a live response's
+headers. tests/test_route_security.py covers the complementary question of
+whether the middleware carrying them is mounted at all.
 """
 
 from fastapi import Response
