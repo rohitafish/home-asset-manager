@@ -98,13 +98,35 @@ echo "== Tests =="
 # lack pytest; a missing pytest is a WARN, not a FAIL, for that reason. The
 # Mini's venv has it installed by hand today, so this does run there -- and
 # a failing suite is a FAIL regardless of which host this runs on.
-if [ -x "$REPO_DIR/.venv/bin/pytest" ]; then
+#
+# Run under `coverage`, not a bare pytest, when coverage is installed --
+# same reasoning as scripts/hooks/pre-push: CI enforces .coveragerc's
+# fail_under, and until this ran under coverage too, that gate existed only
+# in CI. Already `cd`-ed to $REPO_DIR at the top of this script, so
+# .coveragerc's `source =` paths resolve correctly with no extra handling.
+if [ -x "$REPO_DIR/.venv/bin/coverage" ]; then
+  if [ -x "$REPO_DIR/.venv/bin/pytest" ]; then
+    if "$REPO_DIR/.venv/bin/coverage" run -m pytest -q >/tmp/assetmgt-preflight-pytest.log 2>&1; then
+      if "$REPO_DIR/.venv/bin/coverage" report >>/tmp/assetmgt-preflight-pytest.log 2>&1; then
+        ok "pytest suite passes, coverage above threshold ($(tail -1 /tmp/assetmgt-preflight-pytest.log))"
+      else
+        fail "coverage dropped below the .coveragerc fail_under threshold -- see /tmp/assetmgt-preflight-pytest.log"
+      fi
+    else
+      fail "pytest suite failed -- see /tmp/assetmgt-preflight-pytest.log"
+    fi
+    rm -f /tmp/assetmgt-preflight-pytest.log
+  else
+    warn "pytest not installed in .venv -- run: source .venv/bin/activate && pip install -r requirements-dev.txt"
+  fi
+elif [ -x "$REPO_DIR/.venv/bin/pytest" ]; then
   if "$REPO_DIR/.venv/bin/pytest" -q >/tmp/assetmgt-preflight-pytest.log 2>&1; then
     ok "pytest suite passes ($(tail -1 /tmp/assetmgt-preflight-pytest.log))"
   else
     fail "pytest suite failed -- see /tmp/assetmgt-preflight-pytest.log"
   fi
   rm -f /tmp/assetmgt-preflight-pytest.log
+  warn "coverage not installed in .venv -- ran pytest without the coverage gate (run: source .venv/bin/activate && pip install -r requirements-dev.txt)"
 else
   warn "pytest not installed in .venv -- run: source .venv/bin/activate && pip install -r requirements-dev.txt"
 fi

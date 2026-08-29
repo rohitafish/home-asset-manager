@@ -51,3 +51,73 @@ jobs:
         # check-pii WARNs about that and still runs the portable structural,
         # secret, and tracked-.env rules (exit non-zero only on a real FAIL).
         run: bash scripts/check-pii.sh --full
+
+  # Separate job, not a step in `test` above: the suite above runs against
+  # in-memory SQLite (tests/conftest.py), which is deliberate for speed and
+  # isolation -- but it means no migration in migrations/versions/ is ever
+  # executed by that job, and nothing there detects model/migration drift.
+  # AGENTS.md's "Dates and timestamps" and "Money and valuation" sections
+  # both name that as a real, documented gap. This job closes it: apply
+  # every migration to a real Postgres from empty, confirm the models match
+  # what the migrations produce, and confirm downgrade doesn't just "not
+  # error" but actually leaves a database upgrade can run against again --
+  # weaker downgrade testing (drop the tables, forget the enum types)
+  # missed exactly that until this ran once by hand while writing it (see
+  # migrations/versions/116cb2da1cef_initial_schema.py's downgrade() fix).
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: assetmgt
+          POSTGRES_PASSWORD: assetmgt
+          POSTGRES_DB: assetmgt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U assetmgt -d assetmgt"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Explicit, not left to migrations/env.py's load_dotenv() -- there is
+      # no .env file in CI (gitignored), and even if there were, a
+      # workflow-level env var here is the unambiguous source of truth for
+      # what this job's Postgres actually is: the ephemeral service
+      # container above, never a developer's real local or deployed database.
+      DATABASE_URL: postgresql+psycopg://assetmgt:assetmgt@localhost:5432/assetmgt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        # requirements.txt only -- alembic/sqlmodel/psycopg live there, not
+        # in requirements-dev.txt, and this job doesn't run pytest/ruff.
+        run: pip install -r requirements.txt
+
+      - name: Apply every migration to a real Postgres, from empty
+        run: alembic upgrade head
+
+      - name: Check for model/migration drift
+        # Fails if `alembic revision --autogenerate` would produce a diff --
+        # i.e. app/models.py changed without a matching migration. Nothing
+        # else catches this: the SQLite-backed suite builds its schema
+        # straight from SQLModel.metadata, so it can't tell a model change
+        # apart from a model change plus its migration.
+        run: alembic check
+
+      - name: Downgrade to base and back up to head
+        # Every migration defines a downgrade(); until this job existed, none
+        # had ever actually been run. Round-tripping (not just downgrading)
+        # is the real test -- a downgrade that "succeeds" but leaves
+        # something behind (as the enum-type gap here did) only surfaces on
+        # the upgrade that follows it.
+        run: |
+          alembic downgrade base
+          alembic upgrade head
