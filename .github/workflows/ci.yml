@@ -37,7 +37,14 @@ jobs:
         run: ruff check .
 
       - name: Tests (pytest)
-        run: pytest -q
+        # Run under coverage rather than as a bare `pytest -q`: same tests,
+        # same pass/fail, but it also collects the data the next step checks.
+        # Kept as two steps so a red X is unambiguous -- this one failing
+        # means a test broke, the next one failing means coverage dropped.
+        run: coverage run -m pytest -q
+
+      - name: Coverage (threshold in .coveragerc)
+        run: coverage report
 
       - name: PII / secret scan
         # .pii-denylist is gitignored and dev-machine-only, so it's absent here:

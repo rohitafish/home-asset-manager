@@ -1,13 +1,13 @@
 """Orchestration tests for discovery.cli.run_all_discovery -- the one seam not
-covered by the per-collector test modules. No TestClient / no real network:
-run_all_discovery looks its run_* wrappers up as module globals, so
-monkeypatching them on the discovery.cli namespace is enough."""
+covered by the per-collector test modules. No real network: run_all_discovery
+looks its run_* wrappers up as module globals, so monkeypatching them on the
+discovery.cli namespace is enough."""
 import logging
 
 import pytest
 from sqlmodel import select
 
-from app.models import Asset, AssetType
+from app.models import Asset, AssetType, DiscoveryRun
 from discovery import cli
 
 
@@ -142,3 +142,90 @@ def test_get_network_context_closes_the_client_even_on_failure(monkeypatch):
 
     assert result == ([], set(), None)
     assert _LeakyUnifiClientStub.closed_count == 1
+
+
+# -- the --apply -> dry_run polarity ------------------------------------------
+# Three CLI wrappers translate a user-facing `--apply` flag into the
+# `dry_run` keyword their importer expects, and two of them do it by
+# negation: `_run_revaluation(dry_run=not apply, ...)`. That negation is the
+# entire safety boundary between "print a diff" and "rewrite the live
+# Postgres" -- and it lives in the one layer the importers' own dry-run tests
+# (see tests/test_revaluation.py et al) can't see, because they call the
+# importer directly.
+#
+# These assert the translation itself, with the importer stubbed: the concern
+# here is the flag's polarity at this seam, not what the importer does with
+# it. cli.engine is repointed at the in-memory engine because each wrapper
+# opens its own Session(engine) rather than being handed one.
+
+
+@pytest.fixture()
+def _local_engine(engine, monkeypatch):
+    monkeypatch.setattr(cli, "engine", engine)
+
+
+def _spy(recorder):
+    def stub(*args, dry_run=True, session=None, **kwargs):
+        recorder.append(dry_run)
+        return {"applied": not dry_run, "path": "x", "records": 0, "matched": 0,
+                "unmatched": 0, "updated": 0}
+
+    return stub
+
+
+@pytest.mark.parametrize(("apply_flag", "expected_dry_run"), [(False, True), (True, False)])
+def test_revalue_maps_apply_to_dry_run(monkeypatch, _local_engine, apply_flag, expected_dry_run):
+    seen = []
+    monkeypatch.setattr(cli, "_run_revaluation", _spy(seen))
+
+    cli.run_revaluation(apply=apply_flag)
+
+    assert seen == [expected_dry_run]
+
+
+@pytest.mark.parametrize(("apply_flag", "expected_dry_run"), [(False, True), (True, False)])
+def test_resync_exposure_maps_apply_to_dry_run(
+    monkeypatch, _local_engine, apply_flag, expected_dry_run
+):
+    seen = []
+    monkeypatch.setattr(cli, "_run_exposure_resync", _spy(seen))
+
+    cli.run_exposure_resync(apply=apply_flag)
+
+    assert seen == [expected_dry_run]
+
+
+@pytest.mark.parametrize(("apply_flag", "expected_dry_run"), [(False, True), (True, False)])
+def test_account_import_maps_apply_to_dry_run(
+    monkeypatch, _local_engine, apply_flag, expected_dry_run
+):
+    seen = []
+    monkeypatch.setattr(cli, "_run_account_import", _spy(seen))
+
+    cli.run_account_import("accounts.json", apply=apply_flag)
+
+    assert seen == [expected_dry_run]
+
+
+def test_account_import_dry_run_opens_no_discovery_run(monkeypatch, _local_engine, session):
+    """A dry run writes nothing, so tracking it as a DiscoveryRun would be
+    noise -- and a crashed one would leave a stray 'running' row behind.
+    Documented in run_account_import's docstring; pinned here."""
+    monkeypatch.setattr(cli, "_run_account_import", _spy([]))
+
+    cli.run_account_import("accounts.json", apply=False)
+
+    assert session.exec(select(DiscoveryRun)).all() == []
+
+
+def test_account_import_apply_does_open_a_discovery_run(monkeypatch, _local_engine, session):
+    """The counterweight: the applying path is tracked, so the dashboard's
+    discovery history shows an import that actually changed data."""
+    monkeypatch.setattr(cli, "_run_account_import", _spy([]))
+
+    cli.run_account_import("accounts.json", apply=True)
+
+    runs = session.exec(select(DiscoveryRun)).all()
+    assert len(runs) == 1
+    assert runs[0].source == "account_import"
+    assert runs[0].status == "completed"

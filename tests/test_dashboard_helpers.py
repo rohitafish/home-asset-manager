@@ -1,7 +1,11 @@
 """Tests for the small pure helpers in app/routers/dashboard.py: warranty
 bucketing, the tolerant date/money form parsers, and _valuables_query's
-sorting (the testable seam behind the Valuables page's sortable columns --
-there's no route-level TestClient anywhere in this app, see conftest.py).
+sorting (the testable seam behind the Valuables page's sortable columns).
+
+Helpers only, by design: these stay fast and exhaustive over edge cases
+(every money-parsing malformation, every warranty boundary) without paying
+for a request per case. The routes that call them are covered separately in
+tests/test_dashboard_routes.py.
 """
 
 from datetime import date, datetime, timedelta
@@ -225,8 +229,8 @@ def test_autofill_is_noop_for_non_insurable_type(session):
 
 # -- _pending_proposals + the apply-all loop --------------------------------
 # proposals_apply_all is a thin route: `for p in _pending_proposals(...):
-# apply_proposal(session, p)`, then one commit. These pin that logic (the app
-# has no route-level TestClient -- see this module's docstring).
+# apply_proposal(session, p)`, then one commit. These pin that logic at the
+# helper level; tests/test_dashboard_routes.py covers the route itself.
 
 
 def _set_field(session, asset_id, field_name, value, created_at):
