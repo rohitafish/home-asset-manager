@@ -141,6 +141,36 @@ def test_rescore_also_updates_stored_exposure(session, monkeypatch):
     )
 
 
+def test_rescore_triggers_on_exposure_change_alone(session, monkeypatch):
+    """A finding whose severity never changes again must still pick up an
+    is_internet_facing flip on the next enrichment run -- before this, only
+    a severity change entered the rescore branch at all, so an
+    exposure-only drift (the asset edited, or an AI proposal applied, with
+    no accompanying CVE severity change) was invisible forever."""
+    asset = make_asset(session, is_internet_facing=False)
+    session.add(AssetService(asset_id=asset.id, port=80, product="nginx", version="1.18.0"))
+    session.commit()
+    _stub_kev_and_epss(monkeypatch)
+
+    _run_with_score(session, monkeypatch, 9.8)  # critical, internal
+    finding = session.exec(select(Finding)).one()
+    assert finding.exposure == Exposure.internal
+    original_due = finding.sla_due_date
+
+    asset.is_internet_facing = True
+    session.add(asset)
+    session.commit()
+    _run_with_score(session, monkeypatch, 9.8)  # SAME score -- no severity change
+    session.refresh(finding)
+
+    assert finding.severity == Severity.critical  # unchanged, as expected
+    assert finding.exposure == Exposure.internet_facing  # but exposure still followed
+    assert finding.sla_due_date != original_due
+    assert finding.sla_due_date == cve_enrich.sla_due_date(
+        Severity.critical, Exposure.internet_facing, finding.detected_date
+    )
+
+
 def test_mitigated_finding_is_not_rescored(session, monkeypatch):
     """A finding a human has already mitigated/accepted/closed keeps their
     call -- re-scoring only applies to still-open findings."""

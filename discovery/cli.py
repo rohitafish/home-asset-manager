@@ -23,6 +23,7 @@ from app.logging_config import configure_logging
 from app.models import DiscoveryRun
 from discovery.account_import import run_account_import as _run_account_import
 from discovery.cve_enrich import enrich_findings_from_services
+from discovery.exposure_resync import run_exposure_resync as _run_exposure_resync
 from discovery.local_host import run_local_host_discovery as _run_local_host_discovery
 from discovery.nmap_scan import discover_network
 from discovery.normalize import (
@@ -258,6 +259,14 @@ def run_revaluation(apply: bool) -> dict:
         return _run_revaluation(dry_run=not apply, session=session)
 
 
+def run_exposure_resync(apply: bool) -> dict:
+    """Backfill open Finding.exposure/sla_due_date from each asset's CURRENT
+    is_internet_facing flag (see discovery/exposure_resync.py). Same
+    never-opens-a-DiscoveryRun rule as run_revaluation above."""
+    with Session(engine) as session:
+        return _run_exposure_resync(dry_run=not apply, session=session)
+
+
 def run_all_discovery() -> dict:
     results = {}
     try:
@@ -321,6 +330,19 @@ def revalue(
     purchase price and date. Prints a dry-run diff by default -- pass --apply
     to write. Assets with a purchase date but no price are reported as gaps."""
     summary = run_revaluation(apply=apply)
+    typer.echo(summary.pop("plan"))
+    typer.echo(summary)
+
+
+@app.command(name="resync-exposure")
+def resync_exposure(
+    apply: bool = typer.Option(False, help="Write the changes. Without this, print the diff and exit."),
+):
+    """Backfill open findings' exposure/SLA due date from each asset's
+    CURRENT is_internet_facing flag -- catches drift that a routine
+    enrichment run can't reach (the finding's originating service no longer
+    matches). Prints a dry-run diff by default -- pass --apply to write."""
+    summary = run_exposure_resync(apply=apply)
     typer.echo(summary.pop("plan"))
     typer.echo(summary)
 
