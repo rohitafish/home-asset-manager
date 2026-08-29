@@ -25,6 +25,7 @@ from app.routers.dashboard import (
     _autofill_replacement_value,
     _chat_panel_context,
     _clean_enum_filter,
+    _csv_safe,
     _discovery_already_running,
     _parse_date_field,
     _parse_money_field,
@@ -625,3 +626,23 @@ def test_autofill_model_number_stamps_attempt_on_success(session, monkeypatch):
     _autofill_model_number(session, asset)
 
     assert asset.model_number_guess_attempted_at is not None
+
+
+# -- _csv_safe ---------------------------------------------------------------
+
+
+def test_csv_safe_neutralizes_leading_formula_characters():
+    """hostname/vendor/model/model_number can be device-supplied (discovery/
+    probes) and land in the Valuables CSV export, which is explicitly built
+    for Excel -- any of these leading characters would otherwise be read as
+    a formula by Excel/LibreOffice/Sheets on open."""
+    assert _csv_safe("=cmd|'/C calc'!A0") == "'=cmd|'/C calc'!A0"
+    assert _csv_safe("+1+1") == "'+1+1"
+    assert _csv_safe("-1-1") == "'-1-1"
+    assert _csv_safe("@SUM(A1)") == "'@SUM(A1)"
+    assert _csv_safe("\t=evil") == "'\t=evil"
+
+
+def test_csv_safe_leaves_ordinary_values_untouched():
+    assert _csv_safe("Living Room Echo") == "Living Room Echo"
+    assert _csv_safe("") == ""

@@ -11,6 +11,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import String, cast, func, or_
 from sqlmodel import Session, select
+from starlette.concurrency import run_in_threadpool
 
 from app import assistant, template_filters, valuation
 from app.asset_children import delete_asset_cascade
@@ -445,6 +446,21 @@ _VALUABLES_CSV_HEADER = [
 ]
 
 
+def _csv_safe(value: str) -> str:
+    """Neutralizes a value Excel/LibreOffice/Sheets would interpret as a
+    formula (a leading =, +, -, @, tab, or CR) when this CSV is opened as a
+    spreadsheet -- see the UTF-8 BOM a few lines below in valuables_csv(),
+    which exists for the same "this is meant to be opened in Excel" reason.
+    Not defense-in-depth against a hypothetical: hostname/vendor/model/
+    model_number can be device-supplied (discovery/probes explicitly treat
+    these as untrusted elsewhere, e.g. app/assistant.py's _wrap_untrusted),
+    so a malicious LAN device could otherwise get a formula payload into
+    the household's insurance/valuables export."""
+    if value and value[0] in "=+-@\t\r":
+        return "'" + value
+    return value
+
+
 @router.get("/valuables.csv")
 def valuables_csv(session: Session = Depends(get_session), all: str | None = None):
     assets = _valuables_query(session, bool(all))
@@ -461,13 +477,13 @@ def valuables_csv(session: Session = Depends(get_session), all: str | None = Non
         rows.append(
             [
                 asset.id,
-                asset.hostname or "",
+                _csv_safe(asset.hostname or ""),
                 asset.asset_type.value,
-                asset.vendor or "",
-                asset.model or "",
-                asset.model_number or "",
-                asset.model_identifier or "",
-                asset.serial_number or "",
+                _csv_safe(asset.vendor or ""),
+                _csv_safe(asset.model or ""),
+                _csv_safe(asset.model_number or ""),
+                _csv_safe(asset.model_identifier or ""),
+                _csv_safe(asset.serial_number or ""),
                 location.name if location else "",
                 asset.purchase_date.isoformat() if asset.purchase_date else "",
                 f"{asset.purchase_price:.2f}" if asset.purchase_price is not None else "",
@@ -1459,7 +1475,17 @@ async def asset_chat(
             attachments.append((f.filename, f.content_type, data))
 
     if not error and (message.strip() or attachments):
-        error = assistant.run_chat_turn(session, asset, message.strip(), attachments=attachments)
+        # run_chat_turn is a fully synchronous, blocking call (a plain
+        # anthropic.Anthropic client with up to a 120s timeout) -- this is
+        # the app's only `async def` route, and every other route is a
+        # plain `def` that FastAPI already runs in its threadpool. Without
+        # run_in_threadpool here, a multi-tool chat turn parks the single
+        # uvicorn event loop for the whole call, freezing every other
+        # request (including /health, which redeploy.sh gates a deploy on)
+        # for the duration.
+        error = await run_in_threadpool(
+            assistant.run_chat_turn, session, asset, message.strip(), attachments=attachments
+        )
     return templates.TemplateResponse(
         request, "_chat_panel.html", _chat_panel_context(session, asset, error)
     )

@@ -130,14 +130,28 @@ echo "==> Checking for an in-progress discovery run"
 # leaves the schema untouched too, not just the running process. It used to
 # run after migrations had already been applied, so declining still left the
 # live (pre-restart) process running against a schema it no longer matched.
-RUNNING=$(ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && python -c \"
+# Explicit `if !` around the assignment, same reasoning as the DIRTY check
+# above: under set -e, a plain `RUNNING=$(...)` assignment's own exit status
+# IS the substitution's, so any failure here (broken venv, app.db import
+# failure, Colima/Postgres down -- the documented curl-exit-7 case) used to
+# kill the script right here with none of the diagnostic !!! blocks every
+# other preflight failure prints -- AFTER rsync had already replaced the
+# remote tree, but BEFORE pip install/alembic upgrade/restart ran, leaving
+# the live service running stale bytecode against a tree that had moved.
+if ! RUNNING=$(ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && python -c \"
 from sqlmodel import Session, select
 from app.db import engine
 from app.models import DiscoveryRun
 with Session(engine) as session:
     r = session.exec(select(DiscoveryRun).where(DiscoveryRun.status == 'running')).first()
     print(r.source if r else '')
-\"")
+\""); then
+  echo "!!! Could not check for an in-progress discovery run on $HOST -- code is" >&2
+  echo "!!! already synced (rsync above succeeded), but dependencies were not" >&2
+  echo "!!! installed, migrations were not run, and the service was not restarted." >&2
+  echo "!!! Check the Mini's venv/DB connectivity, then re-run this script." >&2
+  exit 1
+fi
 if [ -n "$RUNNING" ]; then
   echo "!!! A '$RUNNING' discovery run is currently in progress on the Mini."
   echo "!!! Restarting the service now will kill it mid-scan (it'll be marked"

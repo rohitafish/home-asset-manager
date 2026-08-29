@@ -249,8 +249,22 @@ def _wrap_untrusted(text: str) -> str:
     strings are stripped from the input first -- otherwise a hostname, nmap
     banner, or Kasa alias containing a literal "</untrusted_device_data>"
     could close the envelope early and have any text that follows it (in
-    the same message) read as trusted again."""
-    sanitized = text.replace(_UNTRUSTED_TAG_OPEN, "").replace(_UNTRUSTED_TAG_CLOSE, "")
+    the same message) read as trusted again.
+
+    Strips to a fixed point, not just once: a single pass over e.g.
+    "</untrusted_device_da</untrusted_device_data>ta>" removes only the
+    inner copy and leaves the outer fragments reconstructed into a real
+    closing tag -- confirmed exploitable via a straddled payload in a
+    device-supplied string (hostname, UPnP friendlyName, Kasa alias, ...).
+    Looping until a pass changes nothing closes that reconstruction; it
+    always terminates because each iteration strictly shortens the string
+    once no more tag substrings remain to strip."""
+    sanitized = text
+    while True:
+        stripped = sanitized.replace(_UNTRUSTED_TAG_OPEN, "").replace(_UNTRUSTED_TAG_CLOSE, "")
+        if stripped == sanitized:
+            break
+        sanitized = stripped
     return f"{_UNTRUSTED_TAG_OPEN}\n{sanitized}\n{_UNTRUSTED_TAG_CLOSE}"
 
 
@@ -288,17 +302,32 @@ def set_ai_assistant_enabled(session: Session, enabled: bool) -> None:
 
 def _period_spend(session: Session, start: datetime) -> tuple[Decimal, bool]:
     """Returns (summed cost_usd for AiUsage rows created_at >= start, whether
-    any row in that window has cost_usd = NULL). A NULL row is a call whose
-    model wasn't in app/ai_pricing.py's rate table (see AiUsage's docstring
-    in app/models.py) -- it's excluded from the sum rather than counted as
-    $0, so the second return value tells a caller the true total may be
-    higher than what's returned. Pulls the whole window's rows rather than
-    a SQL SUM(): this app's usage volume (a single admin, a few dozen
-    assets) makes that difference immaterial, and a plain list is simpler
-    to test."""
-    costs = session.exec(select(AiUsage.cost_usd).where(AiUsage.created_at >= start)).all()
-    known = [c for c in costs if c is not None]
-    return sum(known, Decimal(0)), len(known) != len(costs)
+    any DIRECT-ANTHROPIC row in that window has cost_usd = NULL). A NULL row
+    is a call whose model wasn't in app/ai_pricing.py's rate table (see
+    AiUsage's docstring in app/models.py) -- it's excluded from the sum
+    rather than counted as $0, so the second return value tells a caller
+    the true total may be higher than what's returned.
+
+    The partial flag is deliberately scoped to provider == "anthropic"
+    only: an OpenRouter call is UNCONDITIONALLY unpriced (ai_pricing has no
+    OpenRouter rate table at all -- see cost_usd's docstring), so every
+    OpenRouter row would set this on the very first call, permanently, for
+    any OpenRouter user; that's an accepted, by-design gap, not a "we may
+    have already spent more than shown" signal. A NULL row from the direct
+    Anthropic path, in contrast, only happens via the server-side refusal
+    fallback serving a model outside the 3-entry table -- genuinely unknown
+    real spend, which IS worth a caller (budget_block_reason) treating
+    conservatively.
+
+    Pulls the whole window's rows rather than a SQL SUM(): this app's usage
+    volume (a single admin, a few dozen assets) makes that difference
+    immaterial, and a plain list is simpler to test."""
+    rows = session.exec(
+        select(AiUsage.cost_usd, AiUsage.provider).where(AiUsage.created_at >= start)
+    ).all()
+    known = [cost for cost, _provider in rows if cost is not None]
+    partial = any(cost is None and provider == "anthropic" for cost, provider in rows)
+    return sum(known, Decimal(0)), partial
 
 
 def spend_summary(session: Session) -> dict:
@@ -328,7 +357,23 @@ def budget_block_reason(session: Session) -> str | None:
     if not is_ai_assistant_enabled(session):
         return "The investigation assistant is turned off."
     now = utcnow_naive()
-    day_spend, _ = _period_spend(session, datetime(now.year, now.month, now.day))
+    day_spend, day_partial = _period_spend(session, datetime(now.year, now.month, now.day))
+    # _period_spend's `partial` flag means at least one call in the window
+    # has cost_usd = NULL (e.g. a server-side refusal fallback served by a
+    # model outside ai_pricing's rate table) -- real spend that day_spend
+    # doesn't include. Previously only spend_summary() (the UI) read this
+    # flag; enforcement silently treated an unpriced call as $0, so a user
+    # who kept triggering fallbacks could spend well past AI_DAILY_BUDGET_USD/
+    # AI_MONTHLY_BUDGET_USD while budget_block_reason kept saying yes.
+    # Blocking here is deliberately conservative: an unpriced call in the
+    # window blocks further spend until the window rolls over, since there's
+    # no way to know from here how much it actually cost.
+    if day_partial:
+        return (
+            "Today's AI spend includes at least one call that couldn't be priced "
+            "(e.g. a fallback-served model) -- the real total may already exceed "
+            "the daily budget. Check the AiUsage table before continuing."
+        )
     if day_spend >= AI_DAILY_BUDGET_USD:
         return (
             f"Today's AI budget (${AI_DAILY_BUDGET_USD:.2f}) is used up "
@@ -339,7 +384,13 @@ def budget_block_reason(session: Session) -> str | None:
             # window itself is untouched.
             f"(${day_spend:.2f} spent) -- resets at midnight UTC."
         )
-    month_spend, _ = _period_spend(session, datetime(now.year, now.month, 1))
+    month_spend, month_partial = _period_spend(session, datetime(now.year, now.month, 1))
+    if month_partial:
+        return (
+            "This month's AI spend includes at least one call that couldn't be "
+            "priced (e.g. a fallback-served model) -- the real total may already "
+            "exceed the monthly budget. Check the AiUsage table before continuing."
+        )
     if month_spend >= AI_MONTHLY_BUDGET_USD:
         return (
             f"This month's AI budget (${AI_MONTHLY_BUDGET_USD:.2f}) is used up "
@@ -713,6 +764,14 @@ def _execute_tool(session: Session, tool_use, origin_asset_id: int) -> dict:
     try:
         result = handler(session, tool_use.input, origin_asset_id)
     except Exception as exc:
+        # Without this, a failed commit inside a handler (_record_proposal,
+        # _tool_run_probe) leaves the session in SQLAlchemy's "pending
+        # rollback" state, and the NEXT session.commit() in run_chat_turn
+        # (persisting this very tool_result) raises PendingRollbackError
+        # instead -- which isn't in the anthropic.* except chain there, so
+        # it escapes as a 500 with the transcript wedged on an orphaned
+        # tool_use. Same hazard _log_usage's own rollback guards against.
+        session.rollback()
         return {
             "type": "tool_result", "tool_use_id": tool_use.id,
             "content": f"Tool error: {exc}", "is_error": True,
@@ -913,31 +972,35 @@ def _log_usage(
             model, tok("input_tokens"), tok("output_tokens"),
             tok("cache_read_input_tokens"), tok("cache_creation_input_tokens"),
         )
-        session.add(AiUsage(
-            asset_id=asset_id,
-            call_site=call_site,
-            provider="openrouter" if using_openrouter else "anthropic",
-            model=model,
-            iteration=iteration,
-            input_tokens=tok("input_tokens"),
-            output_tokens=tok("output_tokens"),
-            cache_read_tokens=tok("cache_read_input_tokens"),
-            cache_write_tokens=tok("cache_creation_input_tokens"),
-            stop_reason=stop_reason,
-            cost_usd=cost,
-        ))
+        # The insert lives in its own SAVEPOINT (not just a bare add()) so a
+        # failure here can be rolled back WITHOUT calling session.rollback()
+        # on the whole session below -- some callers (apply_proposal,
+        # proposals_apply_all) reach this with their own domain changes
+        # already staged and uncommitted on the same session, and a full
+        # rollback would silently discard those too, not just this insert.
+        with session.begin_nested():
+            session.add(AiUsage(
+                asset_id=asset_id,
+                call_site=call_site,
+                provider="openrouter" if using_openrouter else "anthropic",
+                model=model,
+                iteration=iteration,
+                input_tokens=tok("input_tokens"),
+                output_tokens=tok("output_tokens"),
+                cache_read_tokens=tok("cache_read_input_tokens"),
+                cache_write_tokens=tok("cache_creation_input_tokens"),
+                stop_reason=stop_reason,
+                cost_usd=cost,
+            ))
+            session.flush()
         session.commit()
     except Exception:
-        # Without this, a failed commit leaves the session in SQLAlchemy's
-        # "pending rollback" state -- the caller's NEXT session.commit() (the
-        # actual chat turn, a few lines after this function returns) would
-        # then raise PendingRollbackError instead of succeeding, turning a
-        # transient ledger-write hiccup into exactly the "takes down the
-        # whole turn" outcome this function's docstring says must not
-        # happen. Rolling back here only discards the failed AiUsage insert
-        # -- the turn's own messages are added/committed separately by the
-        # caller, after this function returns.
-        session.rollback()
+        # begin_nested()'s own context manager already rolled back the
+        # SAVEPOINT above on failure -- deliberately NOT calling
+        # session.rollback() here, unlike before: that used to discard
+        # whatever the caller had staged on this session too (see the
+        # comment above), silently reverting e.g. an applied proposal's
+        # field change while apply_proposal's route still reported success.
         logger.exception(
             "Failed to persist AiUsage row for asset=%s call_site=%s -- spend for this "
             "call is only in the log line above, not the ledger.", asset_id, call_site,

@@ -239,7 +239,18 @@ if [ -f "$ENV_FILE" ]; then
     key="${line%%=*}"
     val="${line#*=}"
     val="${val%$'\r'}"                   # tolerate a .env last-edited on another box
-    val="${val#\"}"; val="${val%\"}"     # strip optional surrounding quotes
+    # Match python-dotenv's own parsing (app/db.py's load_dotenv() is what
+    # actually resolves these values at runtime): single quotes are just as
+    # valid as double, and an unquoted value truncates at ` #` (an inline
+    # comment) -- without this, a single-quoted value or a value with a
+    # trailing comment builds a needle that can never match the plain
+    # secret as it's actually committed, and the scan reports "clean"
+    # having never really compared anything.
+    case "$val" in
+      \"*\") val="${val#\"}"; val="${val%\"}" ;;
+      \'*\') val="${val#\'}"; val="${val%\'}" ;;
+      *) val="${val%%[[:space:]]#*}" ;;
+    esac
     # Only keys whose NAME marks the value as sensitive. Two families:
     #  - secrets (no recognisable prefix, so rule (a) can't see them);
     #  - structured PII that the IP rule structurally cannot catch --
