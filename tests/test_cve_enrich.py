@@ -12,7 +12,7 @@ from conftest import make_asset
 from sqlmodel import select
 
 import discovery.cve_enrich as cve_enrich
-from app.models import AssetService, Finding, FindingStatus, Severity
+from app.models import AssetService, Exposure, Finding, FindingStatus, Severity
 from discovery.cve_enrich import enrich_findings_from_services
 
 
@@ -110,6 +110,34 @@ def test_open_finding_is_rescored_when_the_vulnerability_gets_worse(session, mon
     # also silently grant extra time by resetting the SLA clock.
     assert finding.sla_due_date == cve_enrich.sla_due_date(
         Severity.critical, finding.exposure, original_detected
+    )
+
+
+def test_rescore_also_updates_stored_exposure(session, monkeypatch):
+    """Regression test: rescoring recomputed sla_due_date from a fresh
+    local `exposure` but never reassigned existing.exposure -- the stored
+    exposure and the due date supposedly derived from it ended up computed
+    from two different SLA inputs. Change is_internet_facing between runs
+    (alongside a severity change, since that's what actually triggers the
+    rescore branch) and confirm the stored exposure follows the new value."""
+    asset = make_asset(session, is_internet_facing=False)
+    session.add(AssetService(asset_id=asset.id, port=80, product="nginx", version="1.18.0"))
+    session.commit()
+    _stub_kev_and_epss(monkeypatch)
+
+    _run_with_score(session, monkeypatch, 3.0)  # low, internal
+    finding = session.exec(select(Finding)).one()
+    assert finding.exposure == Exposure.internal
+
+    asset.is_internet_facing = True
+    session.add(asset)
+    session.commit()
+    _run_with_score(session, monkeypatch, 9.8)  # critical + now internet-facing -> triggers rescore
+    session.refresh(finding)
+
+    assert finding.exposure == Exposure.internet_facing
+    assert finding.sla_due_date == cve_enrich.sla_due_date(
+        Severity.critical, Exposure.internet_facing, finding.detected_date
     )
 
 

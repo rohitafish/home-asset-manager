@@ -243,6 +243,35 @@ def _same_device_rows(session):
     ).all()
 
 
+def test_link_assets_self_link_returns_false_and_writes_nothing(session):
+    """asset_id_a == asset_id_b must report failure -- callers (the
+    /assets/investigate/link route, apply_proposal's link_same_device
+    branch) write a "Linked to asset #N" note on True and must not do so
+    for a self-link, or they'd announce a link that was never created."""
+    a = make_asset(session)
+
+    linked = link_assets(session, a.id, a.id)
+
+    assert linked is False
+    assert _same_device_rows(session) == []
+
+
+def test_link_assets_returns_true_for_a_new_link(session):
+    a = make_asset(session)
+    b = make_asset(session)
+
+    assert link_assets(session, a.id, b.id) is True
+
+
+def test_link_assets_returns_true_for_an_already_existing_link(session):
+    a = make_asset(session)
+    b = make_asset(session)
+    link_assets(session, a.id, b.id)
+    session.commit()
+
+    assert link_assets(session, a.id, b.id) is True  # already linked, not an error
+
+
 def test_remove_same_device_link_deletes_both_mirror_rows(session):
     a = make_asset(session)
     b = make_asset(session)

@@ -1042,11 +1042,14 @@ def assets_investigate_link(
     detail: str = Form(""),
     session: Session = Depends(get_session),
 ):
-    link_assets(session, asset_id_a, asset_id_b, detail=detail or None)
-    note_body = f"Linked to asset #{asset_id_b} as the same physical device.{' ' + detail if detail else ''}"
-    session.add(AssetNote(asset_id=asset_id_a, author="user", body=note_body))
-    note_body_b = f"Linked to asset #{asset_id_a} as the same physical device.{' ' + detail if detail else ''}"
-    session.add(AssetNote(asset_id=asset_id_b, author="user", body=note_body_b))
+    # link_assets returns False only for the invalid asset_id_a == asset_id_b
+    # case -- skip the notes then, rather than announcing a link that was
+    # never created (they'd otherwise both land on the same asset anyway).
+    if link_assets(session, asset_id_a, asset_id_b, detail=detail or None):
+        note_body = f"Linked to asset #{asset_id_b} as the same physical device.{' ' + detail if detail else ''}"
+        session.add(AssetNote(asset_id=asset_id_a, author="user", body=note_body))
+        note_body_b = f"Linked to asset #{asset_id_a} as the same physical device.{' ' + detail if detail else ''}"
+        session.add(AssetNote(asset_id=asset_id_b, author="user", body=note_body_b))
     session.commit()
     return RedirectResponse(url="/assets/investigate", status_code=303)
 
@@ -1194,7 +1197,22 @@ def asset_update(
 ):
     asset = session.get(Asset, asset_id)
     if not asset:
-        return RedirectResponse(url="/assets")
+        # status_code=303 (See Other), not RedirectResponse's own default
+        # of 307: a 307 preserves the original method on the redirected
+        # request, and this is a POST handler -- a browser following a bare
+        # 307 here would re-POST to "/assets", a GET-only route, and get a
+        # 405 instead of the friendly redirect this is meant to be. Same
+        # fix applied at every other not-found guard in this file's POST
+        # routes (search "/assets\", status_code=303" for the rest);
+        # the file's three GET routes with this same guard are unaffected
+        # (a GET redirect target is GET either way) and left as-is.
+        return RedirectResponse(url="/assets", status_code=303)
+    # Captured before the form overwrites it below: _autofill_replacement_value
+    # fills the field whenever it's None, with no way to tell "never had a
+    # value" apart from "the user just blanked it on this edit" -- without
+    # this, submitting an empty Replacement value field never actually took,
+    # since the autofill immediately recomputed a guess on the same request.
+    had_replacement_value = asset.replacement_value is not None
     asset.hostname = hostname or None
     asset.hostname_locked = bool(hostname_locked)
     asset.vendor = vendor or None
@@ -1219,7 +1237,8 @@ def asset_update(
     asset.location_id = _parse_location_id(location_id)
     asset.position = position or None
     asset.last_seen = utcnow_naive()
-    _autofill_replacement_value(asset)
+    if not had_replacement_value:
+        _autofill_replacement_value(asset)
     _autofill_model_number(session, asset)
     session.add(asset)
     session.commit()
@@ -1285,7 +1304,7 @@ def asset_probe(asset_id: int, session: Session = Depends(get_session)):
     See probes/."""
     asset = session.get(Asset, asset_id)
     if not asset:
-        return RedirectResponse(url="/assets")
+        return RedirectResponse(url="/assets", status_code=303)
 
     interfaces = session.exec(
         select(AssetInterface).where(AssetInterface.asset_id == asset_id)
@@ -1315,7 +1334,7 @@ def asset_ping(asset_id: int, session: Session = Depends(get_session)):
     the slower identification probes. See probes/ping.py."""
     asset = session.get(Asset, asset_id)
     if not asset:
-        return RedirectResponse(url="/assets")
+        return RedirectResponse(url="/assets", status_code=303)
 
     interfaces = session.exec(
         select(AssetInterface).where(AssetInterface.asset_id == asset_id)
@@ -1441,7 +1460,7 @@ async def asset_chat(
 ):
     asset = session.get(Asset, asset_id)
     if not asset:
-        return RedirectResponse(url="/assets")
+        return RedirectResponse(url="/assets", status_code=303)
 
     files = [f for f in files if f.filename]  # an untouched file picker still posts one empty UploadFile
     error = None
@@ -1495,7 +1514,7 @@ async def asset_chat(
 def asset_chat_clear(asset_id: int, request: Request, session: Session = Depends(get_session)):
     asset = session.get(Asset, asset_id)
     if not asset:
-        return RedirectResponse(url="/assets")
+        return RedirectResponse(url="/assets", status_code=303)
     for row in session.exec(select(ChatMessage).where(ChatMessage.asset_id == asset_id)).all():
         session.delete(row)
     session.commit()
@@ -1513,7 +1532,7 @@ def toggle_ai_assistant(
     panel to re-render, same role as panel_asset_id on the proposal routes."""
     asset = session.get(Asset, asset_id)
     if not asset:
-        return RedirectResponse(url="/assets")
+        return RedirectResponse(url="/assets", status_code=303)
     assistant.set_ai_assistant_enabled(session, enabled == "true")
     if request.headers.get("hx-request"):
         return templates.TemplateResponse(request, "_chat_panel.html", _chat_panel_context(session, asset))
@@ -1527,7 +1546,7 @@ def proposals_apply_all(
 ):
     asset = session.get(Asset, asset_id)
     if not asset:
-        return RedirectResponse(url="/assets")
+        return RedirectResponse(url="/assets", status_code=303)
     panel = _resolve_panel_asset(session, panel_asset_id, asset)
     # When applying a cross-asset group from another asset's panel, scope to the
     # proposals that panel actually showed (origin == that panel), not every
@@ -1555,7 +1574,7 @@ def proposal_apply(
 ):
     proposal = session.get(ChangeProposal, proposal_id)
     if not proposal:
-        return RedirectResponse(url="/assets")
+        return RedirectResponse(url="/assets", status_code=303)
     asset = session.get(Asset, proposal.asset_id)
     assistant.apply_proposal(session, proposal)
     if asset:
@@ -1579,7 +1598,7 @@ def proposal_discard(
 ):
     proposal = session.get(ChangeProposal, proposal_id)
     if not proposal:
-        return RedirectResponse(url="/assets")
+        return RedirectResponse(url="/assets", status_code=303)
     asset = session.get(Asset, proposal.asset_id)
     if proposal.status == "pending":
         proposal.status = "discarded"

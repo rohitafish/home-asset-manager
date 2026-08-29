@@ -413,13 +413,20 @@ def find_same_device_candidates(session: Session, min_score: int = 20) -> list[C
 
 def link_assets(
     session: Session, asset_id_a: int, asset_id_b: int, detail: str | None = None
-) -> None:
+) -> bool:
     """Records that two assets are the same physical device without
     deleting either -- writes both directions so the existing
     `where(CIRelationship.asset_id == asset_id)` queries on each asset's
-    detail page show the link without needing an OR clause."""
+    detail page show the link without needing an OR clause.
+
+    Returns whether the two assets are (now, or already) linked -- False
+    only for the invalid asset_id_a == asset_id_b case. Callers that write
+    a "Linked to asset #N" note or otherwise report success must check
+    this and skip that reporting when it's False: without it, a self-link
+    silently no-ops here while the caller still announces a link that was
+    never created."""
     if asset_id_a == asset_id_b:
-        return
+        return False
     existing = session.exec(
         select(CIRelationship).where(
             CIRelationship.asset_id == asset_id_a,
@@ -428,7 +435,7 @@ def link_assets(
         )
     ).first()
     if existing:
-        return
+        return True
     session.add(CIRelationship(
         asset_id=asset_id_a, related_asset_id=asset_id_b,
         relationship_type=SAME_DEVICE, detail=detail,
@@ -437,6 +444,7 @@ def link_assets(
         asset_id=asset_id_b, related_asset_id=asset_id_a,
         relationship_type=SAME_DEVICE, detail=detail,
     ))
+    return True
 
 
 def unlink_assets(session: Session, asset_id: int, relationship_id: int) -> None:

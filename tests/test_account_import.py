@@ -158,6 +158,24 @@ def test_resolve_asset_sonos_unmatched_serial_returns_none(session):
     assert "aa:bb:cc:dd:ee:ff" in reason
 
 
+def test_resolve_asset_amazon_serial_not_decoded_as_sonos_mac(session):
+    """Regression test: resolve_asset unconditionally ran every unpinned
+    device's serial through sonos_serial_to_mac (which just strips non-hex
+    characters from whatever it's given) -- an unpinned Amazon serial that
+    happens to contain >=12 hex-valid characters could decode into a real
+    MAC and silently match a totally unrelated asset. Same serial the Sonos
+    matching test above uses (and the same asset/interface it matches), but
+    here on an unpinned Amazon device: must NOT match."""
+    asset = make_asset(session, hostname="Sonos Move")
+    make_interface(session, asset.id, mac="aa:bb:cc:dd:ee:ff")
+    device = _device(vendor="amazon", serial="AABBCCDDEEFF1")
+
+    resolved, reason = resolve_asset(session, device)
+
+    assert resolved is None
+    assert "amazon" in reason
+
+
 # -- plan_changes / apply_changes --------------------------------------------
 
 

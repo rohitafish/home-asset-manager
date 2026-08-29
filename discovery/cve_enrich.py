@@ -276,6 +276,12 @@ def enrich_findings_from_services(session: Session) -> dict[str, int]:
                     # silently grant extra time.
                     if existing.status == FindingStatus.open and existing.severity != vuln.severity:
                         existing.severity = vuln.severity
+                        # This run's fresh `exposure` is what sla_due_date is
+                        # recomputed from below -- existing.exposure must be
+                        # reassigned to match, or the stored exposure and the
+                        # due date it's supposedly derived from come from two
+                        # different SLA calculations from here on.
+                        existing.exposure = exposure
                         existing.sla_due_date = sla_due_date(
                             vuln.severity, exposure, existing.detected_date
                         )

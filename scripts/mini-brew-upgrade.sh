@@ -171,7 +171,20 @@ fi
 
 sleep 2
 echo "==> Health check"
-curl -sf http://127.0.0.1:8000/health && echo
+# `curl ... && echo` as a bare statement is exempt from set -e's abort-on-
+# failure: bash's && / || exemption covers every command in the list EXCEPT
+# the one following the final &&/||, and curl here is that non-final
+# command. So a failed curl (app didn't come back up) used to silently skip
+# `echo` and fall straight through to preflight.sh/brew cleanup/"Done" with
+# no indication anything was wrong -- exactly the "upgrade broke the app
+# while it kept running" failure mode this whole script exists to catch.
+# redeploy.sh's health check uses the same explicit-check shape for the
+# same reason.
+if ! { curl -sf http://127.0.0.1:8000/health && echo; }; then
+  echo "!!! Health check failed -- the app did not come back up cleanly after" >&2
+  echo "!!! the upgrade. Check logs/app.error.log and logs/app.log." >&2
+  exit 1
+fi
 
 if [ "$RUN_PREFLIGHT" = "1" ]; then
   echo "==> Running preflight.sh"
