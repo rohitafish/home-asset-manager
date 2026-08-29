@@ -378,11 +378,30 @@ assistant or human contributor.
 
 ## Tests
 
-- `tests/` holds a `pytest` suite covering asset cascade deletion, the
-  investigation assistant's tool loop and proposal handling, backup-status
-  labeling, device correlation/linking, dashboard helpers, and hostname/
-  vendor normalization. Run it with `.venv/bin/pytest -q` (or `pytest -q`
-  once the venv is activated).
+- `tests/` holds a `pytest` suite (33 files, 700+ tests) covering asset
+  cascade deletion, the investigation assistant's tool loop and proposal
+  handling, backup-status labeling, device correlation/linking, dashboard
+  helpers, hostname/vendor normalization, route-level behaviour over a real
+  `TestClient` (template rendering, CSV export, discovery-trigger
+  concurrency guards), that every router actually has `require_admin`/
+  `require_same_origin` wired in (not just that the callables exist), and
+  the probe registry's dispatch rules. Run it with `.venv/bin/pytest -q`
+  (or `pytest -q` once the venv is activated).
+- **The suite runs against in-memory SQLite** (`tests/conftest.py`'s
+  `engine` fixture, schema built from `SQLModel.metadata`), never against
+  Postgres, and **no test executes any of the migrations in
+  `migrations/versions/`.** That's a deliberate speed/isolation trade — see
+  the SQLite/`Numeric` note above and the "Dates and timestamps" section for
+  the two known consequences — not an oversight to "fix" by pointing
+  `tests/` at Postgres. A migration only actually runs for the first time
+  when `scripts/redeploy.sh` applies it to the Mini's live database.
+- **Coverage is measured and gated, via `.coveragerc`** (`branch = True`;
+  `source = app, discovery, probes`; `fail_under` set as a ratchet just
+  below the measured total, not a target — raise it when the total moves
+  up, don't lower it to make a PR pass). CI runs `coverage run -m pytest -q`
+  then `coverage report` as two separate steps (see `.github/workflows/ci.yml`)
+  so a red X unambiguously means either "a test broke" or "coverage dropped",
+  never both at once.
 - `requirements.txt`/`requirements-dev.txt` use exact `==` pins, not floors —
   see the header comment in `requirements.txt` for why (redeploy.sh installing
   a floor on every deploy is the same dev/prod drift risk as the brew-upgrade
@@ -407,6 +426,18 @@ assistant or human contributor.
   a failure — it's expected on any checkout that hasn't run the one-time
   setup above — but a suite that's installed and failing blocks the push,
   including on the Mini, since it does have pytest installed.
+- **Both scripts also enforce the coverage floor, not just a bare pytest
+  run**, when `.venv/bin/coverage` exists: `coverage run -m pytest -q` then
+  `coverage report`, so a drop below `.coveragerc`'s `fail_under` blocks the
+  push the same way a failing test does — CI's gate, reproducible locally.
+  Same WARN-if-missing/FAIL-if-failing split as pytest itself; `coverage` is
+  pinned in `requirements-dev.txt` alongside pytest, so the one-time
+  `pip install -r requirements-dev.txt` setup covers both. Both scripts run
+  it from the repo root explicitly (`cd`, or preflight's existing top-level
+  `cd "$REPO_DIR"`) rather than trusting the invoking process's cwd — unlike
+  `--rcfile`, `.coveragerc`'s `source =` paths are resolved relative to the
+  *current working directory*, not the rcfile's location, so an unexpected
+  cwd would silently measure the wrong files.
 - Both scripts also run `ruff check` (see `ruff.toml`) under the identical
   WARN-if-missing/FAIL-if-failing split — same `requirements-dev.txt`
   tooling, same reasoning. `--cache-dir` is passed explicitly in both,

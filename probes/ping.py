@@ -71,7 +71,16 @@ def run(ip: str, timeout: float = DEFAULT_TIMEOUT) -> ProbeOutcome:
         return ProbeOutcome(ok=False, summary=f"Could not run ping against {ip}: {exc}")
 
     output = (result.stdout or "") + (result.stderr or "")
-    ok = result.returncode == 0
+    return _parse_ping_output(output, result.returncode, ip)
+
+
+def _parse_ping_output(output: str, returncode: int, ip: str) -> ProbeOutcome:
+    # Pure string -> ProbeOutcome transformation, split out from run() so it's
+    # testable against a captured macOS `ping` transcript with no subprocess
+    # at all -- see tests/test_ping.py, which is the first place this repo
+    # keeps such a transcript on disk (tests/fixtures/), rather than as
+    # another inline string constant.
+    ok = returncode == 0
 
     if not ok:
         return ProbeOutcome(

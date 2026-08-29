@@ -32,12 +32,43 @@ FAILED=0
 # below. pytest is dev-only tooling (requirements-dev.txt) -- if it's not
 # installed, warn and let the push through rather than blocking on tooling
 # absence; a failing suite, once installed, does block.
-if [ -x "$REPO_DIR/.venv/bin/pytest" ]; then
+#
+# Run under `coverage`, not a bare pytest, when coverage is installed: CI's
+# gate is `.coveragerc`'s fail_under, and until this ran under coverage too,
+# that gate existed only in CI -- a change that dropped coverage below the
+# floor passed every local check and only failed on the PR. Same
+# WARN-if-missing/FAIL-if-failing split as pytest/ruff below: coverage is
+# dev-only tooling, so its absence here is expected on a checkout that
+# hasn't run the one-time `pip install -r requirements-dev.txt` setup.
+#
+# Run in a `cd`-ed subshell, not via --rcfile from the caller's cwd:
+# .coveragerc's `source = app / discovery / probes` are resolved relative to
+# the CURRENT WORKING DIRECTORY, not to the rcfile's location (unlike
+# ruff's --cache-dir, which does take an absolute path directly) -- a git
+# hook's invoking cwd isn't guaranteed to be the repo root, so this matches
+# what CI's `coverage run -m pytest -q` gets for free by running from the
+# checkout root.
+if [ -x "$REPO_DIR/.venv/bin/coverage" ]; then
+  if [ -x "$REPO_DIR/.venv/bin/pytest" ]; then
+    if ! (cd "$REPO_DIR" && "$REPO_DIR/.venv/bin/coverage" run -m pytest -q); then
+      echo "" >&2
+      echo "pre-push: pytest suite failed -- push blocked." >&2
+      FAILED=1
+    elif ! (cd "$REPO_DIR" && "$REPO_DIR/.venv/bin/coverage" report); then
+      echo "" >&2
+      echo "pre-push: coverage dropped below the .coveragerc fail_under threshold -- push blocked." >&2
+      FAILED=1
+    fi
+  else
+    echo "pre-push: pytest not installed in .venv -- skipping test run (run: pip install -r requirements-dev.txt)" >&2
+  fi
+elif [ -x "$REPO_DIR/.venv/bin/pytest" ]; then
   if ! "$REPO_DIR/.venv/bin/pytest" -q "$REPO_DIR"; then
     echo "" >&2
     echo "pre-push: pytest suite failed -- push blocked." >&2
     FAILED=1
   fi
+  echo "pre-push: coverage not installed in .venv -- ran pytest without the coverage gate (run: pip install -r requirements-dev.txt)" >&2
 else
   echo "pre-push: pytest not installed in .venv -- skipping test run (run: pip install -r requirements-dev.txt)" >&2
 fi

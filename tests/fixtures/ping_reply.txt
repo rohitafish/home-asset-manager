@@ -1,0 +1,6 @@
+PING 192.168.1.50 (192.168.1.50): 56 data bytes
+64 bytes from 192.168.1.50: icmp_seq=0 ttl=64 time=3.271 ms
+
+--- 192.168.1.50 ping statistics ---
+1 packets transmitted, 1 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 3.271/3.271/3.271/0.000 ms

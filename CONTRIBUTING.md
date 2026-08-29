@@ -55,13 +55,27 @@ local `.pii-denylist`.
 ## Tests and linting
 
 ```bash
-.venv/bin/pytest
+.venv/bin/coverage run -m pytest -q
+.venv/bin/coverage report
 .venv/bin/ruff check .
 ```
 
-Both must pass; the pre-push hook runs them too. Please add or update tests for
-behaviour you change — the suite is thorough, including a dedicated
-`tests/test_check_pii.py` for the privacy guard itself.
+(Plain `.venv/bin/pytest` also works if you just want the tests without the
+coverage gate.) All must pass; the pre-push hook runs them too. Please add or
+update tests for behaviour you change — the suite is thorough, including a
+dedicated `tests/test_check_pii.py` for the privacy guard itself.
+
+CI also enforces a **coverage floor** — see `.coveragerc`'s `fail_under`. It's
+a ratchet, not a target: if your change legitimately can't reach it (e.g. new
+code that's mostly a thin wrapper around a subprocess or socket call), that's
+a normal PR conversation, not something to work around by padding coverage
+elsewhere.
+
+The suite runs against **in-memory SQLite**, not the Postgres this app
+actually deploys on — see `AGENTS.md`'s "Tests" section for what that trade
+does and doesn't catch, and CI's separate Postgres/migrations job (which
+covers migration execution, `alembic check` drift, and downgrade/upgrade)
+for what closes that specific gap.
 
 ## Code style
 
@@ -83,15 +97,18 @@ contribution goes through a fork:
 1. **Fork** the repo on GitHub, then clone your fork locally.
 2. Create a branch for your change (`git checkout -b my-change`).
 3. Make the change, following the code style above.
-4. Run the checks locally: `pytest`, `ruff check .`, and — if you have
-   `.pii-denylist` populated, which a fresh clone won't — `scripts/check-pii.sh`.
+4. Run the checks locally: `coverage run -m pytest -q && coverage report`,
+   `ruff check .`, and — if you have `.pii-denylist` populated, which a fresh
+   clone won't — `scripts/check-pii.sh`.
 5. Commit with a clear message (remember: **messages are scanned and become
    public** — no real personal data in them) and push to *your fork*.
 6. Open a pull request against this repo's `main` branch.
 
-CI (`ruff`, `pytest`, and the PII/secret scan) runs automatically on your PR
-and **must pass before it can be merged** — this is enforced by branch
-protection, not just a request. If you touch security-relevant code
+CI (`ruff`, `pytest` under `coverage` with its floor enforced, the PII/secret
+scan, and a separate job that applies every migration to a real Postgres and
+checks it for model drift) runs automatically on your PR and **must pass
+before it can be merged** — this is enforced by branch protection, not just a
+request. If you touch security-relevant code
 (`app/auth.py`, the probes, anything that handles device-supplied data), say
 so in the PR description so it gets a closer look.
 

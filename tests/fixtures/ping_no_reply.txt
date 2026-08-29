@@ -1,0 +1,4 @@
+PING 192.168.1.99 (192.168.1.99): 56 data bytes
+
+--- 192.168.1.99 ping statistics ---
+1 packets transmitted, 0 packets received, 100.0% packet loss
