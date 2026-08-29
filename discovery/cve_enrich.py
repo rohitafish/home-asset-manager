@@ -274,7 +274,17 @@ def enrich_findings_from_services(session: Session) -> dict[str, int]:
                     # and the due date is recomputed from the ORIGINAL
                     # detected_date, not today, so re-scoring doesn't also
                     # silently grant extra time.
-                    if existing.status == FindingStatus.open and existing.severity != vuln.severity:
+                    #
+                    # Also re-check on an exposure change (asset.is_internet_facing
+                    # flipped since this Finding was created/last scored, via the
+                    # edit form or an applied AI proposal) -- without this, a
+                    # Finding whose severity never moved again could carry a
+                    # permanently stale exposure/due-date pair even though this
+                    # run's fresh `exposure` (computed above from the asset's
+                    # CURRENT flag) has already diverged from what's stored.
+                    if existing.status == FindingStatus.open and (
+                        existing.severity != vuln.severity or existing.exposure != exposure
+                    ):
                         existing.severity = vuln.severity
                         # This run's fresh `exposure` is what sla_due_date is
                         # recomputed from below -- existing.exposure must be

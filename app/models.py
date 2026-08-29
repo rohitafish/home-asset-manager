@@ -118,6 +118,12 @@ class AssetInterface(SQLModel, table=True):
 
 
 class AssetService(SQLModel, table=True):
+    # Enforced at the DB level (see migration d2b597cf4d6a) so nothing --
+    # not just discovery/reconcile.py's own upsert -- can ever duplicate a
+    # service again; a merge-path bug fixed in app/asset_children.py already
+    # produced 13 real duplicate groups in production before this existed.
+    __table_args__ = (UniqueConstraint("asset_id", "port", "protocol"),)
+
     id: int | None = Field(default=None, primary_key=True)
     asset_id: int = Field(foreign_key="asset.id", index=True)
     port: int
