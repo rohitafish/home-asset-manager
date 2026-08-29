@@ -149,6 +149,16 @@ def resolve_asset(session: Session, device: AccountDevice) -> tuple[Asset | None
             return None, f"pinned asset_id {device.asset_id} does not exist"
         return asset, None
 
+    # sonos_serial_to_mac's decoding is Sonos-specific (the account serial
+    # format IS the MAC, per its docstring) -- an unpinned Amazon device
+    # (asset_id is None, per AccountDevice's "Amazon: pinned by hand" /
+    # "Sonos: always None, matched by serial" contract) has no such
+    # relationship between its serial and any MAC. Without this guard, an
+    # Amazon serial that happens to contain >=12 hex-valid characters
+    # decoded into a fake MAC that could coincidentally match -- and then
+    # write, potentially locked -- an unrelated asset's identity fields.
+    if device.vendor != "sonos":
+        return None, f"vendor {device.vendor!r} has no asset_id pinned -- Amazon devices must be matched by hand"
     mac = sonos_serial_to_mac(device.serial)
     if mac is None:
         return None, f"serial {device.serial!r} does not decode to a MAC"

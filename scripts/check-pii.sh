@@ -229,6 +229,14 @@ fi
 # `git push --no-verify`, which is exactly how a real leak then slips out.
 # The FAIL names the key and file, never the value.
 ENV_FILE="$REPO_DIR/.env"
+# Parallel arrays (bash 3.2 on macOS has no associative arrays -- see the
+# pre-push hook's own note on this) of every qualifying .env (key, value)
+# pair, populated below alongside the tree scan and reused by the commit-
+# MESSAGE pass further down -- without this, a secret pasted into a commit
+# message rather than a file was invisible to rule (b) entirely, since only
+# the tree scan ever compared against these values.
+ENV_SECRET_KEYS=()
+ENV_SECRET_VALS=()
 if [ -f "$ENV_FILE" ]; then
   # Same "don't drop a newline-less last line" fix as the denylist read
   # above -- the newest key in a hand-edited .env is exactly the one most
@@ -288,6 +296,8 @@ if [ -f "$ENV_FILE" ]; then
         fail "the value of $key (from .env) appears in $m -- value withheld; rotate it and purge from history"
       done <<< "$matches"
     fi
+    ENV_SECRET_KEYS+=("$key")
+    ENV_SECRET_VALS+=("$val")
   done < "$ENV_FILE"
 fi
 
@@ -466,6 +476,15 @@ while IFS= read -r sha; do
       fi
     done
   fi
+  # Same rule (b) .env values the tree scan above already checks against
+  # file content -- a real secret pasted into a commit MESSAGE rather than
+  # a file was invisible here until now. Value withheld, as elsewhere.
+  for i in "${!ENV_SECRET_KEYS[@]}"; do
+    if printf '%s' "$body" | grep -qF -- "${ENV_SECRET_VALS[$i]}"; then
+      HIT=1
+      fail "the value of ${ENV_SECRET_KEYS[$i]} (from .env) appears in the commit message of $sha -- value withheld; rotate it and rewrite the message"
+    fi
+  done
   if printf '%s' "$body" | grep -qE '[0-9]{3}-[0-9]{2}-[0-9]{4}'; then
     HIT=1
     fail "SSN-like number in commit message of $sha"

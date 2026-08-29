@@ -1345,10 +1345,18 @@ def apply_proposal(session: Session, proposal: ChangeProposal) -> None:
         a, b = payload["asset_id_a"], payload["asset_id_b"]
         asset_a, asset_b = session.get(Asset, a), session.get(Asset, b)
         if asset_a and asset_b:
-            link_assets(session, a, b, detail=payload.get("detail"))
-            note = "Linked to asset #{} as the same physical device."
-            session.add(AssetNote(asset_id=a, author="claude", body=note.format(b)))
-            session.add(AssetNote(asset_id=b, author="claude", body=note.format(a)))
+            # link_assets returns False only for the invalid a == b case
+            # (nothing not caught at propose-time above) -- skip the notes
+            # then rather than announcing a link that was never created.
+            if link_assets(session, a, b, detail=payload.get("detail")):
+                note = "Linked to asset #{} as the same physical device."
+                session.add(AssetNote(asset_id=a, author="claude", body=note.format(b)))
+                session.add(AssetNote(asset_id=b, author="claude", body=note.format(a)))
+            else:
+                session.add(AssetNote(
+                    asset_id=a, author="claude",
+                    body="Could not apply the same-device link: both sides name the same asset.",
+                ))
         else:
             # One (or both) of the two assets was deleted between proposing
             # and applying. Without this branch, execution falls through to

@@ -99,7 +99,16 @@ class UnifiClient:
             page = resp.json()
             data = page.get("data", [])
             results.extend(data)
-            total = page.get("totalCount", len(results))
+            # Same `.get(key, default)`-only-falls-back-when-ABSENT trap as
+            # `limit` below: an explicit `"totalCount": null` (key present,
+            # value None) still returned None here, and `next_offset >=
+            # total` then raised TypeError comparing int to NoneType --
+            # crashing the whole discovery run on a page the stall guard
+            # never got to see. Checking `is None` explicitly, same fix
+            # shape as `limit`.
+            total = page.get("totalCount")
+            if total is None:
+                total = len(results)
             # `.get("limit", default)` only falls back to `default` when the
             # key is ABSENT -- an explicit `"limit": null` in the response
             # still returns None here, and `offset + None` raises TypeError,
@@ -111,7 +120,16 @@ class UnifiClient:
             # missing/null limit and mask the stall this guard exists to
             # catch (see test_paginate_stops_and_warns_when_offset_does_not_advance).
             limit = page.get("limit")
-            next_offset = offset + (limit if limit is not None else (len(data) or 1))
+            # min(), not the declared limit alone: if the server returns
+            # FEWER items than the requested limit for a page that isn't
+            # actually the last one (totalCount says more remain), advancing
+            # by the full limit skips the gap between len(data) and limit --
+            # real clients that were requested but never delivered, silently
+            # dropped from `results`. min(limit, len(data)) advances exactly
+            # as far as real data was received, while still reducing to 0
+            # (and so still tripping the stall guard below) for the
+            # server-bug case of "limit": 0 alongside non-empty data.
+            next_offset = offset + (min(limit, len(data)) if limit is not None else (len(data) or 1))
             if not data or next_offset >= total:
                 break
             if next_offset <= offset:

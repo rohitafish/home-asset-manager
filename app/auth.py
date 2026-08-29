@@ -1,6 +1,7 @@
 import logging
 import os
 import secrets
+import threading
 import time
 from urllib.parse import urlparse
 
@@ -20,12 +21,26 @@ _SAFE_METHODS = ("GET", "HEAD", "OPTIONS", "TRACE")
 # the whole dashboard. Per-client sliding window: more than _MAX_FAILURES failed
 # attempts within _WINDOW_SECONDS locks that client out until the failures age
 # out. In-memory (no dependency, no shared store) is proportionate for a
-# single-worker LAN deployment -- a throttle, not a hard security boundary, so
-# the unlocked dict access under the threadpool is acceptable. Cleared on a
-# successful login; stale single-failure entries age out of the window on read.
+# single-worker LAN deployment -- a throttle, not a hard security boundary.
+# Cleared on a successful login; stale single-failure entries age out of the
+# window on read.
+#
+# _failures_lock: require_admin runs in FastAPI's threadpool (it's a plain
+# `def`, not `async def`), so two concurrent requests can run its body in
+# different threads at once. The opportunistic sweep below iterates
+# `_failures.items()` via a list comprehension; a sibling thread inserting a
+# new key (a concurrent failed login from a different client) or popping one
+# (a concurrent successful login) while that iteration is in flight is a
+# real dict-mutated-during-iteration race, not just the "a count might be
+# lost" tradeoff this comment used to describe -- CPython dicts aren't
+# thread-safe against exactly this pattern, and it can raise `RuntimeError:
+# dictionary changed size during iteration`, which propagates out of this
+# FastAPI dependency as an unhandled 500 for whichever request loses the
+# race. The lock below serializes all _failures access to close that.
 _MAX_FAILURES = 10
 _WINDOW_SECONDS = 300
 _failures: dict[str, list[float]] = {}
+_failures_lock = threading.Lock()
 
 
 def _client_ip(request: Request) -> str:
@@ -41,29 +56,30 @@ def require_admin(
 
     client_ip = _client_ip(request)
     now = time.monotonic()
-    recent = [t for t in _failures.get(client_ip, []) if now - t < _WINDOW_SECONDS]
+    with _failures_lock:
+        recent = [t for t in _failures.get(client_ip, []) if now - t < _WINDOW_SECONDS]
 
-    # Opportunistic global sweep, piggybacked on every request: an IP that
-    # fails once and never returns would otherwise sit in this dict forever
-    # -- only a *successful* login (below) or hitting the throttle branch
-    # prunes anything, and neither touches an IP whose failures have
-    # already all aged out. Cheap: this dict never holds more entries than
-    # distinct client IPs that have ever failed a login, which on this
-    # app's LAN-only deployment is naturally small.
-    for ip in [k for k, ts in _failures.items() if all(now - t >= _WINDOW_SECONDS for t in ts)]:
-        _failures.pop(ip, None)
+        # Opportunistic global sweep, piggybacked on every request: an IP that
+        # fails once and never returns would otherwise sit in this dict forever
+        # -- only a *successful* login (below) or hitting the throttle branch
+        # prunes anything, and neither touches an IP whose failures have
+        # already all aged out. Cheap: this dict never holds more entries than
+        # distinct client IPs that have ever failed a login, which on this
+        # app's LAN-only deployment is naturally small.
+        for ip in [k for k, ts in _failures.items() if all(now - t >= _WINDOW_SECONDS for t in ts)]:
+            _failures.pop(ip, None)
 
-    if len(recent) >= _MAX_FAILURES:
-        _failures[client_ip] = recent  # keep the pruned window; don't grow it
-        logger.warning(
-            "auth: %d failed attempts from %s within %ds -- throttling",
-            len(recent), client_ip, _WINDOW_SECONDS,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many failed authentication attempts. Try again later.",
-            headers={"Retry-After": str(_WINDOW_SECONDS)},
-        )
+        if len(recent) >= _MAX_FAILURES:
+            _failures[client_ip] = recent  # keep the pruned window; don't grow it
+            logger.warning(
+                "auth: %d failed attempts from %s within %ds -- throttling",
+                len(recent), client_ip, _WINDOW_SECONDS,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many failed authentication attempts. Try again later.",
+                headers={"Retry-After": str(_WINDOW_SECONDS)},
+            )
 
     # secrets.compare_digest("", "") is True -- an unset/blank
     # APP_ADMIN_PASSWORD must never be treated as "matches anything empty".
@@ -81,8 +97,9 @@ def require_admin(
     )
 
     if not (user_ok and password_ok):
-        recent.append(now)
-        _failures[client_ip] = recent
+        with _failures_lock:
+            recent.append(now)
+            _failures[client_ip] = recent
         logger.warning(
             "auth: failed login for user %r from %s (%d failure(s) in window)",
             credentials.username, client_ip, len(recent),
@@ -93,7 +110,8 @@ def require_admin(
             headers={"WWW-Authenticate": "Basic"},
         )
 
-    _failures.pop(client_ip, None)  # a good login clears that client's slate
+    with _failures_lock:
+        _failures.pop(client_ip, None)  # a good login clears that client's slate
     return credentials.username
 
 
