@@ -298,7 +298,7 @@ if command -v system_profiler >/dev/null 2>&1; then
   if system_profiler SPPowerDataType 2>/dev/null | grep -q 'UPS Installed:[[:space:]]*Yes'; then
     ok "a UPS is visible to the system"
   else
-    warn "no UPS attached (system_profiler SPPowerDataType reports 'UPS Installed: No') -- without one, a Powerwall Gateway cutover can still brown out the Mini (see README's \"Power outages and unattended restart\"). Expected on a dev laptop; should be resolved on the deployed instance"
+    warn "no UPS attached (system_profiler SPPowerDataType reports 'UPS Installed: No') -- expected on both a dev laptop and the deployed Mini: this deployment has no UPS (pricing one found every suitable model out of stock/marked up, see README's \"Power outages and unattended restart\"), so a Powerwall Gateway cutover still browns out the Mini and the spare keyboard/monitor kept on-site is the accepted recovery path"
   fi
 fi
 

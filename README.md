@@ -367,11 +367,18 @@ whole-house backup source, look for this before reaching for anything more
 drastic -- a battery big enough to run the house for hours does nothing for a
 sub-second transfer glitch.
 
-**The fix is a small UPS sized for that gap, not for extended runtime** --
-see "Running the Mini headless" below for sizing and the graceful-shutdown
-daemon that backs it up if it ever does run low. This keeps FileVault on and
-closes the actual hole, rather than trading it away for a failure mode that
-was never really about power at all.
+**The correct fix is a small UPS sized for that gap, not for extended
+runtime** -- see "Running the Mini headless" below for sizing and the
+graceful-shutdown daemon that backs it up if it ever does run low. In
+practice, though, pricing one on Amazon UK (Aug 2026) found every pure-sine,
+macOS-compatible model either out of stock or marked up 2-3x normal, which
+isn't worth paying for a sub-second glitch. **The accepted mitigation instead
+is a spare keyboard and monitor kept where the Mini physically lives** -- a
+cutover-induced reboot still lands at FileVault's pre-boot screen exactly as
+before, and it takes a walk over to unlock it. This is a real, ongoing cost,
+not a rare edge case; revisit the UPS if prices settle or the frequency
+becomes annoying. Either way this keeps FileVault on and doesn't trade it
+away for a failure mode that was never really about power at all.
 
 If you find the dashboard unreachable after an outage, check `last` and
 `sysctl -n kern.boottime` for the actual boot and login times before
@@ -417,17 +424,19 @@ ssh mini 'sudo shutdown -r now'
 ```
 
 This only helps for reboots you initiate. A forced OS-upgrade restart or a
-power failure gives you no chance to run `colima stop` first, so those still
-fall back to the manual recovery above (and to the FileVault login wait in the
-previous section) -- unless a UPS absorbs the power event before it ever
-becomes a reboot, see below.
+power failure (including a Powerwall Gateway cutover, see above) gives you no
+chance to run `colima stop` first, so those still fall back to the manual
+recovery above (and to the FileVault login wait in the previous section) --
+this deployment has no UPS to absorb a cutover before it becomes a reboot,
+see below.
 
 ### Running the Mini headless
 
-Running with no display or keyboard attached, administered entirely over SSH
-and Screen Sharing, while keeping FileVault on and auto-login off (see "Power
-outages and unattended restart" above for why those stay non-negotiable).
-Three things need to be in place before you actually pull the monitor.
+Running with no display or keyboard permanently attached, administered
+entirely over SSH and Screen Sharing, while keeping FileVault on and
+auto-login off (see "Power outages and unattended restart" above for why
+those stay non-negotiable). Two things need to be in place before you
+actually pull the monitor, plus one optional piece for later.
 
 **1. Screen Sharing, verified at the login window, not just from a logged-in
 session.** `com.apple.screensharing` is a *system* daemon, so it comes up
@@ -448,29 +457,52 @@ Sharing itself. Budget for an HDMI dummy plug on the way out: a Mac with no
 display attached still serves Screen Sharing, but at a degraded default
 resolution without one.
 
-**2. A UPS sized for a cutover, not for an outage.** If your outages are
-actually a whole-house battery backup's grid-to-battery transfer time (see
-above) rather than extended power loss, the UPS only needs to bridge about a
-second, not ride out hours -- an M1 Mac Mini idles around 7W and peaks under
-40W, so even a small 600-650VA line-interactive unit gives many minutes of
-headroom against that. The specification actually worth paying for is **pure
-sine wave** output; a simulated-sine unit can cause odd behaviour with Apple
-power supplies for very little saved cost. Connect it to the Mini over USB so
-macOS can see its state natively:
+**2. A spare keyboard and monitor, kept where the Mini physically lives.**
+This deployment doesn't run a UPS (see "Power outages and unattended
+restart" above -- pricing one on Amazon UK found every suitable model out of
+stock or marked up 2-3x, not worth it for a sub-second cutover glitch), so a
+Powerwall Gateway cutover still reboots the Mini and lands it at FileVault's
+pre-boot screen exactly as it always did. Screen Sharing can't reach that
+screen -- it runs before macOS, and before there's a network stack to reach
+it with -- so recovery is physically walking over, plugging the spare
+keyboard and monitor in, and unlocking it there. Once unlocked the Mini boots
+to the login window and Screen Sharing takes over from there (log in over
+VNC, the three LaunchAgents start as normal). **This is the expected, regular
+recovery path for this deployment, not a rare fallback** -- it happens on
+every cutover the Powerwall Gateway takes long enough to matter, which is
+also why it's worth revisiting the UPS if it becomes annoying or prices
+settle down.
+
+A forced OS-upgrade restart or a genuine unattended power-off land here too,
+same as any FileVault-on headless Mac.
+
+**3. Optional: a UPS + the graceful-shutdown daemon, `com.assetmgt.upsmonitor`,
+if one is added later.** Not currently installed -- there's no UPS on this
+deployment for it to monitor (see above). Left here, built and tested, for if
+that changes:
+
+If your outages are actually a whole-house battery backup's grid-to-battery
+transfer time (see above) rather than extended power loss, the UPS only
+needs to bridge about a second, not ride out hours -- an M1 Mac Mini idles
+around 7W and peaks under 40W, so even a small 600-650VA line-interactive
+unit gives many minutes of headroom against that. The specification actually
+worth paying for is **pure sine wave** output; a simulated-sine unit can
+cause odd behaviour with Apple power supplies for very little saved cost.
+Connect it to the Mini over USB so macOS can see its state natively:
 
 ```bash
 pmset -g ps        # should list the UPS once connected, not just 'AC Power'
 ```
 
-**3. The graceful-shutdown daemon, `com.assetmgt.upsmonitor`.** If the UPS
-ever does run down -- a longer outage than the battery backup covers, or a
-dying UPS battery -- something needs to shut the Mini down *before* it just
-dies, because an abrupt loss of power is indistinguishable from the abrupt
-`SIGKILL` shutdown that leaves Colima's lima/vz guest half-torn-down (see
-"Shutting down or rebooting the host gracefully" above). `scripts/
-ups-shutdown.sh` polls `pmset -g ps` once a minute and, once the battery
-drops below a threshold, runs the same `colima stop` → stop-the-app →
-`shutdown -h now` sequence you'd run by hand for a planned reboot.
+If the UPS ever does run down -- a longer outage than the battery backup
+covers, or a dying UPS battery -- something needs to shut the Mini down
+*before* it just dies, because an abrupt loss of power is indistinguishable
+from the abrupt `SIGKILL` shutdown that leaves Colima's lima/vz guest
+half-torn-down (see "Shutting down or rebooting the host gracefully" above).
+`scripts/ups-shutdown.sh` polls `pmset -g ps` once a minute and, once the
+battery drops below a threshold, runs the same `colima stop` →
+stop-the-app → `shutdown -h now` sequence you'd run by hand for a planned
+reboot.
 
 This one is a **LaunchDaemon**, not a LaunchAgent like the other three jobs in
 this repo -- it has to run whether or not anyone is logged in (in particular,
@@ -507,17 +539,16 @@ sudo pmset -u haltlevel 25 haltremain 3
 ```
 
 (`scripts/preflight.sh`'s "Headless / UPS posture" section checks all of the
-above -- the UPS is visible to the system, the daemon is installed and
-loaded, the `haltlevel` backstop is set, and Screen Sharing is loaded. None
-of these regressing has any other visible symptom until the Mini reboots and
-there's no way back in, which is exactly why they're worth checking for
-explicitly rather than assuming they're still true.)
+above -- if a UPS is present, whether it's visible to the system, the daemon
+is installed and loaded, the `haltlevel` backstop is set -- alongside Screen
+Sharing, which always applies. Without a UPS these read as `warn`s, not
+`fail`s, by design: no UPS is currently expected on this deployment.)
 
-**What this doesn't cover:** a kernel panic, a forced OS-upgrade restart that
-bypasses `authrestart`, or the UPS's own battery failing outright all still
-land the Mini at the FileVault pre-boot screen with no remote way past it.
-Keep a keyboard and a spare display somewhere reachable for that case --
-rare, by design, but not eliminated.
+**What this doesn't cover, even with a UPS installed:** a kernel panic, a
+forced OS-upgrade restart that bypasses `authrestart`, or the UPS's own
+battery failing outright all still land the Mini at the FileVault pre-boot
+screen with no remote way past it -- keep the spare keyboard and monitor from
+step 2 regardless.
 
 ### Keeping the host responsive
 
