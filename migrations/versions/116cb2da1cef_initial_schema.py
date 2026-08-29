@@ -140,3 +140,20 @@ def downgrade() -> None:
     op.drop_table('discoveryrun')
     op.drop_table('asset')
     # ### end Alembic commands ###
+
+    # Alembic's autogenerate emits DROP TABLE for each table above but never a
+    # matching DROP TYPE for the six named Postgres enums those tables'
+    # columns used inline (sa.Enum(..., name=...) inside op.create_table) --
+    # that's a known autogenerate gap, not something added on purpose. Left
+    # this way, `alembic downgrade base` "succeeds" but leaves the enum types
+    # behind, and a subsequent `alembic upgrade head` then fails with
+    # `psycopg.errors.DuplicateObject: type "assettype" already exists` --
+    # found by actually running the downgrade/upgrade round trip against a
+    # real Postgres, which nothing had done before. Must run after the table
+    # drops above: a still-referenced enum type can't be dropped.
+    sa.Enum(name='assettype').drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name='criticality').drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name='lifecyclestatus').drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name='severity').drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name='exposure').drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name='findingstatus').drop(op.get_bind(), checkfirst=True)
