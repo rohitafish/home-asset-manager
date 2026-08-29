@@ -168,6 +168,113 @@ def test_paginate_stops_and_warns_when_offset_does_not_advance(monkeypatch, capl
     assert any("stalled" in r.getMessage() for r in caplog.records)
 
 
+# -- resolve_site_id -----------------------------------------------------
+
+
+def test_resolve_site_id_matches_by_uuid(monkeypatch):
+    client = _client()
+    monkeypatch.setattr(client, "list_sites", lambda: [{"id": "site-a"}, {"id": "site-b"}])
+    assert client.resolve_site_id("site-b") == "site-b"
+
+
+def test_resolve_site_id_matches_by_internal_reference_or_name(monkeypatch):
+    client = _client()
+    monkeypatch.setattr(
+        client, "list_sites",
+        lambda: [{"id": "uuid-1", "internalReference": "default", "name": "Home"}],
+    )
+    assert client.resolve_site_id("default") == "uuid-1"
+    assert client.resolve_site_id("Home") == "uuid-1"
+
+
+def test_resolve_site_id_uuid_match_takes_priority_over_name_match(monkeypatch):
+    # A site whose id happens to equal another site's name shouldn't be
+    # confused -- the UUID pass runs first and returns immediately.
+    client = _client()
+    monkeypatch.setattr(
+        client, "list_sites",
+        lambda: [{"id": "default", "name": "not-default"}, {"id": "other", "name": "default"}],
+    )
+    assert client.resolve_site_id("default") == "default"
+
+
+def test_resolve_site_id_falls_back_to_the_first_site(monkeypatch):
+    client = _client()
+    monkeypatch.setattr(client, "list_sites", lambda: [{"id": "only-site"}])
+    assert client.resolve_site_id("no-such-ref") == "only-site"
+
+
+def test_resolve_site_id_raises_when_no_sites_exist(monkeypatch):
+    client = _client()
+    monkeypatch.setattr(client, "list_sites", lambda: [])
+    try:
+        client.resolve_site_id("anything")
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError as exc:
+        assert "anything" in str(exc)
+
+
+# -- list_networks_with_subnets -------------------------------------------
+
+
+def test_list_networks_with_subnets_enriches_each_network(monkeypatch):
+    client = _client()
+    monkeypatch.setattr(
+        client, "list_networks",
+        lambda site_id: [{"id": "net-1", "name": "Default", "vlanId": 1}],
+    )
+    monkeypatch.setattr(
+        client, "get_network",
+        lambda site_id, network_id: {
+            "ipv4Configuration": {"hostIpAddress": "192.168.1.1", "prefixLength": 24}
+        },
+    )
+
+    result = client.list_networks_with_subnets("site-x")
+
+    assert result == [
+        {"id": "net-1", "name": "Default", "vlan_id": 1, "host_ip": "192.168.1.1", "prefix_length": 24}
+    ]
+
+
+def test_list_networks_with_subnets_handles_missing_ipv4_configuration(monkeypatch):
+    # A network detail with no ipv4Configuration key at all (e.g. a
+    # VLAN-only or IPv6-only network) must not raise -- `detail.get(...)
+    # or {}` is what keeps the two .get() calls below it safe.
+    client = _client()
+    monkeypatch.setattr(client, "list_networks", lambda site_id: [{"id": "net-2", "name": "Guest", "vlanId": 20}])
+    monkeypatch.setattr(client, "get_network", lambda site_id, network_id: {})
+
+    result = client.list_networks_with_subnets("site-x")
+
+    assert result == [{"id": "net-2", "name": "Guest", "vlan_id": 20, "host_ip": None, "prefix_length": None}]
+
+
+def test_list_networks_with_subnets_fetches_detail_per_network(monkeypatch):
+    client = _client()
+    monkeypatch.setattr(
+        client, "list_networks",
+        lambda site_id: [{"id": "net-1", "name": "A"}, {"id": "net-2", "name": "B"}],
+    )
+    requested_ids = []
+
+    def fake_get_network(site_id, network_id):
+        requested_ids.append(network_id)
+        return {}
+
+    monkeypatch.setattr(client, "get_network", fake_get_network)
+
+    client.list_networks_with_subnets("site-x")
+
+    assert requested_ids == ["net-1", "net-2"]
+
+
+def test_list_networks_with_subnets_empty_when_no_networks(monkeypatch):
+    client = _client()
+    monkeypatch.setattr(client, "list_networks", lambda site_id: [])
+    assert client.list_networks_with_subnets("site-x") == []
+
+
 def test_paginate_hits_hard_cap_and_warns(monkeypatch, caplog):
     """Even when the offset keeps strictly advancing, a server that always
     reports more remaining than it ever delivers must still terminate --

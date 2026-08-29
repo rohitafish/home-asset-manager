@@ -7,6 +7,11 @@ recv()/settimeout() interaction the fix depends on.
 
 Also pins run()'s must-never-raise contract against a well-formed-JSON-but-
 wrong-shape response -- see probes/base.py's ProbeOutcome contract.
+
+_decrypt/_redact are pure and tested directly with no socket at all --
+_redact especially, since it's a privacy control (strips geolocation and
+cloud account identifiers before anything is persisted, per this repo's PII
+policy) and had no test of its own before this.
 """
 
 import json
@@ -14,7 +19,7 @@ import socket
 import threading
 import time
 
-from probes.kasa import _encrypt, run
+from probes.kasa import _decrypt, _encrypt, _redact, run
 
 
 def _drip_server(ready: list, body: bytes, byte_delay: float) -> None:
@@ -127,6 +132,78 @@ def test_run_survives_a_wrong_shape_top_level_payload(monkeypatch):
 
     assert outcome.ok is False
     assert "unexpected shape" in outcome.summary
+
+
+# -- _decrypt / _redact (pure, no socket) -------------------------------
+
+
+def test_decrypt_round_trips_through_encrypt():
+    plaintext = b'{"system":{"get_sysinfo":{}}}'
+    # _encrypt prefixes a 4-byte big-endian length; _decrypt only ever sees
+    # the ciphertext that follows it (the length is consumed separately by
+    # run(), see _recv_exact's 4-byte read).
+    ciphertext = _encrypt(plaintext)[4:]
+    assert _decrypt(ciphertext) == plaintext
+
+
+def test_decrypt_empty_ciphertext():
+    assert _decrypt(b"") == b""
+
+
+def test_redact_strips_top_level_keys():
+    redacted = _redact({"alias": "Living Room Plug", "latitude_i": 51.5, "longitude_i": -0.1})
+    assert redacted == {"alias": "Living Room Plug"}
+
+
+def test_redact_strips_cloud_identifiers():
+    redacted = _redact({"model": "HS110", "deviceId": "abc123", "hwId": "def456", "oemId": "ghi789"})
+    assert redacted == {"model": "HS110"}
+
+
+def test_redact_recurses_into_nested_dicts():
+    redacted = _redact({"outer": {"latitude": 51.5, "alias": "kept"}})
+    assert redacted == {"outer": {"alias": "kept"}}
+
+
+def test_redact_recurses_into_lists_of_dicts():
+    # Mirrors sysinfo["children"], the shape a multi-outlet strip sends.
+    redacted = _redact([{"id": 1, "hwId": "secret"}, {"id": 2, "alias": "kept"}])
+    assert redacted == [{"id": 1}, {"id": 2, "alias": "kept"}]
+
+
+def test_redact_leaves_scalars_and_non_redacted_keys_untouched():
+    assert _redact("plain string") == "plain string"
+    assert _redact(42) == 42
+    assert _redact(None) is None
+
+
+def test_run_never_leaks_redacted_fields_end_to_end(monkeypatch):
+    # Full run() round trip (real local TCP server, same as the other tests
+    # in this file) confirms the redaction actually reaches the public
+    # facts/raw a caller sees, not just that _redact() works in isolation.
+    outcome = _run_against_payload(
+        monkeypatch,
+        {
+            "system": {
+                "get_sysinfo": {
+                    "alias": "Living Room Plug",
+                    "model": "HS110",
+                    "latitude_i": 515000,
+                    "longitude_i": -1000,
+                    "deviceId": "should-not-appear",
+                    "children": [{"id": "0", "alias": "child", "hwId": "also-should-not-appear"}],
+                }
+            }
+        },
+    )
+
+    assert outcome.ok is True
+    assert "latitude_i" not in outcome.facts
+    assert "deviceId" not in outcome.raw
+    assert "hwId" not in outcome.raw
+    assert "should-not-appear" not in outcome.raw
+    assert outcome.facts["alias"] == "Living Room Plug"
+    assert outcome.facts["children"] == [{"id": "0", "alias": "child", "state": None}]
 
 
 def test_run_survives_a_wrong_shape_children_list(monkeypatch):

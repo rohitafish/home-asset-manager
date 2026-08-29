@@ -19,9 +19,69 @@ import time
 
 import pytest
 
-from probes.ssdp import _safe_location_url, run
+from probes.ssdp import _parse_headers, _safe_location_url, run
 
 PROBED_IP = "192.168.1.50"
+
+
+# -- _parse_headers (pure, no I/O) -------------------------------------------
+
+
+def test_parse_headers_extracts_known_fields():
+    response = (
+        "HTTP/1.1 200 OK\r\n"
+        "LOCATION: http://192.168.1.50:1400/xml/device_description.xml\r\n"
+        "SERVER: Linux UPnP/1.0 Sonos/86.8-78270\r\n"
+        "ST: urn:schemas-upnp-org:device:ZonePlayer:1\r\n"
+        "USN: uuid:RINCON_AABBCCDDEEFF01400::urn:schemas-upnp-org:device:ZonePlayer:1\r\n"
+        "\r\n"
+    )
+    headers = _parse_headers(response)
+    assert headers["LOCATION"] == "http://192.168.1.50:1400/xml/device_description.xml"
+    assert headers["SERVER"] == "Linux UPnP/1.0 Sonos/86.8-78270"
+    assert headers["ST"] == "urn:schemas-upnp-org:device:ZonePlayer:1"
+
+
+def test_parse_headers_skips_the_status_line():
+    # `.split("\r\n")[1:]` drops line 0 -- confirm the status line never
+    # ends up misparsed as a header (it has no ":" so it's naturally
+    # skipped, but pin the behaviour rather than rely on that being true).
+    headers = _parse_headers("HTTP/1.1 200 OK\r\nSERVER: test\r\n\r\n")
+    assert "HTTP/1.1 200 OK" not in headers
+    assert headers == {"SERVER": "test"}
+
+
+def test_parse_headers_keys_are_uppercased():
+    headers = _parse_headers("HTTP/1.1 200 OK\r\nserver: lowercase-sent\r\n")
+    assert headers["SERVER"] == "lowercase-sent"
+    assert "server" not in headers
+
+
+def test_parse_headers_splits_only_on_the_first_colon():
+    # LOCATION's value is itself a URL containing colons (http://host:port) --
+    # `.partition(":")` must keep everything after the first one, not
+    # truncate at "http" or "host".
+    headers = _parse_headers("HTTP/1.1 200 OK\r\nLOCATION: http://192.168.1.50:1400/desc.xml\r\n")
+    assert headers["LOCATION"] == "http://192.168.1.50:1400/desc.xml"
+
+
+def test_parse_headers_last_duplicate_wins():
+    headers = _parse_headers("HTTP/1.1 200 OK\r\nSERVER: first\r\nSERVER: second\r\n")
+    assert headers["SERVER"] == "second"
+
+
+def test_parse_headers_ignores_lines_with_no_colon():
+    headers = _parse_headers("HTTP/1.1 200 OK\r\nnot a header line\r\nSERVER: test\r\n")
+    assert headers == {"SERVER": "test"}
+
+
+def test_parse_headers_empty_response():
+    assert _parse_headers("") == {}
+
+
+def test_parse_headers_strips_surrounding_whitespace():
+    headers = _parse_headers("HTTP/1.1 200 OK\r\nSERVER:   test-with-padding   \r\n")
+    assert headers["SERVER"] == "test-with-padding"
 
 
 @pytest.mark.parametrize(
