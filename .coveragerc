@@ -1,0 +1,38 @@
+# Coverage settings, kept in a file rather than passed as CI flags so that a
+# local `coverage run -m pytest` measures exactly what CI measures. Same
+# reasoning as ruff.toml's opening comment: an unpinned default is ambient
+# machine state, not something committed to the repo.
+
+[run]
+# Branch coverage, not just statement coverage. The difference is not
+# cosmetic here -- most of what this codebase gets wrong lives in a branch
+# that a statement-covered line still skips: the `if dry_run: return` gate in
+# the three importers, the "already running" guard each discovery route
+# repeats, `if value is None` vs `if not value` in the money filter.
+branch = True
+
+# Only this app's own code. Without it, coverage also measures every
+# installed dependency that happens to execute during a test run, which
+# swamps the total and makes the fail_under below meaningless.
+# migrations/versions is alembic-generated and excluded from ruff for the
+# same reason -- it isn't hand-maintained code, and it never runs in the
+# suite (conftest builds its schema from SQLModel.metadata instead).
+source =
+    app
+    discovery
+    probes
+
+[report]
+show_missing = True
+
+# Files at 100% are noise in the report -- the interesting output is the
+# list of what still has gaps.
+skip_covered = True
+
+# A ratchet, not a target. Set below the measured total (78% at the time of
+# writing) deliberately: CI runs Python 3.12 while development happens on
+# 3.11/3.14, and branch counting can differ by a fraction of a point between
+# versions -- a threshold pinned exactly at the measured value would fail on
+# that alone. The headroom is for version drift, not for losing coverage;
+# raise this when the total moves up.
+fail_under = 76
