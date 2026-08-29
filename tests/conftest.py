@@ -13,6 +13,14 @@ app/routers/dashboard.py's _STATIC_VERSION, app/backup_status.py's
 _MARKER_PATH) on the same assumption the running app makes: it's always
 started from the repo root. Chdir there once, at collection time, so the
 suite behaves the same regardless of where `pytest` is invoked from.
+
+Route-level testing (the `client`/`admin_client` fixtures below) goes through
+the real app object from app/main.py with only get_session swapped out. The
+suite used to have no TestClient at all and unit-tested every dependency as a
+plain callable instead; that left the *wiring* unverified -- auth dependencies
+attached to a router, Jinja templates actually rendering, CSV escaping applied
+at each call site -- none of which a callable-level test can see. See
+tests/test_route_security.py for the specific hole this closes.
 """
 
 import os
@@ -20,6 +28,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
@@ -66,6 +75,73 @@ def engine():
 def session(engine):
     with Session(engine) as sess:
         yield sess
+
+
+ADMIN_USER = "admin"
+ADMIN_PASSWORD = "test-admin-password"
+
+
+@pytest.fixture()
+def app_with_session(session, monkeypatch):
+    """The real FastAPI app with only the DB dependency redirected at the
+    in-memory SQLite session.
+
+    Deliberately does NOT enter TestClient's context manager anywhere below:
+    that would run app/main.py's startup hooks, and
+    fail_orphaned_discovery_runs opens app.db.engine -- the real Postgres --
+    which isn't up in CI and isn't what these tests are about. Those hooks
+    are tested directly as callables in tests/test_main.py instead.
+
+    A configured admin password is set for every route test because
+    require_admin reads it from the environment on each call; without it
+    even the correct password would fail the `bool(expected_password)`
+    guard in app/auth.py.
+    """
+    from app import auth
+    from app.db import get_session
+    from app.main import app
+
+    monkeypatch.setenv("APP_ADMIN_USER", ADMIN_USER)
+    monkeypatch.setenv("APP_ADMIN_PASSWORD", ADMIN_PASSWORD)
+
+    # require_admin's brute-force throttle is process-global module state
+    # keyed by client IP, and every TestClient request arrives from the same
+    # "testclient" host. Without this reset, a module that makes more than
+    # _MAX_FAILURES unauthenticated requests (test_route_security walks every
+    # route) would start getting 429s partway through, and would leak that
+    # lockout into whatever test ran next.
+    auth._failures.clear()
+
+    app.dependency_overrides[get_session] = lambda: session
+    yield app
+    app.dependency_overrides.clear()
+    auth._failures.clear()
+
+
+@pytest.fixture()
+def client(app_with_session):
+    """Unauthenticated client -- sends no credentials, so it sees exactly
+    what an unauthorized LAN device would."""
+    return TestClient(app_with_session)
+
+
+@pytest.fixture()
+def admin_client(app_with_session):
+    """Authenticated, same-origin client for exercising route behaviour.
+
+    Uses real Basic credentials and a real Sec-Fetch-Site header rather than
+    overriding require_admin/require_same_origin, so these tests keep going
+    through the actual auth stack instead of around it -- a route test that
+    stubbed the guards out couldn't tell a wired-up router from an
+    unprotected one.
+    """
+    # Starlette's TestClient.__init__ takes headers but not auth, so the
+    # credentials are set on the underlying httpx.Client afterwards.
+    test_client = TestClient(
+        app_with_session, headers={"sec-fetch-site": "same-origin"}
+    )
+    test_client.auth = (ADMIN_USER, ADMIN_PASSWORD)
+    return test_client
 
 
 def make_asset(session: Session, **overrides) -> Asset:

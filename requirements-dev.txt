@@ -3,3 +3,8 @@
 #   pip install -r requirements.txt -r requirements-dev.txt
 pytest==9.1.1
 ruff==0.16.4
+# Measures what the suite actually reaches (settings in .coveragerc). CI runs
+# the suite under it and fails below the threshold there, so the pin matters
+# for the same reason requirements.txt's do: a floor would let CI resolve a
+# different version than what was run locally.
+coverage==7.16.0
