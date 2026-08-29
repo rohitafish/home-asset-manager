@@ -272,6 +272,78 @@ for label in app logrotate backup; do
 done
 
 echo
+echo "== Headless / UPS posture =="
+# These settings have no other visible symptom when they silently regress --
+# unlike a crashed process, a dead UPS battery or a disabled Screen Sharing
+# daemon looks identical to a working one right up until the Mini reboots
+# and there's no way back in. See README's "Running the Mini headless" and
+# "Power outages and unattended restart".
+UPSMONITOR_PLIST="/Library/LaunchDaemons/com.assetmgt.upsmonitor.plist"
+if [ -f "$UPSMONITOR_PLIST" ]; then
+  if grep -q '__ASSETMGT_DIR__' "$UPSMONITOR_PLIST"; then
+    fail "$UPSMONITOR_PLIST still has the unsubstituted __ASSETMGT_DIR__ placeholder -- launchd fails to spawn it with no visible error. Re-run the sed step from README."
+  else
+    ok "com.assetmgt.upsmonitor is installed"
+  fi
+  if command -v launchctl >/dev/null 2>&1 && launchctl print system/com.assetmgt.upsmonitor >/dev/null 2>&1; then
+    ok "com.assetmgt.upsmonitor is loaded"
+  else
+    warn "com.assetmgt.upsmonitor.plist is present but not loaded -- sudo launchctl load $UPSMONITOR_PLIST"
+  fi
+else
+  warn "com.assetmgt.upsmonitor is not installed ($UPSMONITOR_PLIST not found) -- see README's \"Running the Mini headless\""
+fi
+
+if command -v system_profiler >/dev/null 2>&1; then
+  if system_profiler SPPowerDataType 2>/dev/null | grep -q 'UPS Installed:[[:space:]]*Yes'; then
+    ok "a UPS is visible to the system"
+  else
+    warn "no UPS attached (system_profiler SPPowerDataType reports 'UPS Installed: No') -- without one, a Powerwall Gateway cutover can still brown out the Mini (see README's \"Power outages and unattended restart\"). Expected on a dev laptop; should be resolved on the deployed instance"
+  fi
+fi
+
+# autorestart-after-power-failure and the pmset -u UPS thresholds are
+# desktop/server-only settings -- they're simply absent from `pmset -g` on a
+# laptop (verified: this MacBook Air's output has no `autorestart` line at
+# all), not present-but-disabled. So absence downgrades to a WARN ("not
+# applicable here, expected on a dev laptop") while a *wrong value* on a
+# machine that does support the setting is a real FAIL -- same
+# present-vs-applicable distinction preflight.sh already draws for
+# BACKUP_S3_BUCKET and the LaunchAgents above.
+if command -v pmset >/dev/null 2>&1; then
+  PG_SETTINGS="$(pmset -g 2>/dev/null || true)"
+  if echo "$PG_SETTINGS" | grep -q 'autorestart'; then
+    if echo "$PG_SETTINGS" | grep -qE 'autorestart[[:space:]]+1'; then
+      ok "autorestart is enabled (pmset -g)"
+    else
+      fail "autorestart is present but disabled -- sudo pmset -a autorestart 1, or the Mini won't power back on after a real outage at all"
+    fi
+  else
+    warn "autorestart is not a supported pmset setting on this machine (expected on a laptop) -- skipping"
+  fi
+
+  if echo "$PG_SETTINGS" | grep -qE 'sleep[[:space:]]+0'; then
+    ok "sleep is disabled"
+  else
+    warn "sleep is not disabled (expected on a dev laptop) -- on the deployed instance: sudo pmset -a sleep 0, disksleep 0, or the Mini can go to sleep and stop answering health checks"
+  fi
+
+  if echo "$PG_SETTINGS" | grep -q 'haltlevel'; then
+    ok "pmset -u haltlevel backstop is set"
+  else
+    warn "no pmset -u haltlevel/haltremain backstop is set -- see README's \"Running the Mini headless\". com.assetmgt.upsmonitor is the primary graceful-shutdown path; this is only the OS-native fallback if that script fails outright"
+  fi
+else
+  warn "pmset not found -- skipping power settings checks (expected off-Mac)"
+fi
+
+if command -v launchctl >/dev/null 2>&1 && launchctl print system/com.apple.screensharing >/dev/null 2>&1; then
+  ok "Screen Sharing is loaded -- the Mini is administrable with no display attached"
+else
+  warn "Screen Sharing is not loaded -- with no display attached there is no way to reach the login window after a remote reboot (fdesetup authrestart). Enable it in System Settings > General > Sharing before removing the monitor"
+fi
+
+echo
 echo "== Summary =="
 echo "  $FAILS FAIL(s), $WARNS WARN(s)"
 if [ "$FAILS" -gt 0 ]; then

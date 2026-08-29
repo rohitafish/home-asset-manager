@@ -334,20 +334,44 @@ straightforward.
 in at the console.** `com.assetmgt.app`, `homebrew.mxcl.colima`, and everything
 else in `~/Library/LaunchAgents` lives on the encrypted Data volume, so none of
 it runs until that volume is unlocked by an interactive login -- launchd simply
-has nothing to launch yet. This isn't fixable by moving the app to a system
-LaunchDaemon in `/Library/LaunchDaemons` either; that's on the same encrypted
-volume. Auto-login is also unavailable whenever FileVault is on -- macOS
-disables the two together -- so there's no way to get both full-disk
-encryption and unattended restart at once.
+has nothing to launch yet, and there is no way to do that unlock over the
+network, on macOS or otherwise: the pre-boot screen runs before there's a
+network stack to reach it with. This isn't fixable by moving the app to a
+system LaunchDaemon in `/Library/LaunchDaemons` either -- that's on the same
+encrypted volume.
 
-This is a real tradeoff worth making deliberately rather than skipping past:
-the host's disk holds `.env` (including `APP_ADMIN_PASSWORD` and the off-site
-backup's AWS credentials) plus the full asset inventory and vulnerability
-findings, so unencrypted-at-rest isn't a good trade for a few hours of
-unattended uptime in most cases. If you keep FileVault on and accept the
-manual-login requirement, a UPS sized to ride out typical outages is the
-better mitigation -- keep the host running through short outages rather than
-trying to make it restart unattended through long ones.
+**This deployment keeps FileVault on and accepts that trade-off, deliberately.**
+Auto-login is the obvious-looking way around it -- macOS disables the two
+together, so turning FileVault off is what unlocks it -- but that swaps a rare
+physical trip for a much worse failure mode: the host also holds a signed-in
+iCloud session, GitHub deploy keys, `~/.aws/credentials`, and `.env` (including
+`APP_ADMIN_PASSWORD` and the off-site backup's AWS credentials), and on Apple
+Silicon the SSD is hardware-encrypted by the Secure Enclave regardless of the
+FileVault setting -- so what FileVault actually buys here isn't "encrypted at
+rest" (you have that either way), it's "can't be opened without
+authentication." Auto-login would also write the login password into
+`/etc/kcpassword` under trivially-reversible obfuscation, readable from
+recoveryOS the moment FileVault is off -- turning a stolen Mini from a brick
+into a fully-provisioned session, which is a bad trade for a private-home
+deployment holding more than just this app's data.
+
+**What was actually causing this host's outages turned out not to be power
+loss at all.** Household power here runs through a battery backup (a Tesla
+Powerwall) that already rides out real outages for hours -- but the backup
+gateway takes on the order of a few hundred milliseconds to detect grid loss
+and switch over, and a Mac Mini's internal PSU only holds up for a few
+milliseconds on its own. The host was browning out in that cutover gap, which
+also explains the "sometimes it stayed up" pattern: survival came down to how
+long that particular cutover happened to take. If your setup has a similar
+whole-house backup source, look for this before reaching for anything more
+drastic -- a battery big enough to run the house for hours does nothing for a
+sub-second transfer glitch.
+
+**The fix is a small UPS sized for that gap, not for extended runtime** --
+see "Running the Mini headless" below for sizing and the graceful-shutdown
+daemon that backs it up if it ever does run low. This keeps FileVault on and
+closes the actual hole, rather than trading it away for a failure mode that
+was never really about power at all.
 
 If you find the dashboard unreachable after an outage, check `last` and
 `sysctl -n kern.boottime` for the actual boot and login times before
@@ -381,14 +405,119 @@ ssh mini 'eval "$(/opt/homebrew/bin/brew shellenv)"; colima stop'
 # during the shutdown. It autostarts again on the next boot.
 ssh mini 'launchctl bootout gui/$(id -u)/com.assetmgt.app'
 
-# Then reboot/shut down normally.
+# Then reboot. Headless (no display attached), use an authenticated restart
+# so the reboot skips straight past FileVault's pre-boot screen -- see
+# "Running the Mini headless" below for why this doesn't weaken FileVault at
+# rest the way disabling it would:
+ssh mini 'sudo fdesetup authrestart'
+
+# With a display still attached, a plain reboot is equally fine -- you'd
+# just be present to unlock the pre-boot screen anyway:
 ssh mini 'sudo shutdown -r now'
 ```
 
 This only helps for reboots you initiate. A forced OS-upgrade restart or a
 power failure gives you no chance to run `colima stop` first, so those still
 fall back to the manual recovery above (and to the FileVault login wait in the
-previous section).
+previous section) -- unless a UPS absorbs the power event before it ever
+becomes a reboot, see below.
+
+### Running the Mini headless
+
+Running with no display or keyboard attached, administered entirely over SSH
+and Screen Sharing, while keeping FileVault on and auto-login off (see "Power
+outages and unattended restart" above for why those stay non-negotiable).
+Three things need to be in place before you actually pull the monitor.
+
+**1. Screen Sharing, verified at the login window, not just from a logged-in
+session.** `com.apple.screensharing` is a *system* daemon, so it comes up
+before anyone logs in -- which is exactly what makes the `fdesetup
+authrestart` path above useful headless: the reboot skips the pre-boot
+screen, lands at the macOS login window, and you reach that window over VNC
+to log in and start the three LaunchAgents, with no monitor involved.
+Enable it in **System Settings → General → Sharing → Screen Sharing**, then
+prove it reaches the login window specifically: connect, log out (or reboot
+via `authrestart`), and confirm the VNC session still shows a login prompt
+rather than dropping. If a third-party firewall is installed (Intego,
+Little Snitch, etc.), add an explicit inbound allow rule for TCP 5900 --
+this is the most likely reason a VNC test fails for a non-obvious reason.
+
+Do this, and confirm it works, **before** removing the display -- there is no
+way to fix a Screen Sharing misconfiguration once the only way in is Screen
+Sharing itself. Budget for an HDMI dummy plug on the way out: a Mac with no
+display attached still serves Screen Sharing, but at a degraded default
+resolution without one.
+
+**2. A UPS sized for a cutover, not for an outage.** If your outages are
+actually a whole-house battery backup's grid-to-battery transfer time (see
+above) rather than extended power loss, the UPS only needs to bridge about a
+second, not ride out hours -- an M1 Mac Mini idles around 7W and peaks under
+40W, so even a small 600-650VA line-interactive unit gives many minutes of
+headroom against that. The specification actually worth paying for is **pure
+sine wave** output; a simulated-sine unit can cause odd behaviour with Apple
+power supplies for very little saved cost. Connect it to the Mini over USB so
+macOS can see its state natively:
+
+```bash
+pmset -g ps        # should list the UPS once connected, not just 'AC Power'
+```
+
+**3. The graceful-shutdown daemon, `com.assetmgt.upsmonitor`.** If the UPS
+ever does run down -- a longer outage than the battery backup covers, or a
+dying UPS battery -- something needs to shut the Mini down *before* it just
+dies, because an abrupt loss of power is indistinguishable from the abrupt
+`SIGKILL` shutdown that leaves Colima's lima/vz guest half-torn-down (see
+"Shutting down or rebooting the host gracefully" above). `scripts/
+ups-shutdown.sh` polls `pmset -g ps` once a minute and, once the battery
+drops below a threshold, runs the same `colima stop` → stop-the-app →
+`shutdown -h now` sequence you'd run by hand for a planned reboot.
+
+This one is a **LaunchDaemon**, not a LaunchAgent like the other three jobs in
+this repo -- it has to run whether or not anyone is logged in (in particular,
+right after an `authrestart`, when the Mini sits at the login window with
+none of the user's LaunchAgents started yet), and it needs to call `shutdown`
+directly. That means it installs differently: to `/Library/LaunchDaemons`,
+with `sudo`, not `~/Library/LaunchAgents`.
+
+```bash
+cd ~/claudecode/assetmgt
+sudo cp scripts/com.assetmgt.upsmonitor.plist /Library/LaunchDaemons/
+sudo sed -i '' "s|__ASSETMGT_DIR__|$(pwd)|g" /Library/LaunchDaemons/com.assetmgt.upsmonitor.plist
+sudo launchctl load /Library/LaunchDaemons/com.assetmgt.upsmonitor.plist
+```
+
+(If a previous version is already loaded, `sudo launchctl unload` it first --
+same reasoning as the other three plists' install steps.)
+
+Verify it the same way as the backup agent -- run it once exactly as launchd
+will, rather than trusting a manual `bash scripts/ups-shutdown.sh` run under
+your own shell's environment:
+
+```bash
+sudo launchctl kickstart -k system/com.assetmgt.upsmonitor
+sudo cat /var/log/com.assetmgt.upsmonitor.log   # on AC power, this should stay empty
+```
+
+Set an OS-native backstop below this script's own threshold, so `pmset`'s own
+emergency shutdown only ever fires if the script itself failed outright --
+the graceful path above should always win first:
+
+```bash
+sudo pmset -u haltlevel 25 haltremain 3
+```
+
+(`scripts/preflight.sh`'s "Headless / UPS posture" section checks all of the
+above -- the UPS is visible to the system, the daemon is installed and
+loaded, the `haltlevel` backstop is set, and Screen Sharing is loaded. None
+of these regressing has any other visible symptom until the Mini reboots and
+there's no way back in, which is exactly why they're worth checking for
+explicitly rather than assuming they're still true.)
+
+**What this doesn't cover:** a kernel panic, a forced OS-upgrade restart that
+bypasses `authrestart`, or the UPS's own battery failing outright all still
+land the Mini at the FileVault pre-boot screen with no remote way past it.
+Keep a keyboard and a spare display somewhere reachable for that case --
+rare, by design, but not eliminated.
 
 ### Keeping the host responsive
 

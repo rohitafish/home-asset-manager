@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.assetmgt.upsmonitor</string>
+
+  <!-- A LaunchDaemon, not a LaunchAgent like the app/logrotate/backup
+       jobs -- see scripts/ups-shutdown.sh's header for why. Installs to
+       /Library/LaunchDaemons (root-owned, `sudo cp`), not
+       ~/Library/LaunchAgents. Runs as root by default (no UserName key),
+       which is what lets it call `shutdown` directly. -->
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__ASSETMGT_DIR__/scripts/ups-shutdown.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__ASSETMGT_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- One-shot check, run every 60s -- not a long-running service, so no
+       KeepAlive. Cheap: `pmset -g ps` is near-instant, and the script exits
+       immediately once it sees AC power. RunAtLoad so a boot that happens to
+       land already on UPS power (e.g. the outage that caused the reboot
+       hasn't cleared yet) is covered from the first tick, not just from the
+       next scheduled one. -->
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- /var/log, not this repo's logs/ -- that directory is owned by the
+       app's own user account and rotated in place by rotate-logs.sh, which
+       runs as that user and truncates the file's existing inode; a
+       root-owned file here would not be writable by that rotation. Unlike
+       app.log/app.error.log, nothing holds a long-lived handle on this file
+       between runs (each run is a few-millisecond process, not a
+       long-running server), so if it ever needs rotating, ordinary
+       rename-based `newsyslog` is fine for it -- the O_APPEND-inode hazard
+       that rules newsyslog out for the app's own logs doesn't apply here.
+       In practice this stays small: it's silent on the normal "on AC,
+       exiting immediately" case and only writes on a real UPS event. -->
+  <key>StandardErrorPath</key>
+  <string>/var/log/com.assetmgt.upsmonitor.log</string>
+</dict>
+</plist>
