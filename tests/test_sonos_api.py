@@ -15,6 +15,7 @@ from probes.sonos_api import (
     SonosPlayer,
     _is_fetchable_lan_ip,
     mac_from_rincon,
+    normalize_sonos_serial,
     parse_device_description,
     parse_status_zp,
     parse_zone_group_members,
@@ -45,7 +46,9 @@ def test_parse_device_description_extracts_identity():
     assert facts["room_name"] == "Living Room"
     assert facts["model"] == "Sonos Playbar"
     assert facts["model_number"] == "S9"
-    assert facts["serial"] == "AA-BB-CC-DD-EE-FF:1"
+    # Canonicalized (dashes and colon stripped, uppercased) -- see
+    # normalize_sonos_serial; the wire format is "AA-BB-CC-DD-EE-FF:1".
+    assert facts["serial"] == "AABBCCDDEEFF1"
     assert facts["software_version"] == "86.8-78270"
     assert facts["mac"] == "AA:BB:CC:DD:EE:FF"
     assert facts["udn"] == "uuid:RINCON_AABBCCDDEEFF01400"
@@ -197,6 +200,46 @@ def test_parse_status_zp_extracts_room_and_serial():
     facts = parse_status_zp(xml)
     assert facts["room_name"] == "Kitchen"
     assert facts["serial"] == "AABBCCDDEEFF"
+
+
+# -- normalize_sonos_serial ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("AA-BB-CC-DD-EE-FF:1", "AABBCCDDEEFF1"),   # local-API display form
+        ("AABBCCDDEEFF1", "AABBCCDDEEFF1"),          # already canonical
+        ("aabbccddeeff1", "AABBCCDDEEFF1"),          # lowercase -> uppercase
+        ("AABBCCDDEEFF", "AABBCCDDEEFF"),            # 12 chars, no check digit
+        ("  AA-BB-CC-DD-EE-FF : 1  ", "AABBCCDDEEFF1"),  # stray whitespace
+    ],
+)
+def test_normalize_sonos_serial_canonicalizes(raw, expected):
+    assert normalize_sonos_serial(raw) == expected
+
+
+def test_normalize_sonos_serial_passes_through_non_sonos_serial():
+    # Amazon's serial format -- happens to be long and alphanumeric, but
+    # isn't 12-hex-plus-one-char, so must not be mangled. Fabricated value,
+    # not a real Amazon serial -- see tests/test_account_import.py's header
+    # note on why this file must never carry a real one.
+    assert normalize_sonos_serial("G0FAKEAMZN00001A") == "G0FAKEAMZN00001A"
+
+
+def test_normalize_sonos_serial_passes_through_too_short():
+    assert normalize_sonos_serial("AABBCC") == "AABBCC"
+
+
+def test_normalize_sonos_serial_passes_through_non_hex_prefix():
+    # 13 characters after stripping separators, but the leading 12 aren't
+    # all hex -- must not be treated as a disguised Sonos serial.
+    assert normalize_sonos_serial("FAKE0000000A") == "FAKE0000000A"
+
+
+def test_normalize_sonos_serial_none_and_empty():
+    assert normalize_sonos_serial(None) is None
+    assert normalize_sonos_serial("") == ""
 
 
 def test_parse_status_zp_extracts_channel_map_raw_attribute():

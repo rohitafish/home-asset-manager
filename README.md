@@ -1516,7 +1516,10 @@ imports this data from a hand-transcribed file instead.
            "account_name": "Garage",
            "model": "Sonos One",
            "model_number": null,
-           "serial": "AABBCCDDEEFF1",
+           "serial": "AABBCCDDEEFF1",         // canonical form -- see "Sonos
+                                               // household discovery" below;
+                                               // dashes/colon are stripped
+                                               // automatically if present
            "registered": "2022-03-01",
            "hostname": null,
            "location": "Garage"             // optional, any vendor: fill-only --
@@ -1570,6 +1573,16 @@ UniFi may never have resolved a friendly name for.
 - Shared XML/SOAP parsing lives in `probes/sonos_api.py` — used by both the
   interactive probe and this collector, so there's exactly one place that
   knows the Sonos wire format.
+- A Sonos serial is the player's MAC plus one trailing check character, but
+  the local API prints it as `AA-BB-CC-DD-EE-FF:1` while the Sonos account
+  page (and `account-import`'s `devices/accounts.json`) prints the same
+  value as `AABBCCDDEEFF1`. `probes/sonos_api.py`'s `normalize_sonos_serial`
+  canonicalizes to the latter (uppercase, no separators) wherever a serial is
+  parsed, so `serial_number` is stored and displayed the same way regardless
+  of which importer wrote it — and `account-import` doesn't re-plan the same
+  "change" forever comparing two spellings of one serial. MAC addresses
+  themselves are untouched by this — they stay colon-separated and
+  lowercase, normalized by `discovery/normalize.py`'s `normalize_mac`.
 - Seeds from Sonos IPs already in the inventory (any asset whose vendor or
   hostname mentions "sonos", or with a port-1400 `AssetService`) —
   deliberately never multicast/SSDP, since many segmented home networks
