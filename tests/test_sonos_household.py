@@ -81,6 +81,23 @@ def test_to_discovered_devices_suppresses_hostname_for_satellite():
     assert devices[0].source == "sonos_household"
 
 
+def test_to_discovered_devices_carries_canonical_serial():
+    # SonosPlayer.serial arrives already canonicalized by the time it gets
+    # here -- enrich_from_device_description populates it from
+    # parse_device_description, which normalizes via
+    # probes.sonos_api.normalize_sonos_serial (see tests/test_sonos_api.py).
+    # This just pins that to_discovered_devices carries it through verbatim
+    # onto DiscoveredDevice.serial_number, rather than re-mangling it.
+    member = SonosPlayer(
+        uuid="RINCON_X", room_name="Kitchen", location_url=_LAN_LOCATION,
+        mac="aa:bb:cc:dd:ee:04", channel=None, ht_channel=None,
+        is_satellite=False, invisible=False, model="Sonos One",
+        serial="AABBCCDDEEFF1",
+    )
+    devices = to_discovered_devices([member])
+    assert devices[0].serial_number == "AABBCCDDEEFF1"
+
+
 def test_to_discovered_devices_names_visible_member_with_room():
     member = SonosPlayer(
         uuid="RINCON_X", room_name="Kitchen", location_url=_LAN_LOCATION,

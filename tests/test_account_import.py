@@ -81,6 +81,40 @@ def test_load_account_file_parses_well_formed_entries(tmp_path):
     assert devices[0].registered == date(2024, 3, 1)
 
 
+def test_load_account_file_canonicalizes_sonos_serial(tmp_path):
+    # devices/accounts.json's Sonos serials are already canonical, but a
+    # hand edit (e.g. pasted from the live probe's dashed display) shouldn't
+    # reintroduce the mismatch discovery/sonos_household.py's own ingest
+    # path now normalizes away -- see probes.sonos_api.normalize_sonos_serial.
+    path = tmp_path / "accounts.json"
+    path.write_text(json.dumps({
+        "sonos": {
+            "source_document": "test",
+            "devices": [{"account_name": "Move", "serial": "AA-BB-CC-DD-EE-FF:1"}],
+        },
+    }))
+
+    devices = load_account_file(path)
+
+    assert devices[0].serial == "AABBCCDDEEFF1"
+
+
+def test_load_account_file_does_not_touch_amazon_serial(tmp_path):
+    # Amazon serials aren't Sonos-shaped and must never be run through
+    # normalize_sonos_serial's canonicalization.
+    path = tmp_path / "accounts.json"
+    path.write_text(json.dumps({
+        "amazon": {
+            "source_document": "test",
+            "devices": [{"account_name": "Echo Dot", "serial": "G0FAKEAMZN00001A"}],
+        },
+    }))
+
+    devices = load_account_file(path)
+
+    assert devices[0].serial == "G0FAKEAMZN00001A"
+
+
 # -- sonos_serial_to_mac ----------------------------------------------------
 
 
