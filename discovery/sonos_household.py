@@ -1,6 +1,8 @@
 """Sonos household discovery: enumerates every player in the household from
-one GetZoneGroupState call against any single reachable Sonos player, using
-the same local port-1400 protocol probes/sonos.py already speaks (shared
+one GetZoneGroupState call against a reachable Sonos player, falling back
+across seeds until one describes the whole household (see
+enumerate_household), using the same local port-1400 protocol probes/sonos.py
+already speaks (shared
 parsing lives in probes/sonos_api.py, a protocol-only module deliberately
 kept independent of asset/DB knowledge -- see its docstring for why that's
 safe to import from here).
@@ -56,8 +58,11 @@ _TIMEOUT = 3.0
 
 def candidate_seed_ips(session: Session) -> list[str]:
     """Every IP that looks like it might already be a Sonos player, most-
-    recently-seen first -- reaching just one of these is enough to
-    enumerate the whole household via GetZoneGroupState."""
+    recently-seen first -- reaching one *joined* player is enough to
+    enumerate the whole household via GetZoneGroupState, but a player
+    running as its own standalone system answers with only itself, so
+    enumerate_household works down this list rather than stopping at the
+    first seed that answers at all."""
     sonos_asset_ids: set[int] = set()
     for asset in session.exec(select(Asset)).all():
         haystack = f"{asset.hostname or ''} {asset.vendor or ''}".lower()
@@ -84,10 +89,27 @@ def candidate_seed_ips(session: Session) -> list[str]:
 
 
 def enumerate_household(ips: list[str], timeout: float = _TIMEOUT) -> tuple[list[SonosPlayer], str | None]:
-    """Tries each seed IP until one answers GetZoneGroupState. Returns
-    (players, error) -- error is None on success. Never raises: a seed
-    that's powered off or unreachable is an expected outcome, not a
+    """Tries every seed IP for the *household*, not just the first that
+    answers at all: a player properly joined to the household describes
+    every bonded zone group in its GetZoneGroupState response, not just its
+    own, but a player currently running as its own standalone Sonos system
+    (e.g. a Move used away from home) answers with only itself. Returning
+    on that first non-empty answer used to hide a real multi-player
+    household whose seed came later in the list -- observed in production,
+    where a most-recently-seen Move shadowed a bonded 4-player Living Room
+    group. So the first seed reporting more than one player wins; a
+    single-player answer is remembered as a fallback rather than returned
+    immediately, in case a later seed does better.
+
+    Bounded by the seed list, not a search: each IP is tried at most once,
+    with no retries and no rescans -- if every seed ever reports only
+    itself, that single-player answer *is* the answer (a household that
+    genuinely has one Sonos player), not a reason to keep looking.
+
+    Returns (players, error) -- error is None on success. Never raises: a
+    seed that's powered off or unreachable is an expected outcome, not a
     failure, as long as *some* seed answers."""
+    fallback: list[SonosPlayer] | None = None
     with httpx.Client(timeout=timeout) as client:
         for ip in ips:
             soap_xml = fetch_zone_group_state(client, ip)
@@ -100,8 +122,13 @@ def enumerate_household(ips: list[str], timeout: float = _TIMEOUT) -> tuple[list
                 # from one IP just means try the next. Debug, not warning.
                 logger.debug("Sonos seed %s returned unparseable topology", ip, exc_info=True)
                 continue
-            if players:
+            if len(players) > 1:
                 return players, None
+            if players and fallback is None:
+                logger.debug("Sonos seed %s reported only itself, trying the next seed", ip)
+                fallback = players
+    if fallback is not None:
+        return fallback, None
     return [], "No Sonos player responded on any known IP -- they may be powered off."
 
 

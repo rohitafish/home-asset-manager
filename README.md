@@ -1566,9 +1566,9 @@ Unlike Amazon, Sonos players expose a local API (port 1400 — the same one
 `probes/sonos.py`'s per-asset identification probe already speaks) that
 returns serial/model/model number/firmware/room name directly — no account
 page, no OAuth. `discovery/sonos_household.py` calls `GetZoneGroupState` on
-just *one* already-known Sonos IP and gets back the **entire household** in
-one response, including bonded satellites (a Sub, rear surrounds) that
-UniFi may never have resolved a friendly name for.
+an already-known Sonos IP and gets back the **entire household** in one
+response, including bonded satellites (a Sub, rear surrounds) that UniFi
+may never have resolved a friendly name for.
 
 - Shared XML/SOAP parsing lives in `probes/sonos_api.py` — used by both the
   interactive probe and this collector, so there's exactly one place that
@@ -1588,6 +1588,13 @@ UniFi may never have resolved a friendly name for.
   deliberately never multicast/SSDP, since many segmented home networks
   (VLANs, guest networks, Wi-Fi client isolation) don't carry multicast
   traffic reliably (the same reason `probes/ssdp.py`'s M-SEARCH is unicast).
+- Seeds are tried in order until one describes a *household*, not just
+  until one answers: a portable player currently running as its own
+  standalone Sonos system reports only itself, and stopping there once hid
+  a real bonded group whose seed came later in the list. The first
+  multi-player answer wins; if every seed reports a single player, that's
+  used as-is (a genuine one-player household) — each seed is tried at most
+  once, so there's no retry loop.
 - A bonded satellite reports its *group's* room name in its own zone data,
   not its own identity, so this collector never invents a hostname for one
   — only a visible/primary player gets a hostname suggestion, and even then
