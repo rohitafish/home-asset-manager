@@ -14,6 +14,7 @@ import discovery.sonos_household as sonos_household
 from app.models import Asset, AssetInterface, AssetService
 from discovery.sonos_household import (
     candidate_seed_ips,
+    enumerate_household,
     run_sonos_household_discovery,
     to_discovered_devices,
 )
@@ -155,6 +156,77 @@ def test_to_discovered_devices_skips_a_player_with_a_spoofed_looking_ip():
         assert to_discovered_devices([member]) == [], f"must skip {spoofed}"
 
 
+# -- enumerate_household -----------------------------------------------------
+
+
+def test_enumerate_household_prefers_a_multi_player_seed(monkeypatch):
+    # Regression test: a Move running as its own standalone Sonos system
+    # answers with only itself; returning on that first non-empty answer
+    # hid a real bonded household whose seed came later in the list.
+    responses = {"10.0.0.1": _fake_soap_xml(), "10.0.0.2": _fake_soap_xml(_HOUSEHOLD_MEMBERS)}
+    monkeypatch.setattr(sonos_household, "fetch_zone_group_state", lambda client, ip: responses[ip])
+
+    players, error = enumerate_household(["10.0.0.1", "10.0.0.2"])
+
+    assert error is None
+    assert {p.room_name for p in players} == {"Office", "Living Room"}
+
+
+def test_enumerate_household_stops_at_the_first_multi_player_seed(monkeypatch):
+    queried: list[str] = []
+
+    def fake_fetch(client, ip):
+        queried.append(ip)
+        if ip != "10.0.0.2":
+            raise AssertionError(f"queried {ip} after a household seed already answered")
+        return _fake_soap_xml(_HOUSEHOLD_MEMBERS)
+
+    monkeypatch.setattr(sonos_household, "fetch_zone_group_state", fake_fetch)
+
+    players, error = enumerate_household(["10.0.0.2", "10.0.0.3"])
+
+    assert error is None
+    assert len(players) == 2
+    assert queried == ["10.0.0.2"]
+
+
+def test_enumerate_household_falls_back_to_a_single_player_result(monkeypatch):
+    # No seed can see more than itself -- a one-player household is a real,
+    # if minimal, answer, not a no_response. Bounded: one try per seed.
+    queried: list[str] = []
+
+    def fake_fetch(client, ip):
+        queried.append(ip)
+        return _fake_soap_xml()
+
+    monkeypatch.setattr(sonos_household, "fetch_zone_group_state", fake_fetch)
+
+    players, error = enumerate_household(["10.0.0.1", "10.0.0.2"])
+
+    assert error is None
+    assert len(players) == 1
+    assert queried == ["10.0.0.1", "10.0.0.2"]  # every seed tried once, no retries
+
+
+def test_enumerate_household_reports_no_response_when_nothing_answers(monkeypatch):
+    monkeypatch.setattr(sonos_household, "fetch_zone_group_state", lambda client, ip: None)
+
+    players, error = enumerate_household(["10.0.0.1", "10.0.0.2"])
+
+    assert players == []
+    assert error is not None and "No Sonos player responded" in error
+
+
+def test_enumerate_household_skips_an_unparseable_seed(monkeypatch):
+    responses = {"10.0.0.1": "not xml at all", "10.0.0.2": _fake_soap_xml(_HOUSEHOLD_MEMBERS)}
+    monkeypatch.setattr(sonos_household, "fetch_zone_group_state", lambda client, ip: responses[ip])
+
+    players, error = enumerate_household(["10.0.0.1", "10.0.0.2"])
+
+    assert error is None
+    assert len(players) == 2
+
+
 # -- run_sonos_household_discovery -----------------------------------------------
 
 
@@ -206,16 +278,27 @@ def test_run_sonos_household_discovery_apply_creates_new_asset(session, monkeypa
     assert new_iface is not None
 
 
-def _fake_soap_xml() -> str:
-    inner = (
-        "<ZoneGroups>"
-        '<ZoneGroup Coordinator="RINCON_AABBCCDDEEFF01400" ID="RINCON_AABBCCDDEEFF01400:1">'
-        '<ZoneGroupMember UUID="RINCON_AABBCCDDEEFF01400" '
-        'Location="http://10.0.0.20:1400/xml/device_description.xml" ZoneName="Office" '
+_DEFAULT_MEMBERS = [("RINCON_AABBCCDDEEFF01400", "10.0.0.20", "Office")]
+_HOUSEHOLD_MEMBERS = [
+    ("RINCON_AABBCCDDEEFF01400", "10.0.0.20", "Office"),
+    ("RINCON_111111111111", "10.0.0.21", "Living Room"),
+]
+
+
+def _fake_soap_xml(members: list[tuple[str, str, str]] | None = None) -> str:
+    """Each member is (uuid, ip, zone_name), one ZoneGroup apiece --
+    deliberately not bonded (Satellite nesting is already covered by
+    tests/test_sonos_api.py); this file only cares about player *count*,
+    which is what enumerate_household branches on."""
+    groups = "".join(
+        f'<ZoneGroup Coordinator="{uuid}" ID="{uuid}:1">'
+        f'<ZoneGroupMember UUID="{uuid}" '
+        f'Location="http://{ip}:1400/xml/device_description.xml" ZoneName="{zone}" '
         'MicEnabled="0"/>'
         "</ZoneGroup>"
-        "</ZoneGroups>"
+        for uuid, ip, zone in (members or _DEFAULT_MEMBERS)
     )
+    inner = f"<ZoneGroups>{groups}</ZoneGroups>"
     escaped = inner.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
     return (
         '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">'
