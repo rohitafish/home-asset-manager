@@ -609,6 +609,24 @@ assistant or human contributor.
   `scripts/redeploy.sh` still rsyncs it to `mini` on purpose — the import
   needs a copy of the data there. Add any serial you transcribe into it to
   `.pii-denylist` too, same as any other real value.
+- **Sonos serials are stored canonicalized** (uppercase, no separators —
+  e.g. `AABBCCDDEEFF1`, fabricated), because a Sonos serial is just the
+  player's MAC plus one check character, but the two places this app reads
+  one from used to print it differently: the local API (`probes/sonos_api.py`,
+  via `discovery/sonos_household.py`) as `AA-BB-CC-DD-EE-FF:1`, the Sonos
+  account page/`devices/accounts.json` (via `discovery/account_import.py`) as
+  `AABBCCDDEEFF1`. Whichever collector ran last used to win, and
+  `account_import.plan_changes` re-planned the same "change" on every run
+  comparing the two spellings as raw strings. `probes/sonos_api.py`'s
+  `normalize_sonos_serial` is the single place that now canonicalizes —
+  called from both `parse_device_description`/`parse_status_zp` (local API)
+  and `discovery/account_import.py`'s `load_account_file` (account import) —
+  mirroring `discovery/normalize.py`'s `normalize_mac` for MACs themselves,
+  which this deliberately does not touch (MACs stay colon-separated,
+  lowercase, exactly as before). A one-off migration backfilled the rows
+  written before this existed; transcribe any new Sonos serial into
+  `devices/accounts.json` in the canonical form so it doesn't need to rely on
+  that normalization pass.
 - **`scripts/check-pii.sh`** checks denylist terms (case-insensitive,
   literal, plus a hex-normalised pass so a MAC matches whatever its
   separators or length — the literal pass alone once missed a real device

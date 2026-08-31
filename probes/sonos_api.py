@@ -84,6 +84,29 @@ def _find_text(root, tag: str) -> str | None:
     return None
 
 
+def normalize_sonos_serial(serial: str | None) -> str | None:
+    """A Sonos serial is the player's 12 hex-digit MAC plus one trailing
+    check character, but the two places this app reads one from print it
+    differently: the local API's device_description.xml gives
+    "AA-BB-CC-DD-EE-FF:1" (dashes plus a colon before the check character),
+    while /status/zp and the Sonos account page both give "AABBCCDDEEFF1"
+    (no separators at all -- see discovery/account_import.py's
+    sonos_serial_to_mac). Canonicalizes to that separator-less, uppercase
+    form so every ingest path and every place a serial is displayed or
+    diffed agrees. Returns the input unchanged, never guessing, on anything
+    that isn't a 12-hex-digit-plus-one-character string once separators are
+    stripped -- that's what keeps this safe to point at non-Sonos serials
+    (Amazon's, Apple's, ...) that happen to pass through the same field."""
+    if not serial:
+        return serial
+    stripped = re.sub(r"[-:\s]", "", serial).upper()
+    if len(stripped) not in (12, 13):
+        return serial
+    if not re.fullmatch(r"[0-9A-F]{12}.?", stripped):
+        return serial
+    return stripped
+
+
 def parse_device_description(xml_text: str) -> dict:
     root = ET.fromstring(xml_text)
     facts = {}
@@ -101,6 +124,8 @@ def parse_device_description(xml_text: str) -> dict:
         value = _find_text(root, tag)
         if value:
             facts[key] = value
+    if "serial" in facts:
+        facts["serial"] = normalize_sonos_serial(facts["serial"])
     return facts
 
 
@@ -130,6 +155,8 @@ def parse_status_zp(xml_text: str) -> dict:
         value = _find_text(root, tag)
         if value:
             facts.setdefault(key, value)
+    if "serial" in facts:
+        facts["serial"] = normalize_sonos_serial(facts["serial"])
     for attr, key in [
         ("ChannelMapSet", "channel_map_raw"),
         ("HTSatChanMapSet", "ht_channel_map_raw"),

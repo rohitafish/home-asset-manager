@@ -53,6 +53,7 @@ from app.clock import utcnow_naive
 from app.models import Asset, AssetNote, Location
 from discovery.normalize import normalize_mac
 from discovery.reconcile import _find_asset_by_mac
+from probes.sonos_api import normalize_sonos_serial
 
 SOURCE = "vendor_account"
 
@@ -87,12 +88,13 @@ class PlannedChange:
 
 def sonos_serial_to_mac(serial: str | None) -> str | None:
     """A Sonos account serial is the 12 hex-digit MAC plus one trailing check
-    character, printed with or without separators (account pages print e.g.
-    "AABBCCDDEEFF1"; probes/sonos.py's live serial field prints
-    "AA-BB-CC-DD-EE-FF:1"). Strips all non-hex characters, keeps the leading
-    12, and normalizes them the same way every other MAC in this schema is
-    stored. Returns None rather than guessing if that isn't at least 12 hex
-    characters."""
+    character, printed with or without separators (account pages -- and this
+    app's canonical stored form, see probes.sonos_api.normalize_sonos_serial
+    -- print e.g. "AABBCCDDEEFF1"; the live local-API field, before
+    normalization, prints "AA-BB-CC-DD-EE-FF:1"). Strips all non-hex
+    characters, keeps the leading 12, and normalizes them the same way every
+    other MAC in this schema is stored. Returns None rather than guessing if
+    that isn't at least 12 hex characters."""
     if not serial:
         return None
     hexonly = "".join(c for c in serial if c in "0123456789abcdefABCDEF")
@@ -117,13 +119,22 @@ def load_account_file(path: str | Path) -> list[AccountDevice]:
         source_document = section.get("source_document", "")
         for idx, entry in enumerate(section.get("devices", [])):
             try:
+                serial = entry.get("serial")
+                if vendor == "sonos":
+                    # devices/accounts.json is already in the canonical
+                    # form, but normalize anyway so a hand-edited entry
+                    # (e.g. pasted from the live probe's dashed display)
+                    # can't reintroduce the mismatch this app went through
+                    # the trouble of eliminating -- see
+                    # probes.sonos_api.normalize_sonos_serial.
+                    serial = normalize_sonos_serial(serial)
                 devices.append(
                     AccountDevice(
                         vendor=vendor,
                         account_name=entry["account_name"],
                         model=entry.get("model"),
                         model_number=entry.get("model_number"),
-                        serial=entry.get("serial"),
+                        serial=serial,
                         registered=_parse_date(entry.get("registered")),
                         asset_id=entry.get("asset_id"),
                         hostname=entry.get("hostname"),
