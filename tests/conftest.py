@@ -122,7 +122,10 @@ def app_with_session(session, monkeypatch):
 def client(app_with_session):
     """Unauthenticated client -- sends no credentials, so it sees exactly
     what an unauthorized LAN device would."""
-    return TestClient(app_with_session)
+    # base_url: TrustedHostMiddleware (app/main.py) only answers for
+    # localhost/127.0.0.1 plus APP_ALLOWED_HOSTS; TestClient's default Host
+    # is "testserver", which the real app would (correctly) refuse.
+    return TestClient(app_with_session, base_url="http://localhost")
 
 
 @pytest.fixture()
@@ -138,7 +141,9 @@ def admin_client(app_with_session):
     # Starlette's TestClient.__init__ takes headers but not auth, so the
     # credentials are set on the underlying httpx.Client afterwards.
     test_client = TestClient(
-        app_with_session, headers={"sec-fetch-site": "same-origin"}
+        app_with_session,
+        headers={"sec-fetch-site": "same-origin"},
+        base_url="http://localhost",
     )
     test_client.auth = (ADMIN_USER, ADMIN_PASSWORD)
     return test_client

@@ -11,10 +11,23 @@
     <string>__ASSETMGT_DIR__/.venv/bin/uvicorn</string>
     <string>app.main:app</string>
     <string>--host</string>
-    <string>0.0.0.0</string>
+    <string>127.0.0.1</string>
     <string>--port</string>
     <string>8000</string>
+    <string>--proxy-headers</string>
+    <string>--forwarded-allow-ips</string>
+    <string>127.0.0.1</string>
   </array>
+  <!-- Loopback only. HTTP Basic sends the password on every request, so the
+       app is never bound to a LAN interface in the clear: it sits behind a
+       TLS terminator on the same host (Tailscale Serve, or Caddy - see
+       README's "Reaching it over HTTPS"). proxy-headers + forwarded-allow-ips
+       let that loopback proxy pass the real client IP and scheme through, so
+       app/auth.py's per-client login throttle keys on the actual client
+       rather than collapsing every visitor into 127.0.0.1 (one attacker's
+       failures would otherwise lock the real user out too), and the app can
+       tell an https request from a plain one. Only loopback is trusted for
+       those headers, so nothing else can forge them. -->
 
   <key>WorkingDirectory</key>
   <string>__ASSETMGT_DIR__</string>
@@ -31,9 +44,9 @@
   <true/>
 
   <!-- Without this, KeepAlive respawns immediately on any startup
-       exception -- e.g. this agent loaded before the dump was restored /
+       exception - e.g. this agent loaded before the dump was restored /
        alembic upgrade head run (missing tables), or before Colima won the
-       reboot race -- producing a tight crash-loop that appends to
+       reboot race - producing a tight crash-loop that appends to
        app.error.log every ~10s indefinitely. com.assetmgt.backup.plist
        works around the same Colima-ordering hazard by skipping RunAtLoad
        entirely; the app agent needs RunAtLoad (it should come up

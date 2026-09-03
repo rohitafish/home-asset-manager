@@ -13,6 +13,25 @@ controls below are built on. Don't put it on the public internet without
 adding your own reverse proxy, TLS, and a hardened auth layer in front of it;
 that configuration isn't what's been designed for or tested.
 
+Within the LAN, the app itself listens on **loopback only**. HTTP Basic puts
+the password on every request, and the inventory (serials, purchase prices,
+uploaded receipts) shouldn't cross the network in the clear — least of all a
+network full of the IoT devices this app catalogues CVEs for. It is reached
+through a TLS terminator on the same host: Tailscale Serve (recommended;
+nothing listens on the LAN, access is tailnet-only, real certificate) or
+Caddy with a local CA. The app answers only for `localhost`, `127.0.0.1` and
+the names listed in `APP_ALLOWED_HOSTS`; any other `Host` header is refused
+with a `400` before authentication or routing run, which closes DNS-rebinding
+and Host-confusion tricks. `Strict-Transport-Security` is sent on https
+responses. See the README's "Reaching it over HTTPS".
+
+The app process runs as an ordinary user and nothing it can reach runs as
+root on its behalf: there is no passwordless `sudo` rule (an earlier version
+documented one for `nmap`; on a Homebrew install that binary is user-owned,
+so the rule was a root escalation, and `scripts/preflight.sh` now fails
+while it exists), and the one root LaunchDaemon (UPS shutdown) runs a
+root-owned copy of its script with a system-only `PATH`.
+
 Given that, the realistic threat isn't "a random attacker on the internet" —
 it's **a compromised or malicious device already on your LAN** (a smart plug
 running unexpected firmware, a guest's phone, an IoT device with a supply-chain
@@ -30,7 +49,9 @@ this app's discovery probes.
   the dashboard wide open.
 - **Brute-force throttling:** more than 10 failed login attempts from the same
   client within a 5-minute window get a `429` until the window ages out.
-  Failures are logged at `WARNING`.
+  Failures are logged at `WARNING`. The client IP comes through the loopback
+  proxy's `X-Forwarded-For`, which uvicorn trusts from `127.0.0.1` only, so
+  one attacker's failures throttle that attacker rather than everyone.
 
 ## CSRF protection
 

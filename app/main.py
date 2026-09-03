@@ -1,9 +1,10 @@
 import os
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.backup_status import backup_status
 from app.clock import utcnow_naive
@@ -62,22 +63,68 @@ _SECURITY_HEADERS = {
     "Referrer-Policy": "same-origin",
 }
 
+# Only ever sent on a response that actually travelled over TLS. HTTP Basic
+# puts the password on every request, so the app is meant to sit behind a
+# TLS terminator on loopback (Tailscale Serve, or Caddy -- see README's
+# "Reaching it over HTTPS"); this tells the browser to keep using https for
+# the host once it has seen it that way. A year, no preload/subdomains: this
+# is a single private hostname, not a public domain to register anywhere.
+_HSTS_VALUE = "max-age=31536000"
 
-def _apply_security_headers(response: Response) -> Response:
+
+def _apply_security_headers(response: Response, secure: bool = False) -> Response:
     """Split out from the middleware below so it's unit-testable against a
     plain Response, the same way app/auth.py's require_admin/
     require_same_origin are tested as callables rather than through a live
-    app (see tests/test_auth.py's docstring -- this app has no route-level
-    TestClient)."""
+    app (see tests/test_auth.py's docstring). `secure` is whether the
+    request arrived over TLS; Strict-Transport-Security is only meaningful
+    (and only honoured by browsers) on such a response."""
     for name, value in _SECURITY_HEADERS.items():
         response.headers[name] = value
+    if secure:
+        response.headers["Strict-Transport-Security"] = _HSTS_VALUE
     return response
+
+
+def _is_secure(request: Request) -> bool:
+    """True if the request reached us over TLS. uvicorn (--proxy-headers, the
+    default, with --forwarded-allow-ips 127.0.0.1) already rewrites the
+    scheme from X-Forwarded-Proto for a loopback proxy, so request.url.scheme
+    is normally enough; the header check is belt-and-braces for a proxy
+    setup that doesn't get that far. A forged header can only ever add an
+    HSTS header to a plain-http response, which browsers ignore."""
+    return (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto", "").lower() == "https"
+    )
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
-        return _apply_security_headers(response)
+        return _apply_security_headers(response, secure=_is_secure(request))
+
+
+# Hosts this app will answer for. The app binds loopback and is reached
+# through a TLS proxy (see README's "Reaching it over HTTPS"), so the Host
+# header is whatever name that proxy serves -- list it in APP_ALLOWED_HOSTS.
+# localhost/127.0.0.1 are always allowed: scripts/redeploy.sh and
+# mini-brew-upgrade.sh curl /health that way, and so does local development.
+# Anything else gets a 400 before any route runs, which closes the usual
+# Host-header tricks (password-reset-style link poisoning doesn't apply here,
+# but DNS rebinding and cache-key confusion do). require_same_origin
+# (app/auth.py) also compares Origin against Host, so a Host the app doesn't
+# recognise must never reach it.
+_ALWAYS_ALLOWED_HOSTS = ("localhost", "127.0.0.1")
+
+
+def _allowed_hosts() -> list[str]:
+    configured = {
+        h.strip().lower()
+        for h in os.environ.get("APP_ALLOWED_HOSTS", "").split(",")
+        if h.strip()
+    }
+    return sorted(configured | set(_ALWAYS_ALLOWED_HOSTS))
 
 
 # docs/redoc/openapi are disabled: they sit outside the require_admin routers
@@ -90,6 +137,10 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+# Middleware order: the last one added is the outermost. Security headers go
+# outermost so even a TrustedHost 400 carries them; TrustedHost sits just
+# inside so an unknown Host never reaches auth, routing, or the DB.
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts())
 app.add_middleware(SecurityHeadersMiddleware)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(assets.router)
