@@ -3,10 +3,29 @@
 ## Scope and context
 
 This is a self-hosted home asset- and vulnerability-management application. It
-is designed to run on a trusted LAN behind HTTP Basic auth, not to be exposed to
-the public internet (see the README's deployment notes). That deployment model
-is part of its security posture: several controls assume the network boundary is
-doing real work.
+is designed to run on your own network, not to be exposed to the public
+internet (see the README's deployment notes). The app itself listens on
+loopback only, behind HTTP Basic auth, and is reached through a TLS proxy on
+the same host (Tailscale Serve, or Caddy); it answers only for the hostnames
+you configure. That deployment model is part of its security posture: several
+controls assume the network boundary and the TLS layer are doing real work.
+
+## Known, accepted limitations
+
+Found by the project's own security audit and left as they are, on purpose --
+reports about them are welcome if you think the reasoning is wrong:
+
+- `/health` is unauthenticated and reports backup freshness. It is the deploy
+  and liveness gate for `scripts/redeploy.sh` and launchd, which cannot
+  present credentials; with the app on loopback it is not reachable from
+  the network except through the proxy you configured.
+- Discovery runs (`/discovery/run/*`) execute synchronously inside the
+  request, and list pages have no pagination. A single admin user can tie
+  up a worker for the length of an nmap scan; only that user can trigger it.
+- The CSRF guard admits an unsafe-method request that carries none of
+  `Sec-Fetch-Site`, `Origin` or `Referer` -- the shape of a bare API client.
+  Every current browser sends `Sec-Fetch-Site` on a cross-site request, so
+  the residual exposure is a browser old enough to send none of the three.
 
 ## Reporting a vulnerability
 

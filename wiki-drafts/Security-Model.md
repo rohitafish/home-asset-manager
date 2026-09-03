@@ -163,6 +163,13 @@ by hand.
   Treat findings as a starting point to investigate, not a certified report.
 - Not multi-user or role-based. It's a single shared admin credential for a
   household, by design.
+- Not free of accepted limitations. Three are known and left as they are:
+  `/health` is unauthenticated (the deploy/liveness gate; loopback-only now);
+  discovery runs execute synchronously inside the request and list pages have
+  no pagination (only the one admin can trigger them); and the CSRF guard
+  admits a request carrying none of `Sec-Fetch-Site`/`Origin`/`Referer`, the
+  shape of a bare API client, which only a browser old enough to send none of
+  the three could be made to produce. See SECURITY.md.
 
 ## Reporting a vulnerability
 

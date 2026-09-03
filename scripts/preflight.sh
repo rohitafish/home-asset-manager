@@ -19,6 +19,16 @@ cd "$REPO_DIR"
 FAILS=0
 WARNS=0
 
+# Scratch logs for the pytest/ruff runs below. mktemp, not fixed /tmp names:
+# a predictable path in a shared directory is a symlink target for any other
+# account on the machine. Kept when something FAILs (the messages point at
+# them), removed on a clean run.
+PREFLIGHT_TMP="$(mktemp -d -t assetmgt-preflight)"
+PYTEST_LOG="$PREFLIGHT_TMP/pytest.log"
+RUFF_LOG="$PREFLIGHT_TMP/ruff.log"
+_discard_logs_if_clean() { [ "$FAILS" -eq 0 ] && rm -rf "$PREFLIGHT_TMP"; }
+trap _discard_logs_if_clean EXIT
+
 ok()   { printf '  ok    %s\n' "$1"; }
 warn() { printf '  WARN  %s\n' "$1"; WARNS=$((WARNS + 1)); }
 fail() { printf '  FAIL  %s\n' "$1"; FAILS=$((FAILS + 1)); }
@@ -106,26 +116,24 @@ echo "== Tests =="
 # .coveragerc's `source =` paths resolve correctly with no extra handling.
 if [ -x "$REPO_DIR/.venv/bin/coverage" ]; then
   if [ -x "$REPO_DIR/.venv/bin/pytest" ]; then
-    if "$REPO_DIR/.venv/bin/coverage" run -m pytest -q >/tmp/assetmgt-preflight-pytest.log 2>&1; then
-      if "$REPO_DIR/.venv/bin/coverage" report >>/tmp/assetmgt-preflight-pytest.log 2>&1; then
-        ok "pytest suite passes, coverage above threshold ($(tail -1 /tmp/assetmgt-preflight-pytest.log))"
+    if "$REPO_DIR/.venv/bin/coverage" run -m pytest -q >"$PYTEST_LOG" 2>&1; then
+      if "$REPO_DIR/.venv/bin/coverage" report >>"$PYTEST_LOG" 2>&1; then
+        ok "pytest suite passes, coverage above threshold ($(tail -1 "$PYTEST_LOG"))"
       else
-        fail "coverage dropped below the .coveragerc fail_under threshold -- see /tmp/assetmgt-preflight-pytest.log"
+        fail "coverage dropped below the .coveragerc fail_under threshold -- see $PYTEST_LOG"
       fi
     else
-      fail "pytest suite failed -- see /tmp/assetmgt-preflight-pytest.log"
+      fail "pytest suite failed -- see $PYTEST_LOG"
     fi
-    rm -f /tmp/assetmgt-preflight-pytest.log
   else
     warn "pytest not installed in .venv -- run: source .venv/bin/activate && pip install -r requirements-dev.txt"
   fi
 elif [ -x "$REPO_DIR/.venv/bin/pytest" ]; then
-  if "$REPO_DIR/.venv/bin/pytest" -q >/tmp/assetmgt-preflight-pytest.log 2>&1; then
-    ok "pytest suite passes ($(tail -1 /tmp/assetmgt-preflight-pytest.log))"
+  if "$REPO_DIR/.venv/bin/pytest" -q >"$PYTEST_LOG" 2>&1; then
+    ok "pytest suite passes ($(tail -1 "$PYTEST_LOG"))"
   else
-    fail "pytest suite failed -- see /tmp/assetmgt-preflight-pytest.log"
+    fail "pytest suite failed -- see $PYTEST_LOG"
   fi
-  rm -f /tmp/assetmgt-preflight-pytest.log
   warn "coverage not installed in .venv -- ran pytest without the coverage gate (run: source .venv/bin/activate && pip install -r requirements-dev.txt)"
 else
   warn "pytest not installed in .venv -- run: source .venv/bin/activate && pip install -r requirements-dev.txt"
@@ -136,12 +144,11 @@ echo "== Lint =="
 # Same dev-only-tooling reasoning as == Tests == above: missing ruff is a
 # WARN, a real lint failure is a FAIL, regardless of which host this runs on.
 if [ -x "$REPO_DIR/.venv/bin/ruff" ]; then
-  if "$REPO_DIR/.venv/bin/ruff" check "$REPO_DIR" --cache-dir "$REPO_DIR/.ruff_cache" >/tmp/assetmgt-preflight-ruff.log 2>&1; then
+  if "$REPO_DIR/.venv/bin/ruff" check "$REPO_DIR" --cache-dir "$REPO_DIR/.ruff_cache" >"$RUFF_LOG" 2>&1; then
     ok "ruff check passes"
   else
-    fail "ruff check failed -- see /tmp/assetmgt-preflight-ruff.log"
+    fail "ruff check failed -- see $RUFF_LOG"
   fi
-  rm -f /tmp/assetmgt-preflight-ruff.log
 else
   warn "ruff not installed in .venv -- run: source .venv/bin/activate && pip install -r requirements-dev.txt"
 fi

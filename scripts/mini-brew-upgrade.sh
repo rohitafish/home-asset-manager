@@ -96,17 +96,20 @@ fi
 # trap into exactly this window. A few short retries ride it out without
 # guessing a fixed sleep long enough for every case.
 bootstrap_app() {
-  local i
+  local i err
+  # mktemp, not a fixed /tmp name: a predictable path in a shared directory
+  # is a symlink target for any other account on the machine.
+  err="$(mktemp -t mini-brew-upgrade-bootstrap)"
   for i in 1 2 3 4 5; do
-    if launchctl bootstrap "gui/$(id -u)" "$APP_PLIST" 2>/tmp/mini-brew-upgrade-bootstrap.err; then
-      rm -f /tmp/mini-brew-upgrade-bootstrap.err
+    if launchctl bootstrap "gui/$(id -u)" "$APP_PLIST" 2>"$err"; then
+      rm -f "$err"
       return 0
     fi
     sleep 0.5
   done
   echo "!!! launchctl bootstrap failed after retries:" >&2
-  cat /tmp/mini-brew-upgrade-bootstrap.err >&2 2>/dev/null || true
-  rm -f /tmp/mini-brew-upgrade-bootstrap.err
+  cat "$err" >&2 2>/dev/null || true
+  rm -f "$err"
   return 1
 }
 

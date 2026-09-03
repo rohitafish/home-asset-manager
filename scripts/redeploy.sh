@@ -6,6 +6,15 @@ set -euo pipefail
 
 HOST="${DEPLOY_HOST:-mini}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-~/claudecode/assetmgt}"
+# $REMOTE_DIR is interpolated into remote command strings below on purpose
+# (so `~` expands on the Mini), which means it must never carry anything a
+# shell would interpret. A path is letters, digits and _ . / ~ - ; refuse
+# the rest up front rather than quoting every use site and losing `~`.
+case "$REMOTE_DIR" in
+  ''|*[!A-Za-z0-9_./~-]*)
+    echo "!!! DEPLOY_REMOTE_DIR contains characters outside [A-Za-z0-9_./~-] -- refusing to hand it to a remote shell." >&2
+    exit 2 ;;
+esac
 LOCAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "==> Pre-flight checks"
