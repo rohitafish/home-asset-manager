@@ -517,15 +517,28 @@ none of the user's LaunchAgents started yet), and it needs to call `shutdown`
 directly. That means it installs differently: to `/Library/LaunchDaemons`,
 with `sudo`, not `~/Library/LaunchAgents`.
 
+Because it runs as root, **nothing it executes may be writable by your user**.
+The daemon therefore runs a root-owned *copy* of the script from
+`/usr/local/libexec/assetmgt/`, never the one in this checkout, and its
+`PATH` is the system directories only (`/opt/homebrew/bin` is owned by your
+user on Apple silicon -- a root process that searched it first would run
+whatever you, or anything running as you, dropped there). There is no
+`__ASSETMGT_DIR__` placeholder in this plist for the same reason.
+
 ```bash
 cd ~/claudecode/assetmgt
+sudo install -d -o root -g wheel -m 755 /usr/local/libexec/assetmgt
+sudo install -o root -g wheel -m 755 scripts/ups-shutdown.sh /usr/local/libexec/assetmgt/ups-shutdown.sh
 sudo cp scripts/com.assetmgt.upsmonitor.plist /Library/LaunchDaemons/
-sudo sed -i '' "s|__ASSETMGT_DIR__|$(pwd)|g" /Library/LaunchDaemons/com.assetmgt.upsmonitor.plist
 sudo launchctl load /Library/LaunchDaemons/com.assetmgt.upsmonitor.plist
 ```
 
 (If a previous version is already loaded, `sudo launchctl unload` it first --
-same reasoning as the other three plists' install steps.)
+same reasoning as the other three plists' install steps.) **After any edit to
+`scripts/ups-shutdown.sh`, re-run the `sudo install` line** -- `redeploy.sh`
+syncs the checkout, not the root-owned copy, and `scripts/preflight.sh` warns
+when the two have drifted (and FAILs if the installed copy is writable by
+anyone but root, or the daemon still points into the checkout).
 
 Verify it the same way as the backup agent -- run it once exactly as launchd
 will, rather than trusting a manual `bash scripts/ups-shutdown.sh` run under

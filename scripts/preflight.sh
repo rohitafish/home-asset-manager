@@ -308,6 +308,43 @@ else
   ok "no passwordless nmap sudoers rule"
 fi
 
+# The UPS LaunchDaemon runs as root every 60s. It must execute a root-owned
+# copy of scripts/ups-shutdown.sh (not the one in this user-writable
+# checkout) with a PATH that never searches a user-owned directory. See
+# README's "Running the Mini headless".
+UPSMONITOR_PLIST="/Library/LaunchDaemons/com.assetmgt.upsmonitor.plist"
+UPS_INSTALLED_SCRIPT="/usr/local/libexec/assetmgt/ups-shutdown.sh"
+if [ -f "$UPSMONITOR_PLIST" ]; then
+  if grep -q '__ASSETMGT_DIR__' "$UPSMONITOR_PLIST" || grep -q "$REPO_DIR/scripts/ups-shutdown.sh" "$UPSMONITOR_PLIST"; then
+    fail "$UPSMONITOR_PLIST runs the script out of this checkout -- root executing a user-writable file. Re-install from the current template (README, \"Running the Mini headless\"): it must point at $UPS_INSTALLED_SCRIPT"
+  elif ! grep -q "$UPS_INSTALLED_SCRIPT" "$UPSMONITOR_PLIST"; then
+    warn "$UPSMONITOR_PLIST does not point at $UPS_INSTALLED_SCRIPT -- an unexpected ProgramArguments; compare it with scripts/com.assetmgt.upsmonitor.plist"
+  else
+    ok "com.assetmgt.upsmonitor runs the installed root-owned copy, not the checkout"
+  fi
+  if grep -q '/opt/homebrew' "$UPSMONITOR_PLIST"; then
+    fail "$UPSMONITOR_PLIST puts a Homebrew directory on root's PATH -- /opt/homebrew/bin is user-owned, so root would run whatever this user drops there. Re-install from the current template."
+  else
+    ok "com.assetmgt.upsmonitor PATH is system directories only"
+  fi
+  if [ -f "$UPS_INSTALLED_SCRIPT" ]; then
+    OWNER="$(stat -f%Su "$UPS_INSTALLED_SCRIPT" 2>/dev/null || stat -c%U "$UPS_INSTALLED_SCRIPT" 2>/dev/null || true)"
+    MODE="$(stat -f%OLp "$UPS_INSTALLED_SCRIPT" 2>/dev/null || stat -c%a "$UPS_INSTALLED_SCRIPT" 2>/dev/null || true)"
+    if [ "$OWNER" != "root" ] || [ -z "$MODE" ] || [ $((8#$MODE & 8#022)) -ne 0 ]; then
+      fail "$UPS_INSTALLED_SCRIPT is owner=$OWNER mode=$MODE -- root runs it, so it must be root-owned and writable by nobody else: sudo install -o root -g wheel -m 755 scripts/ups-shutdown.sh $UPS_INSTALLED_SCRIPT"
+    else
+      ok "$UPS_INSTALLED_SCRIPT is root-owned and not writable by others"
+    fi
+    if cmp -s "$UPS_INSTALLED_SCRIPT" "$REPO_DIR/scripts/ups-shutdown.sh"; then
+      ok "installed ups-shutdown.sh matches scripts/ups-shutdown.sh"
+    else
+      warn "installed $UPS_INSTALLED_SCRIPT differs from scripts/ups-shutdown.sh -- redeploy.sh does not update the root-owned copy. Re-run: sudo install -o root -g wheel -m 755 scripts/ups-shutdown.sh $UPS_INSTALLED_SCRIPT"
+    fi
+  else
+    fail "$UPSMONITOR_PLIST is installed but $UPS_INSTALLED_SCRIPT is missing -- the daemon can't run. Install it: sudo install -d -o root -g wheel -m 755 /usr/local/libexec/assetmgt && sudo install -o root -g wheel -m 755 scripts/ups-shutdown.sh $UPS_INSTALLED_SCRIPT"
+  fi
+fi
+
 echo
 echo "== Headless / UPS posture =="
 # These settings have no other visible symptom when they silently regress --
@@ -315,13 +352,8 @@ echo "== Headless / UPS posture =="
 # daemon looks identical to a working one right up until the Mini reboots
 # and there's no way back in. See README's "Running the Mini headless" and
 # "Power outages and unattended restart".
-UPSMONITOR_PLIST="/Library/LaunchDaemons/com.assetmgt.upsmonitor.plist"
 if [ -f "$UPSMONITOR_PLIST" ]; then
-  if grep -q '__ASSETMGT_DIR__' "$UPSMONITOR_PLIST"; then
-    fail "$UPSMONITOR_PLIST still has the unsubstituted __ASSETMGT_DIR__ placeholder -- launchd fails to spawn it with no visible error. Re-run the sed step from README."
-  else
-    ok "com.assetmgt.upsmonitor is installed"
-  fi
+  ok "com.assetmgt.upsmonitor is installed (its privilege posture is checked under \"Privilege boundaries\" above)"
   if command -v launchctl >/dev/null 2>&1 && launchctl print system/com.assetmgt.upsmonitor >/dev/null 2>&1; then
     ok "com.assetmgt.upsmonitor is loaded"
   else

@@ -43,7 +43,11 @@ assistant or human contributor.
   `com.assetmgt.upsmonitor.plist` is the one exception to "`~/Library/
   LaunchAgents`" in that sentence -- it's a LaunchDaemon and installs to
   `/Library/LaunchDaemons` with `sudo`, see README's "Running the Mini
-  headless".
+  headless". It runs as root, so it executes a root-owned copy of
+  `scripts/ups-shutdown.sh` under `/usr/local/libexec/assetmgt/` (no
+  `__ASSETMGT_DIR__` sed step for this one); an edit to that script needs
+  the `sudo install` line from the README re-run on the Mini, or the daemon
+  keeps running the old copy.
 - The Mini runs headless (no display or keyboard attached) with FileVault
   **on** and auto-login **off** -- deliberately, and don't propose disabling
   either. `~/Library/LaunchAgents` (the app, Colima, backups) lives on the
