@@ -4,7 +4,7 @@
 <div class="toolbar">
   <h2>{{ location.name }}</h2>
   <form method="post" action="/locations/{{ location.id }}/delete" style="display:inline"
-        onsubmit="return confirm('Delete this location? Only works if no assets are assigned to it.')">
+        data-confirm='Delete this location? Only works if no assets are assigned to it.'>
     <button type="submit" class="danger">Delete</button>
   </form>
 </div>

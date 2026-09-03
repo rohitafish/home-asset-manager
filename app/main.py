@@ -17,23 +17,22 @@ from app.routers import assets, dashboard
 # routers -- /health is unauthenticated by design (redeploy.sh's deploy gate,
 # launchd), and these are cheap insurance regardless of auth state.
 #
-# script-src/style-src keep 'unsafe-inline': the templates have a handful of
-# inline onclick/onchange/onsubmit handlers (form auto-submit on filter
-# change, delete/clear confirm() dialogs) and no external stylesheet. Moving
-# those into app/static/ would allow dropping 'unsafe-inline' from script-src,
-# but there's no untrusted-HTML rendering path for it to actually defend
-# against here -- the only |safe template output is the app's own README
-# (see app/readme_render.py's SECURITY INVARIANT comment), and htmx is
-# self-hosted (app/static/htmx.min.js), not pulled from a CDN. What this CSP
-# does earn regardless of 'unsafe-inline': no *externally hosted* script can
-# load, no framing, no <base> tag hijack, no form POST to another origin.
+# script-src is 'self' with NO 'unsafe-inline': the templates' former inline
+# onclick/onchange/onsubmit handlers live in app/static/dashboard.js now, and
+# htmx is self-hosted (app/static/htmx.min.js). So no inline script anywhere
+# in a page executes, which is what makes any future escaping slip -- or the
+# README render, the one |safe output, which is sanitised regardless (see
+# app/readme_render.py) -- a non-event for script execution. style-src keeps
+# 'unsafe-inline' for the templates' style="display:inline" attributes; a CSS
+# injection can't run code. tests/test_main.py pins both, and that no
+# template has grown an inline handler back.
 #
 # frame-ancestors 'none' supersedes X-Frame-Options in every browser this
 # dashboard is used from, so only one of the two is set.
 _SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "frame-ancestors 'none'; "

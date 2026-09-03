@@ -3,7 +3,7 @@
 {% block content %}
 <h2>Vulnerability Register</h2>
 <form method="get" class="filters">
-  <select name="status" onchange="this.form.submit()">
+  <select name="status" data-autosubmit>
     <option value="">All statuses</option>
     {% for s in finding_statuses %}
       <option value="{{ s }}" {% if s == status_filter %}selected{% endif %}>{{ s }}</option>
@@ -43,7 +43,7 @@
       <td>{{ f.status.value }}</td>
       <td>
         <form method="post" action="/findings/{{ f.id }}/status">
-          <select name="status" onchange="this.form.submit()">
+          <select name="status" data-autosubmit>
             {% for s in finding_statuses %}
               <option value="{{ s }}" {% if s == f.status.value %}selected{% endif %}>{{ s }}</option>
             {% endfor %}
