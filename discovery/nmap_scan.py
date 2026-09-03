@@ -19,6 +19,8 @@ shells out to the `nmap` binary rather than depending on python-nmap so the
 exact command run is explicit and auditable.
 """
 
+import ipaddress
+import logging
 import shutil
 import subprocess
 import sys
@@ -26,9 +28,29 @@ import xml.etree.ElementTree as ET  # Element type for annotations only
 
 from defusedxml.ElementTree import fromstring  # safe parse of nmap's XML output
 
+logger = logging.getLogger(__name__)
+
 
 class NmapNotFoundError(RuntimeError):
     pass
+
+
+def _ipv4_only(values) -> list[str]:
+    """The subset of `values` that parse as IPv4 literals, in order.
+
+    Everything that reaches nmap's argv from outside this module -- the
+    addresses parsed back out of the previous scan's XML -- goes through
+    here first. No shell is involved, but nmap reads its own argv: a value
+    beginning with `-` would be taken as an option, and a hostname would
+    trigger a DNS lookup this module never intends. Drop and log rather
+    than raise; one odd address shouldn't abort a whole sweep."""
+    kept = []
+    for value in values:
+        try:
+            kept.append(str(ipaddress.IPv4Address(value)))
+        except (ipaddress.AddressValueError, ValueError, TypeError):
+            logger.warning("nmap: dropping non-IPv4 scan target %r", value)
+    return kept
 
 
 def _require_nmap() -> str:
@@ -187,7 +209,7 @@ def discover_network(
 ) -> list[dict]:
     """Full two-phase discovery: ping sweep, then service scan on hosts up."""
     up_hosts = ping_sweep(subnets, use_sudo=use_sudo)
-    ips = [h["ip"] for h in up_hosts if h["ip"]]
+    ips = _ipv4_only(h["ip"] for h in up_hosts if h["ip"])
     scanned = service_scan(ips, top_ports=top_ports, use_sudo=use_sudo)
     scanned_by_ip = {h["ip"]: h for h in scanned if h["ip"]}
 

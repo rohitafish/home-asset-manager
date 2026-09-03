@@ -19,6 +19,7 @@ from app.main import (
     _is_secure,
     fail_orphaned_discovery_runs,
     require_admin_password_configured,
+    require_database_url_configured,
 )
 from app.models import DiscoveryRun
 
@@ -160,6 +161,28 @@ def test_starts_with_a_real_password_configured(monkeypatch):
     monkeypatch.setenv("APP_ADMIN_PASSWORD", "a-real-password")
 
     require_admin_password_configured()  # must not raise
+
+
+def test_refuses_to_start_without_a_database_url(monkeypatch):
+    """app/db.py's fallback URL carries no credentials any more (it used to
+    embed the docker-compose dev password); a booted instance must be on a
+    configured URL, not the placeholder."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(RuntimeError, match="DATABASE_URL"):
+        require_database_url_configured()
+
+
+def test_starts_with_a_database_url_configured(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
+    require_database_url_configured()
+
+
+def test_db_fallback_url_carries_no_credentials():
+    import re
+    from pathlib import Path
+
+    source = Path("app/db.py").read_text()
+    assert not re.search(r"://[^/\s\"']+:[^/\s\"']+@", source), "a user:password@ URL is back in app/db.py"
 
 
 def test_orphaned_running_discovery_runs_are_failed_on_startup(engine, monkeypatch):
