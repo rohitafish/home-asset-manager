@@ -102,6 +102,13 @@ rsync -avz --delete \
   --exclude='.claude' \
   -e ssh "$LOCAL_DIR/" "$HOST:$REMOTE_DIR/"
 
+# rsync recreates devices/ (real vendor-account serials) and .pii-denylist
+# (real names) with whatever mode they have here, and neither is a secret
+# in the credential sense so nothing else tightens them. Owner-only on the
+# Mini regardless of the local state; backups/ is created by backup-db.sh
+# itself (umask 077) and excluded above.
+ssh "$HOST" "cd $REMOTE_DIR && { [ ! -d devices ] || { chmod 700 devices && find devices -type f -exec chmod 600 {} +; }; } && { [ ! -f .pii-denylist ] || chmod 600 .pii-denylist; }"
+
 echo "==> Recording the deployed tree in the Mini's git"
 # rsync deploys a working *tree*, not a commit, so the only truthful record of
 # what's now running on the Mini is a commit of that tree. Capture it on a

@@ -254,6 +254,28 @@ else
   fail ".env does not exist -- cp .env.example .env, then fill it in by hand (see README)"
 fi
 
+# Other local files holding real data. Not secrets in the credential sense,
+# but a full database dump, the vendor-account serials, and the list of real
+# names the PII scanner looks for shouldn't be readable by every account and
+# process on the machine either. WARN, not FAIL: the default umask leaves
+# them 644 and older checkouts will have them that way.
+_mode_of() { stat -f%OLp "$1" 2>/dev/null || stat -c%a "$1" 2>/dev/null || true; }
+for sensitive in .pii-denylist devices backups; do
+  target="$REPO_DIR/$sensitive"
+  [ -e "$target" ] || continue
+  mode="$(_mode_of "$target")"
+  [ -n "$mode" ] || continue
+  if [ $((8#$mode & 8#077)) -ne 0 ]; then
+    if [ -d "$target" ]; then
+      warn "$sensitive/ is mode $mode -- it holds real inventory data: chmod 700 $sensitive && chmod 600 $sensitive/*"
+    else
+      warn "$sensitive is mode $mode -- it holds real names: chmod 600 $sensitive"
+    fi
+  else
+    ok "$sensitive is owner-only"
+  fi
+done
+
 echo
 echo "== Postgres =="
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
