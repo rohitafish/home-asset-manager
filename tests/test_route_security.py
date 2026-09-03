@@ -174,3 +174,20 @@ def test_no_route_runs_anything_as_root():
         assert "privileged" not in path and "sudo" not in path, (
             f"{method} {path} ({label}) looks like a privileged-execution route"
         )
+
+
+def test_unknown_host_header_is_rejected_before_auth(app_with_session):
+    """TrustedHostMiddleware sits outside the routers. A request for a Host
+    the app doesn't serve (DNS rebinding: a hostile page's domain re-pointed
+    at the Mini's IP) is refused with a 400 -- no 401, no WWW-Authenticate
+    challenge, no route code, no DB. localhost/127.0.0.1 are always allowed;
+    the proxy's name comes from APP_ALLOWED_HOSTS (see app/main.py)."""
+    from fastapi.testclient import TestClient
+
+    evil = TestClient(app_with_session, base_url="http://evil.example")
+    response = evil.get("/assets")
+    assert response.status_code == 400
+    assert "WWW-Authenticate" not in response.headers
+
+    loopback = TestClient(app_with_session, base_url="http://127.0.0.1")
+    assert loopback.get("/health").status_code == 200

@@ -108,3 +108,24 @@ def test_script_calls_the_expected_absolute_binaries():
     assert all("brew shellenv" in line for line in [body[body.index(c) - 40:body.index(c) + 40] for c in root_calls]), (
         "the only Homebrew path the script may touch is `brew shellenv` inside the su -c string"
     )
+
+
+def test_app_agent_binds_loopback_behind_a_proxy():
+    """HTTP Basic sends the password on every request. The app is never bound
+    to a LAN interface in the clear: it listens on loopback and a TLS proxy on
+    the same host (Tailscale Serve / Caddy) fronts it. proxy-headers with a
+    loopback-only trust list is what keeps the login throttle keyed on the
+    real client rather than on the proxy's 127.0.0.1."""
+    args = _load(SCRIPTS / "com.assetmgt.app.plist")["ProgramArguments"]
+    assert args[args.index("--host") + 1] == "127.0.0.1"
+    assert "0.0.0.0" not in args
+    assert "--proxy-headers" in args
+    assert args[args.index("--forwarded-allow-ips") + 1] == "127.0.0.1"
+
+
+@pytest.mark.parametrize("plist", sorted(SCRIPTS.glob("*.plist")), ids=lambda p: p.name)
+def test_every_plist_is_well_formed_xml(plist):
+    """launchd and plutil tolerate `--` inside an XML comment; strict parsers
+    (plistlib, and therefore the tests above) do not. Parse each template so
+    a doc edit can't silently make a plist un-inspectable."""
+    assert "Label" in _load(plist)

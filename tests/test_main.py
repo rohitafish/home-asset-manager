@@ -14,7 +14,9 @@ from fastapi import Response
 from sqlmodel import Session, select
 
 from app.main import (
+    _allowed_hosts,
     _apply_security_headers,
+    _is_secure,
     fail_orphaned_discovery_runs,
     require_admin_password_configured,
 )
@@ -54,6 +56,60 @@ def test_csp_permits_self_hosted_inline_script_and_style():
     csp = _apply_security_headers(Response()).headers["Content-Security-Policy"]
     assert "script-src 'self' 'unsafe-inline'" in csp
     assert "style-src 'self' 'unsafe-inline'" in csp
+
+
+def test_hsts_only_on_a_secure_response():
+    """HTTP Basic carries the password on every request, so the app is meant
+    to be reached over TLS (README, "Reaching it over HTTPS"). HSTS pins the
+    browser to https once it has seen it -- but a browser ignores the header
+    on a plain-http response, and sending it there would only mislead anyone
+    reading the headers into thinking the transport was covered."""
+    plain = _apply_security_headers(Response())
+    assert "Strict-Transport-Security" not in plain.headers
+
+    secure = _apply_security_headers(Response(), secure=True)
+    assert secure.headers["Strict-Transport-Security"] == "max-age=31536000"
+    assert "preload" not in secure.headers["Strict-Transport-Security"]
+
+
+def _request(scheme="http", headers=None):
+    from starlette.requests import Request
+
+    raw_headers = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    return Request({"type": "http", "method": "GET", "scheme": scheme, "path": "/",
+                    "headers": raw_headers, "query_string": b"", "server": ("localhost", 80)})
+
+
+def test_is_secure_from_scheme_or_forwarded_proto():
+    assert _is_secure(_request(scheme="https"))
+    assert _is_secure(_request(headers={"X-Forwarded-Proto": "HTTPS"}))
+    assert not _is_secure(_request())
+    assert not _is_secure(_request(headers={"X-Forwarded-Proto": "http"}))
+
+
+def test_allowed_hosts_always_include_loopback(monkeypatch):
+    """scripts/redeploy.sh and mini-brew-upgrade.sh curl /health as
+    127.0.0.1; local development uses localhost. Neither should depend on
+    someone remembering to list them."""
+    monkeypatch.delenv("APP_ALLOWED_HOSTS", raising=False)
+    assert _allowed_hosts() == ["127.0.0.1", "localhost"]
+
+
+def test_allowed_hosts_adds_the_configured_proxy_names(monkeypatch):
+    monkeypatch.setenv("APP_ALLOWED_HOSTS", " Mini.tail1234.ts.net, assets.home ,,")
+    assert _allowed_hosts() == ["127.0.0.1", "assets.home", "localhost", "mini.tail1234.ts.net"]
+
+
+def test_allowed_hosts_default_is_not_a_wildcard(monkeypatch):
+    """Starlette treats "*" as allow-everything. An operator can still put
+    that in APP_ALLOWED_HOSTS deliberately; what this pins is that an unset
+    or blank variable never quietly means "answer for anyone"."""
+    for value in (None, "", " , ,"):
+        if value is None:
+            monkeypatch.delenv("APP_ALLOWED_HOSTS", raising=False)
+        else:
+            monkeypatch.setenv("APP_ALLOWED_HOSTS", value)
+        assert "*" not in _allowed_hosts()
 
 
 def test_does_not_also_set_x_frame_options():

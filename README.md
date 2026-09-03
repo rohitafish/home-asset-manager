@@ -277,11 +277,57 @@ sed -i '' "s|__ASSETMGT_DIR__|$(pwd)|g" ~/Library/LaunchAgents/com.assetmgt.app.
 launchctl load ~/Library/LaunchAgents/com.assetmgt.app.plist
 ```
 
-This binds uvicorn to `0.0.0.0:8000`, making the dashboard reachable from any
-device on your home LAN at `http://<mac-lan-ip>:8000`. **Do not forward this
-port on your router** — reachability should stop at your home network
-boundary. The app requires HTTP Basic auth (`APP_ADMIN_USER`/
-`APP_ADMIN_PASSWORD` from `.env`) regardless, as a second layer.
+This binds uvicorn to **loopback only** (`127.0.0.1:8000`). Nothing on the
+LAN can reach it directly, on purpose: the app uses HTTP Basic auth
+(`APP_ADMIN_USER`/`APP_ADMIN_PASSWORD` from `.env`), which puts the password
+on every request, and the inventory it serves (serials, purchase prices,
+uploaded receipts) is exactly the kind of thing that shouldn't cross a home
+network in the clear -- the same network whose IoT devices this app
+catalogues CVEs for. To use it from other devices, put a TLS terminator in
+front of it on the same host: see "Reaching it over HTTPS" just below. **Do
+not forward any port to it on your router** -- reachability should stop at
+your home network (or tailnet) boundary.
+
+The plist also passes `--proxy-headers --forwarded-allow-ips 127.0.0.1`, so
+the loopback proxy can hand the real client IP and scheme through: the
+per-client login throttle then keys on the actual visitor instead of
+collapsing everyone into `127.0.0.1` (where one attacker's failures would
+lock you out too), and the app can send `Strict-Transport-Security` on
+https responses. Only loopback is trusted for those headers.
+
+### Reaching it over HTTPS
+
+The app answers only for `localhost`, `127.0.0.1`, and whatever you list in
+`APP_ALLOWED_HOSTS` in `.env` -- any other `Host` header gets a `400` before
+auth or routing run. So whichever option below you pick, add the name it
+serves to `APP_ALLOWED_HOSTS` and restart the app.
+
+**Recommended: Tailscale Serve.** Nothing listens on the LAN at all; the
+dashboard is reachable only from devices on your tailnet, over a real
+certificate Tailscale issues for the Mini's tailnet name.
+
+```bash
+brew install tailscale && sudo tailscale up      # once; sign in
+tailscale cert --help >/dev/null                 # HTTPS certs need MagicDNS + HTTPS enabled in the admin console, once
+tailscale serve --bg 8000                        # https://<mini>.<tailnet>.ts.net -> 127.0.0.1:8000
+tailscale serve status
+```
+
+Then `APP_ALLOWED_HOSTS=<mini>.<tailnet>.ts.net` in `.env`, and
+`launchctl kickstart -k gui/$(id -u)/com.assetmgt.app`. `tailscale serve`
+persists across reboots on its own. Don't use `tailscale funnel` -- that is
+the public internet.
+
+**Alternative: Caddy on the LAN.** For devices that can't run Tailscale.
+`brew install caddy`, copy `scripts/Caddyfile.example` to
+`/opt/homebrew/etc/Caddyfile`, set the hostname in it and in
+`APP_ALLOWED_HOSTS`, point that name at the Mini (router DNS or `/etc/hosts`),
+and `brew services start caddy`. It uses Caddy's internal CA (`tls internal`);
+trust that root certificate once per client device or browsers will warn.
+Caddy runs as your user, not root, and only ever proxies to loopback.
+
+Either way, `scripts/preflight.sh` FAILs if the installed app plist still
+binds `0.0.0.0`, and warns if `APP_ALLOWED_HOSTS` is missing from `.env`.
 
 **The app refuses to start if `APP_ADMIN_PASSWORD` is unset or still the
 `.env.example` placeholder `change-me`** -- an empty expected password isn't

@@ -288,6 +288,9 @@ for label in app logrotate backup; do
     else
       ok "com.assetmgt.$label is installed"
     fi
+    if [ "$label" = app ] && grep -q '0\.0\.0\.0' "$plist"; then
+      fail "$plist binds uvicorn to 0.0.0.0 -- HTTP Basic credentials and the whole inventory cross the LAN in the clear. Re-install from the current scripts/com.assetmgt.app.plist (loopback) and front it with TLS: README's \"Reaching it over HTTPS\""
+    fi
   else
     warn "com.assetmgt.$label is not installed (~/Library/LaunchAgents/com.assetmgt.$label.plist not found)"
   fi
