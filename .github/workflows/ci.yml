@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly as well, so a newly published advisory against a pinned
+  # dependency turns the badge red on its own (the pip-audit step below)
+  # instead of waiting for the next push to notice it.
+  schedule:
+    - cron: '23 6 * * 1'
 
 # Explicit, minimal token permissions: this workflow only reads the repo and
 # runs tests/lint/the PII scan -- it never needs to write anything. Currently
@@ -31,7 +36,26 @@ jobs:
             requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-dev.txt
+        # --require-hashes: requirements*.txt are pip-compile lockfiles with a
+        # sha256 for every wheel, so this installs exactly the bytes that were
+        # tested -- a substituted release fails here rather than running. pip
+        # itself is pinned first because it isn't in the lock (pip can't
+        # hash-verify its own upgrade) and the runner's copy has had its own
+        # advisories.
+        run: |
+          pip install pip==26.2.1
+          pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+
+      - name: Dependency vulnerability audit (pip-audit)
+        # Audits the lockfiles themselves against PyPI's advisory database
+        # (OSV/PyPA). --no-deps because the files are fully pinned and hashed,
+        # so there's nothing to resolve; --strict fails on any finding, and on
+        # a dependency it can't find in the index. pipx keeps pip-audit's own
+        # dependencies out of the environment being audited.
+        run: >
+          pipx run --spec pip-audit==2.10.1 pip-audit
+          --strict --desc on --require-hashes --no-deps
+          -r requirements.txt -r requirements-dev.txt
 
       - name: Lint (ruff)
         run: ruff check .
@@ -99,7 +123,9 @@ jobs:
       - name: Install dependencies
         # requirements.txt only -- alembic/sqlmodel/psycopg live there, not
         # in requirements-dev.txt, and this job doesn't run pytest/ruff.
-        run: pip install -r requirements.txt
+        run: |
+          pip install pip==26.2.1
+          pip install --require-hashes -r requirements.txt
 
       - name: Apply every migration to a real Postgres, from empty
         run: alembic upgrade head

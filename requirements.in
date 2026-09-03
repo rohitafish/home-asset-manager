@@ -1,0 +1,25 @@
+# Direct runtime dependencies, exact pins. This is the file a human edits;
+# requirements.txt is GENERATED from it by pip-compile and carries every
+# transitive dependency with sha256 hashes, so `pip install --require-hashes
+# -r requirements.txt` (what scripts/redeploy.sh runs on the Mini on every
+# deploy, and what CI runs) installs exactly the bytes that were tested --
+# not whatever a floor, an unpinned transitive, or a tampered release would
+# resolve to that day. Bump a pin here, then regenerate:
+#
+#   pip-compile --generate-hashes --strip-extras -o requirements.txt requirements.in
+#
+# Dependabot understands this layout and regenerates requirements.txt itself
+# in its PRs. See CONTRIBUTING.md's "Dependencies".
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+sqlmodel==0.0.39
+alembic==1.19.1
+psycopg[binary]==3.3.4
+python-dotenv==1.2.3
+jinja2==3.1.6
+python-multipart==0.0.32
+httpx==0.28.1
+typer==0.27.1
+markdown==3.10.3
+anthropic==1.0.0
+defusedxml==0.7.1  # safe parsing of device-supplied XML (nmap output, Sonos UPnP/SOAP)

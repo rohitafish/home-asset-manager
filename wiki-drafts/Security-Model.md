@@ -124,10 +124,14 @@ they're read once, analysed, and discarded.
   GitHub's `sha_pinning_required` is on for this repo, so an unpinned action
   can't creep back in.
 - Dependabot watches both the Python dependencies and the GitHub Actions used
-  by CI. `requirements.txt`/`requirements-dev.txt` use exact `==` pins, not
-  floors — the deployed instance installs from the same file on every
-  deploy, so a floor would let it silently resolve different versions than
-  whatever was actually tested.
+  by CI. `requirements.txt`/`requirements-dev.txt` are pip-compile
+  **lockfiles**: every direct and transitive package at an exact version,
+  each with a sha256 hash, generated from the hand-edited `requirements.in`
+  files. The deployed instance and CI install with `--require-hashes`, so a
+  published file that doesn't match the recorded hash is refused rather
+  than run, and no transitive can silently float between deploys. CI also
+  runs `pip-audit` against the lock on every push and on a weekly schedule,
+  so a new advisory against a pinned version fails the build on its own.
 - Commits to `main` must be signed, enforced server-side with **no bypass
   actor** — this applies even to the repo owner, on any machine. A separate
   ruleset also blocks force-pushes and branch deletion on `main`, again with

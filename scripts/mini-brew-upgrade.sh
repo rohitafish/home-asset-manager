@@ -163,8 +163,8 @@ if echo "$OUTDATED" | grep -q '^python@'; then
       echo "!!! .venv/bin/python3.12 still resolves fine via Homebrew's stable" >&2
       echo "!!! opt-symlink, so this is informational, not broken -- but if" >&2
       echo "!!! .venv ever needs rebuilding: rm -rf .venv && python3 -m venv .venv" >&2
-      echo "!!!   && source .venv/bin/activate && pip install -r requirements.txt" >&2
-      [ -f "$REPO_DIR/requirements-dev.txt" ] && echo "!!!   && pip install -r requirements-dev.txt" >&2
+      echo "!!!   && source .venv/bin/activate && pip install --require-hashes -r requirements.txt" >&2
+      [ -f "$REPO_DIR/requirements-dev.txt" ] && echo "!!!   && pip install --require-hashes -r requirements-dev.txt" >&2
     fi
   fi
 fi

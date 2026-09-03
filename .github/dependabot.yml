@@ -1,6 +1,8 @@
 version: 2
 updates:
-  # Python dependencies (requirements.txt / requirements-dev.txt at the root).
+  # Python dependencies: requirements*.in (direct pins) and the pip-compile
+  # lockfiles generated from them (requirements*.txt, with hashes). Dependabot
+  # detects the pip-compile header and regenerates the lock in its PRs.
   - package-ecosystem: pip
     directory: "/"
     schedule:
