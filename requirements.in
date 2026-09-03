@@ -27,7 +27,7 @@ python-dotenv==1.2.3
 jinja2==3.1.6
 python-multipart==0.0.32
 httpx==0.28.1
-typer==0.27.1
+typer==0.27.2
 markdown==3.10.3
 nh3==0.3.7  # sanitises the README's rendered HTML before it is marked |safe
 anthropic==1.0.0
