@@ -160,3 +160,39 @@ def test_authenticated_same_origin_request_is_allowed_through(admin_client):
     this is the counterweight to the 401/403 assertions above."""
     response = admin_client.get("/assets")
     assert response.status_code == 200
+
+
+def test_no_route_runs_anything_as_root():
+    """/discovery/run/nmap-privileged used to run `sudo nmap` from a web
+    request, backed by a NOPASSWD sudoers rule on /opt/homebrew/bin/nmap. That
+    binary and its directory are owned by the app user on a Homebrew install,
+    so the rule was a one-line root escalation for anything running as that
+    user -- the app included. Privileged scans are CLI-only now (a terminal
+    where sudo can prompt). Pin the absence so a convenience button can't
+    quietly bring the rule back."""
+    for label, method, path in ALL_GUARDED_ROUTES:
+        assert "privileged" not in path and "sudo" not in path, (
+            f"{method} {path} ({label}) looks like a privileged-execution route"
+        )
+
+
+def test_unknown_host_header_is_rejected_before_auth(app_with_session, engine, monkeypatch):
+    """TrustedHostMiddleware sits outside the routers. A request for a Host
+    the app doesn't serve (DNS rebinding: a hostile page's domain re-pointed
+    at the Mini's IP) is refused with a 400 -- no 401, no WWW-Authenticate
+    challenge, no route code, no DB. localhost/127.0.0.1 are always allowed;
+    the proxy's name comes from APP_ALLOWED_HOSTS (see app/main.py)."""
+    from fastapi.testclient import TestClient
+
+    evil = TestClient(app_with_session, base_url="http://evil.example")
+    response = evil.get("/assets")
+    assert response.status_code == 400
+    assert "WWW-Authenticate" not in response.headers
+
+    # /health opens app.db.engine directly rather than taking get_session as
+    # a dependency (see test_main.py's test_health_is_reachable_without_credentials),
+    # so app_with_session's dependency override doesn't reach it -- point the
+    # module's engine at the in-memory one for this assertion, same as that test.
+    monkeypatch.setattr("app.main.engine", engine)
+    loopback = TestClient(app_with_session, base_url="http://127.0.0.1")
+    assert loopback.get("/health").status_code == 200

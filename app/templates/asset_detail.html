@@ -14,7 +14,7 @@
     {% endif %}
     <a class="button" href="/assets/{{ asset.id }}/edit">Edit</a>
     <form method="post" action="/assets/{{ asset.id }}/delete" style="display:inline"
-          onsubmit="return confirm('Delete this asset?')">
+          data-confirm='Delete this asset?'>
       <button type="submit" class="danger">Delete</button>
     </form>
   </div>

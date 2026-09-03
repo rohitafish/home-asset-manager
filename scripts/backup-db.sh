@@ -18,6 +18,12 @@
 # taking per-table dumps.
 set -euo pipefail
 
+# Every file this script creates -- the .partial, the promoted dump, the
+# success marker -- is a full copy of the database: serials, purchase
+# prices, chat transcripts including any receipt/warranty uploads. Owner-only
+# from the moment it exists, not chmod'd after the fact.
+umask 077
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_DIR="$REPO_DIR/backups"
 KEEP_LOCAL="${BACKUP_KEEP_LOCAL:-7}"
@@ -146,6 +152,7 @@ trap 'echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh FAILED at line $LINENO
 # winner's lock. See the comment at the trap's real registration below.
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"   # older runs created it under the default umask
 cd "$REPO_DIR"   # `docker compose exec` resolves the project from the cwd
 
 # Lock against a manual run overlapping a launchd tick. No two ticks of the

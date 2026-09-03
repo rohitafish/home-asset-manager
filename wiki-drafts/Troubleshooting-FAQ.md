@@ -51,9 +51,10 @@ set `UNIFI_VERIFY_TLS=false` — a deliberate, explicit opt-out, not a default
 **nmap discovery finds nothing, or only partial results.**
 Check `SCAN_SUBNETS` actually covers the network you expect. A device on a
 different VLAN than the machine running the scan may not ARP-resolve a MAC
-even if it's pinged successfully. A full `-sS` SYN scan needs `use_sudo` and
-a scoped `NOPASSWD` sudoers entry — see the README's setup section; without
-it you're getting the more limited `-sT` connect scan.
+even if it's pinged successfully. The web UI only runs the more limited `-sT`
+connect scan; a full `-sS` SYN scan is CLI-only from a terminal (`python -m
+discovery.cli nmap --sudo`, which prompts for your password) — see the
+README's "Nmap privileges" for why there is no passwordless rule for it.
 
 ---
 

@@ -9,6 +9,18 @@
 # /Library/LaunchDaemons/com.assetmgt.upsmonitor.plist (installed from
 # scripts/com.assetmgt.upsmonitor.plist -- see README).
 #
+# RUNS AS ROOT, so it must never execute anything the app user can edit:
+#   * launchd runs a root-owned COPY at /usr/local/libexec/assetmgt/
+#     ups-shutdown.sh (`sudo install -o root -g wheel -m 755`, see README),
+#     never this file inside the user-owned checkout. Edit here, re-install
+#     there; scripts/preflight.sh warns when the two drift.
+#   * PATH is pinned to the system directories below and every binary is
+#     called by absolute path. /opt/homebrew/bin is owned by the app user on
+#     Apple silicon, so a root process that searched it first would run a
+#     user-supplied `pmset`/`grep`/`shutdown` as root every 60 seconds.
+#   The one Homebrew tool involved, colima, is run via `su` AS THE APP USER,
+#   which is exactly the privilege that user already has.
+#
 # Household power comes from a Tesla Powerwall, which already rides out real
 # outages for hours. This UPS exists purely to bridge the Powerwall
 # Gateway's own grid-to-battery cutover time (on the order of a few hundred
@@ -28,6 +40,9 @@
 # which a user-level agent can't do without a sudoers grant.
 set -euo pipefail
 
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
 # No hardcoded account name here -- match README's convention of only ever
 # using a placeholder/absolute-path style value that's filled in per host
 # (see __ASSETMGT_DIR__ in the plists). Defaults to the one non-system
@@ -36,10 +51,10 @@ set -euo pipefail
 # via ASSETMGT_USER for a host with more than one real account. Split out of
 # the ${VAR:-...} default rather than nested inside it -- bash's parser and
 # an awk script's own `{`/`}` don't mix well when nested that way.
-DEFAULT_USER="$(dscl . -list /Users UniqueID 2>/dev/null | awk '$2 >= 500 {print $1; exit}')"
+DEFAULT_USER="$(/usr/bin/dscl . -list /Users UniqueID 2>/dev/null | /usr/bin/awk '$2 >= 500 {print $1; exit}')"
 APP_USER="${ASSETMGT_USER:-$DEFAULT_USER}"
 : "${APP_USER:?could not determine which account runs the app -- set ASSETMGT_USER explicitly}"
-APP_UID="$(id -u "$APP_USER")"
+APP_UID="$(/usr/bin/id -u "$APP_USER")"
 
 # Percent / minutes-remaining below which this treats the outage as long
 # enough that the UPS itself might not last it out. Deliberately kept ABOVE
@@ -49,9 +64,9 @@ APP_UID="$(id -u "$APP_USER")"
 HALT_PERCENT="${UPS_HALT_PERCENT:-30}"
 HALT_MINUTES="${UPS_HALT_MINUTES:-5}"
 
-STATUS="$(pmset -g ps)"
+STATUS="$(/usr/bin/pmset -g ps)"
 
-if echo "$STATUS" | head -1 | grep -q "'AC Power'"; then
+if echo "$STATUS" | /usr/bin/head -1 | /usr/bin/grep -q "'AC Power'"; then
   exit 0
 fi
 
@@ -66,8 +81,8 @@ fi
 # reading anything under an hour as "0" regardless of the actual minutes).
 # `|| true` throughout -- under `set -o pipefail`, grep finding no match
 # would otherwise trip `set -e` and exit before the checks below ever run.
-PERCENT="$(echo "$STATUS" | grep -oE '[0-9]+%' | head -1 | tr -d '%' || true)"
-REMAINING_HM="$(echo "$STATUS" | grep -oE '[0-9]+:[0-9]+ remaining' | head -1 | cut -d' ' -f1 || true)"
+PERCENT="$(echo "$STATUS" | /usr/bin/grep -oE '[0-9]+%' | /usr/bin/head -1 | /usr/bin/tr -d '%' || true)"
+REMAINING_HM="$(echo "$STATUS" | /usr/bin/grep -oE '[0-9]+:[0-9]+ remaining' | /usr/bin/head -1 | /usr/bin/cut -d' ' -f1 || true)"
 REMAINING=""
 if [ -n "$REMAINING_HM" ]; then
   RH="${REMAINING_HM%%:*}"
@@ -90,11 +105,11 @@ if [ "$SHOULD_HALT" -eq 0 ]; then
   # Gateway cutover, not a failure. Logged anyway so a real outage leaves a
   # trail; see the plist's StandardErrorPath note on why this being
   # non-silent-on-success is fine here (unlike rotate-logs.sh/backup-db.sh).
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ups-shutdown.sh: on UPS power (${PERCENT:-?}%, ${REMAINING:-?}m remaining) -- below halt threshold, not shutting down" >&2
+  echo "[$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)] ups-shutdown.sh: on UPS power (${PERCENT:-?}%, ${REMAINING:-?}m remaining) -- below halt threshold, not shutting down" >&2
   exit 0
 fi
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ups-shutdown.sh: UPS at ${PERCENT:-?}% / ${REMAINING:-?}m remaining -- initiating graceful shutdown" >&2
+echo "[$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)] ups-shutdown.sh: UPS at ${PERCENT:-?}% / ${REMAINING:-?}m remaining -- initiating graceful shutdown" >&2
 
 # Stop the app first so it isn't crash-looping against a vanishing DB once
 # Colima goes down (same order as the manual runbook in AGENTS.md/README).
@@ -112,7 +127,7 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ups-shutdown.sh: UPS at ${PERCENT:-?}% / 
 # simpler than it looks: skipping it just means `launchctl kickstart -k`
 # restarts the app once against a live DB after the reboot -- not silent
 # data loss -- so this is a nice-to-have ordering step, not load-bearing.
-launchctl asuser "$APP_UID" launchctl bootout "gui/$APP_UID/com.assetmgt.app" 2>/dev/null || true
+/bin/launchctl asuser "$APP_UID" /bin/launchctl bootout "gui/$APP_UID/com.assetmgt.app" 2>/dev/null || true
 
 # Runs as $APP_USER, not root -- colima's state lives under that user's
 # ~/.colima, and `colima stop` run as root would look in root's own home
@@ -120,6 +135,6 @@ launchctl asuser "$APP_UID" launchctl bootout "gui/$APP_UID/com.assetmgt.app" 2>
 # `shutdown`'s few-second SIGTERM window -- this is what actually prevents
 # the "vz driver is running but host agent is not" stale-state bug (see
 # AGENTS.md). `su` needs no password when the caller is already root.
-su "$APP_USER" -c 'eval "$(/opt/homebrew/bin/brew shellenv)"; colima stop' 2>/dev/null || true
+/usr/bin/su "$APP_USER" -c 'eval "$(/opt/homebrew/bin/brew shellenv)"; colima stop' 2>/dev/null || true
 
-shutdown -h now
+/sbin/shutdown -h now

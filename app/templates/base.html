@@ -10,6 +10,10 @@
        + cdnjs (sha512) + jsdelivr (sha256). ?v= is the htmx version, so an
        upgrade busts the cache. -->
   <script src="/static/htmx.min.js?v=2.0.3"></script>
+  <!-- The templates' own behaviours (filter auto-submit, delete confirms,
+       print). Self-hosted so script-src can be 'self' with no
+       'unsafe-inline' -- see app/main.py's CSP comment. -->
+  <script src="/static/dashboard.js?v={{ static_version }}" defer></script>
 </head>
 <body>
   <header>

@@ -1,6 +1,10 @@
 version: 2
 updates:
-  # Python dependencies (requirements.txt / requirements-dev.txt at the root).
+  # Python dependencies: requirements*.in (direct pins) and the uv-generated
+  # lockfiles compiled from them (requirements*.txt, with hashes -- see
+  # CONTRIBUTING.md's "Dependencies" for the `uv pip compile --universal`
+  # command, and why --universal matters). If a Dependabot PR ever lands
+  # with bare pins and no hashes, regenerate by hand before merging.
   - package-ecosystem: pip
     directory: "/"
     schedule:

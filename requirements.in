@@ -1,0 +1,34 @@
+# Direct runtime dependencies, exact pins. This is the file a human edits;
+# requirements.txt is GENERATED from it -- with `uv pip compile --universal`,
+# not bare pip-compile -- and carries every transitive dependency with sha256
+# hashes for every platform, so `pip install --require-hashes -r
+# requirements.txt` (what scripts/redeploy.sh runs on the Mini on every
+# deploy, and what CI runs) installs exactly the bytes that were tested --
+# not whatever a floor, an unpinned transitive, or a tampered release would
+# resolve to that day. --universal matters: a plain `pip-compile` (pip-tools)
+# resolves environment markers against the machine that ran it and silently
+# drops a package a DIFFERENT platform needs -- this bit us for real: compiling
+# on an arm64 Mac omitted SQLAlchemy's platform-gated `greenlet` dependency
+# entirely, and CI's x86_64 Linux runner then failed --require-hashes outright
+# ("all requirements must have their versions pinned with =="). uv's
+# --universal keeps every platform's branch and hashes it. Bump a pin here,
+# then regenerate:
+#
+#   uv pip compile --universal --generate-hashes -o requirements.txt requirements.in
+#
+# Dependabot understands this layout and regenerates requirements.txt itself
+# in its PRs. See CONTRIBUTING.md's "Dependencies".
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+sqlmodel==0.0.39
+alembic==1.19.1
+psycopg[binary]==3.3.4
+python-dotenv==1.2.3
+jinja2==3.1.6
+python-multipart==0.0.32
+httpx==0.28.1
+typer==0.27.1
+markdown==3.10.3
+nh3==0.3.7  # sanitises the README's rendered HTML before it is marked |safe
+anthropic==1.0.0
+defusedxml==0.7.1  # safe parsing of device-supplied XML (nmap output, Sonos UPnP/SOAP)

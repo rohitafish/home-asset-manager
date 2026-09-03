@@ -154,3 +154,16 @@ def test_falls_back_to_origin_match_when_no_sec_fetch_site():
 def test_no_csrf_headers_at_all_is_allowed():
     """A bare API/curl client sends neither Sec-Fetch-Site nor Origin/Referer."""
     assert auth.require_same_origin(_request(headers={"host": "host.local"})) is None
+
+
+def test_failed_login_log_line_never_contains_the_attempted_username(caplog):
+    """People type the password into the username box. The WARNING that
+    records a failed attempt must carry a fingerprint, not the value --
+    logs/app.error.log is world-readable by default and is not where a
+    password should end up."""
+    typed = "correct-horse-battery-staple"
+    with caplog.at_level("WARNING", logger="app.auth"), pytest.raises(HTTPException):
+        auth.require_admin(_request(), _creds(user=typed, password="wrong"))
+    assert typed not in caplog.text
+    assert "sha256:" in caplog.text
+    assert f"len {len(typed)}" in caplog.text

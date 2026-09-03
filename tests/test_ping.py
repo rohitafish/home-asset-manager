@@ -138,3 +138,14 @@ def test_run_passes_the_captured_reply_through_to_the_parser(monkeypatch):
     # -W is milliseconds on macOS -- confirms the timeout*1000 conversion,
     # not just that *some* flag was passed.
     assert captured_args["args"] == ["/sbin/ping", "-c", "1", "-W", "1500", "-n", "192.168.1.50"]
+
+
+def test_run_refuses_a_non_ipv4_value_without_shelling_out(monkeypatch):
+    """AssetInterface.ip is discovery-filled. A hostname or an option-shaped
+    string must never reach ping's argv."""
+    monkeypatch.setattr("probes.ping.subprocess.run",
+                        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("must not run")))
+    for bad in ("printer.local", "-c 1000 8.8.8.8", "999.1.1.1", ""):
+        outcome = run(bad)
+        assert outcome.ok is False
+        assert "not an IPv4 address" in outcome.summary
