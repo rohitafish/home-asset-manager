@@ -47,10 +47,14 @@ Two phases:
    version banners, later fed to
    [CVE matching](CVE-Matching-and-Valuation-Methodology).
 
-Default is `-sT` (TCP connect, no elevated privileges). An opt-in `use_sudo`
-switches to a fuller `-sS` SYN scan, which needs a scoped `NOPASSWD` sudoers
-entry (see the README). Shells out to the real `nmap` binary rather than a
-wrapper library, so the exact command run is explicit and auditable.
+Default is `-sT` (TCP connect, no elevated privileges), and that is the only
+mode the web UI offers. A fuller `-sS` SYN scan is CLI-only (`python -m
+discovery.cli nmap --sudo` from a terminal, where `sudo` prompts for a
+password) — there is deliberately no passwordless sudoers rule, because on a
+Homebrew install the `nmap` binary is user-owned and such a rule would be a
+root escalation for anything running as the app user (see the README's "Nmap
+privileges"). Shells out to the real `nmap` binary rather than a wrapper
+library, so the exact command run is explicit and auditable.
 
 **Limitations:** works against any network (no UniFi dependency), but device
 *naming* is much better with UniFi present — a bare nmap hit often only has a

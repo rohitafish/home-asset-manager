@@ -12,7 +12,7 @@ matching this codebase's existing preference (see discovery/nmap_scan.py) for
 an explicit, auditable subprocess call over a library that hides what's
 actually sent. On macOS this needs no elevated privileges -- `/sbin/ping` is
 not setuid; the kernel grants ICMP via SOCK_DGRAM to any user -- so, unlike
-nmap, no sudoers entry is required (see README).
+nmap, no elevated privileges are required (see README).
 
 A silent host is NOT proof the device is off: plenty of IoT gear and
 Wi-Fi clients in power-save mode never answer ICMP, and this network has
