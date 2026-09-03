@@ -36,9 +36,10 @@ jobs:
             requirements-dev.txt
 
       - name: Install dependencies
-        # --require-hashes: requirements*.txt are pip-compile lockfiles with a
-        # sha256 for every wheel, so this installs exactly the bytes that were
-        # tested -- a substituted release fails here rather than running. pip
+        # --require-hashes: requirements*.txt are uv-generated (--universal)
+        # lockfiles with a sha256 for every wheel across every platform, so
+        # this installs exactly the bytes that were tested -- a substituted
+        # release fails here rather than running. pip
         # itself is pinned first because it isn't in the lock (pip can't
         # hash-verify its own upgrade) and the runner's copy has had its own
         # advisories.

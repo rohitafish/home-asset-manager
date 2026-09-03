@@ -1,12 +1,20 @@
 # Direct runtime dependencies, exact pins. This is the file a human edits;
-# requirements.txt is GENERATED from it by pip-compile and carries every
-# transitive dependency with sha256 hashes, so `pip install --require-hashes
-# -r requirements.txt` (what scripts/redeploy.sh runs on the Mini on every
+# requirements.txt is GENERATED from it -- with `uv pip compile --universal`,
+# not bare pip-compile -- and carries every transitive dependency with sha256
+# hashes for every platform, so `pip install --require-hashes -r
+# requirements.txt` (what scripts/redeploy.sh runs on the Mini on every
 # deploy, and what CI runs) installs exactly the bytes that were tested --
 # not whatever a floor, an unpinned transitive, or a tampered release would
-# resolve to that day. Bump a pin here, then regenerate:
+# resolve to that day. --universal matters: a plain `pip-compile` (pip-tools)
+# resolves environment markers against the machine that ran it and silently
+# drops a package a DIFFERENT platform needs -- this bit us for real: compiling
+# on an arm64 Mac omitted SQLAlchemy's platform-gated `greenlet` dependency
+# entirely, and CI's x86_64 Linux runner then failed --require-hashes outright
+# ("all requirements must have their versions pinned with =="). uv's
+# --universal keeps every platform's branch and hashes it. Bump a pin here,
+# then regenerate:
 #
-#   pip-compile --generate-hashes --strip-extras -o requirements.txt requirements.in
+#   uv pip compile --universal --generate-hashes -o requirements.txt requirements.in
 #
 # Dependabot understands this layout and regenerates requirements.txt itself
 # in its PRs. See CONTRIBUTING.md's "Dependencies".
