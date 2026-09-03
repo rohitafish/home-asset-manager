@@ -20,6 +20,7 @@ multiple VLANs a probe might not be able to reach. Summaries are worded to
 reflect that ambiguity rather than asserting the device is down.
 """
 
+import ipaddress
 import re
 import shutil
 import subprocess
@@ -43,6 +44,14 @@ def run(ip: str, timeout: float = DEFAULT_TIMEOUT) -> ProbeOutcome:
         # SCAN_SUBNETS) -- an IPv6 literal here would mean `ping` silently
         # tries to resolve it as a hostname instead. Fail clearly.
         return ProbeOutcome(ok=False, summary=f"Skipped: {ip} looks like IPv6, not supported by this probe.")
+    try:
+        ipaddress.IPv4Address(ip)
+    except (ipaddress.AddressValueError, ValueError):
+        # The value comes from AssetInterface.ip, which discovery fills from
+        # device/scanner output. Anything that isn't a literal IPv4 address
+        # never reaches ping's argv: a hostname would trigger a resolver
+        # lookup, and a `-`-prefixed string would be read as an option.
+        return ProbeOutcome(ok=False, summary=f"Skipped: {ip!r} is not an IPv4 address.")
 
     ping_path = shutil.which("ping")
     if not ping_path:

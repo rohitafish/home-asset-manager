@@ -121,3 +121,33 @@ def test_run_nmap_only_prefixes_sudo_when_asked(monkeypatch):
 
     nmap_scan._run_nmap(["-sn"])
     assert captured["cmd"] == ["/fake/nmap", "-sn"], "unprivileged runs must never touch sudo"
+
+
+# -- argv hygiene ---------------------------------------------------------------
+
+
+def test_ipv4_only_keeps_literal_addresses_and_drops_the_rest(caplog):
+    values = ["192.168.1.5", "--script=evil.nse", "printer.local", "fe80::1", None, "10.0.0.256", " 10.0.0.1"]
+    with caplog.at_level("WARNING"):
+        kept = nmap_scan._ipv4_only(values)
+    assert kept == ["192.168.1.5"]
+    assert caplog.text.count("dropping non-IPv4 scan target") == 6
+
+
+def test_discover_network_only_hands_ipv4_literals_to_the_service_scan(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(nmap_scan, "ping_sweep", lambda subnets, use_sudo=False: [
+        {"ip": "192.168.1.9", "mac": None, "vendor": None, "hostname": None},
+        {"ip": "-oN /tmp/x", "mac": None, "vendor": None, "hostname": None},
+        {"ip": None, "mac": "aa:bb:cc:00:00:01", "vendor": None, "hostname": None},
+    ])
+
+    def fake_service_scan(ips, top_ports=1000, use_sudo=False):
+        seen["ips"] = list(ips)
+        return []
+
+    monkeypatch.setattr(nmap_scan, "service_scan", fake_service_scan)
+
+    nmap_scan.discover_network(["192.168.1.0/24"])
+
+    assert seen["ips"] == ["192.168.1.9"]

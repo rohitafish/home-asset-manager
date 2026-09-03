@@ -5,6 +5,7 @@ client -- the tool loop itself (tool_use -> tool_result -> text) with no
 real API call.
 """
 
+import base64
 import json
 import logging
 from datetime import date
@@ -790,10 +791,15 @@ def test_run_chat_turn_with_attachment_persists_image_block_and_note(session, mo
     ).all()
     assert [r.role for r in rows] == ["user", "assistant"]
 
+    # The image block was sent to the API for this turn, but once the turn
+    # is over the stored row keeps only a placeholder: no base64 of a
+    # receipt sitting in the database (and every backup dump) indefinitely.
     user_blocks = json.loads(rows[0].content_json)
-    assert user_blocks[0]["type"] == "image"
-    assert user_blocks[0]["source"]["media_type"] == "image/jpeg"
-    text_block = next(b for b in user_blocks if b["type"] == "text")
+    assert user_blocks[0]["type"] == "text"
+    assert "from an earlier turn" in user_blocks[0]["text"]
+    assert all("source" not in b for b in user_blocks)
+    assert base64.standard_b64encode(b"fake-jpeg-bytes").decode() not in rows[0].content_json
+    text_block = user_blocks[-1]
     assert "receipt.jpg" in text_block["text"]
     assert "what's the serial?" in text_block["text"]
 
@@ -1284,3 +1290,43 @@ def test_run_probe_tool_schema_has_no_asset_id_parameter():
     (tool,) = [t for t in TOOLS if t["name"] == "run_probe"]
     assert tool["input_schema"]["properties"] == {}
     assert "this chat is open on" in tool["description"]
+
+
+def test_attachment_bytes_are_sent_during_the_turn_then_retired(session, monkeypatch):
+    """Every API call in the turn must still carry the image (the tool loop
+    resends the whole transcript); only after the turn does the stored row
+    lose the bytes. Pin both halves, since a strip that ran too early would
+    silently blind Claude to the very file the user just uploaded."""
+    import anthropic
+
+    from app import assistant as mod
+
+    asset = make_asset(session, hostname="powerwall")
+    sent = []
+    responses = [
+        _FakeMessage(content=[_FakeContentBlock(type="text", text="ok")], stop_reason="end_turn"),
+    ]
+    fake_cls = _make_fake_anthropic_class(responses)
+
+    original_create = fake_cls.return_value.messages.create if hasattr(fake_cls, "return_value") else None
+    monkeypatch.setattr(anthropic, "Anthropic", fake_cls)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    real_replay = mod._replay
+
+    def spy_replay(s, asset_id):
+        messages = real_replay(s, asset_id)
+        sent.append(json.dumps(messages))
+        return messages
+
+    monkeypatch.setattr(mod, "_replay", spy_replay)
+
+    run_chat_turn(session, asset, "look", attachments=[("r.png", "image/png", b"png-bytes")])
+
+    b64 = base64.standard_b64encode(b"png-bytes").decode()
+    assert sent and b64 in sent[0], "the turn's own API call must include the upload"
+    row = session.exec(select(ChatMessage).where(ChatMessage.role == "user")).first()
+    assert b64 not in row.content_json
+    assert '"r.png"' in row.content_json or "attachment" in row.content_json
+    del original_create

@@ -178,6 +178,20 @@ def require_admin_password_configured():
 
 
 @app.on_event("startup")
+def require_database_url_configured():
+    """app/db.py falls back to a credential-free placeholder URL so it can be
+    imported without configuration (the test suite does exactly that). A
+    running instance must never be on that placeholder: it would fail on
+    first query with an opaque connection error, and the old fallback
+    quietly carried the docker-compose dev credentials in code."""
+    if not os.environ.get("DATABASE_URL"):
+        raise RuntimeError(
+            "DATABASE_URL is not set -- refusing to start on the placeholder "
+            "connection URL. Set it in .env (see .env.example) and restart."
+        )
+
+
+@app.on_event("startup")
 def fail_orphaned_discovery_runs():
     """A restart (redeploy, crash, reboot) abandons any in-flight discovery
     run mid-process, leaving its DiscoveryRun row stuck at status="running"

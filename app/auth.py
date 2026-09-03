@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import secrets
@@ -100,9 +101,15 @@ def require_admin(
         with _failures_lock:
             recent.append(now)
             _failures[client_ip] = recent
+        # The attempted username is logged as a fingerprint, not verbatim:
+        # people routinely type the password into the username box, and
+        # logs/app.error.log is not a place a password should end up. The
+        # hash prefix still lets repeated attempts with the same value be
+        # correlated, and the length distinguishes "admin" from a paste.
+        username_fp = hashlib.sha256(credentials.username.encode("utf-8")).hexdigest()[:12]
         logger.warning(
-            "auth: failed login for user %r from %s (%d failure(s) in window)",
-            credentials.username, client_ip, len(recent),
+            "auth: failed login for user sha256:%s (len %d) from %s (%d failure(s) in window)",
+            username_fp, len(credentials.username), client_ip, len(recent),
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

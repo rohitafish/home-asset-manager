@@ -5,9 +5,11 @@ from sqlmodel import Session, create_engine
 
 load_dotenv()
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql+psycopg://assetmgt:assetmgt@localhost:5432/assetmgt"
-)
+# No credentials in the fallback: the real URL comes from .env (see
+# .env.example), and app/main.py refuses to start without it. The
+# credential-free placeholder only exists so importing this module -- which
+# the test suite does with the engine swapped out -- doesn't need a URL.
+DATABASE_URL = os.environ.get("DATABASE_URL") or "postgresql+psycopg://localhost:5432/assetmgt"
 
 engine = create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 
