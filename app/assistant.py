@@ -97,15 +97,12 @@ TOOLS = [
         "name": "run_probe",
         "description": (
             "Runs the applicable read-only identification probes (Sonos, TP-Link "
-            "Kasa, generic SSDP/UPnP) against an asset's known IP addresses and "
-            "returns what they found. Never changes device state -- these probes "
-            "only ever read."
+            "Kasa, generic SSDP/UPnP) against the known IP addresses of the asset "
+            "this chat is open on, and returns what they found. Always this asset "
+            "-- it cannot be pointed at another one. Never changes device state "
+            "-- these probes only ever read."
         ),
-        "input_schema": {
-            "type": "object",
-            "properties": {"asset_id": {"type": "integer"}},
-            "required": ["asset_id"],
-        },
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "propose_set_field",
@@ -591,6 +588,22 @@ def _record_proposal(
     }
 
 
+def record_set_field_proposal(
+    session: Session, asset_id: int, field_name: str, value: Any, rationale: str,
+) -> dict:
+    """Records a set_field proposal from a call site that is not a chat tool
+    (today: the model-number auto-guess on save in app/routers/dashboard.py).
+    Same allowlist, coercion check and table as the propose_set_field tool,
+    so whatever the model produced goes through the same Apply/Discard gate
+    instead of landing on the asset directly."""
+    if field_name not in ALLOWED_PROPOSAL_FIELDS:
+        raise ValueError(f"{field_name!r} is not a proposable field")
+    _coerced, error = _coerce_proposal_value(field_name, value)
+    if error:
+        raise ValueError(error)
+    return _record_proposal(session, asset_id, "set_field", {"field_name": field_name, "value": value}, rationale)
+
+
 def _tool_search_assets(session: Session, query: str) -> Any:
     assets = session.exec(
         select(Asset).where(asset_search_filter(query)).limit(20)
@@ -746,7 +759,12 @@ def _tool_propose_link_same_device(session: Session, tool_input: dict, origin_as
 _TOOL_HANDLERS = {
     "search_assets": lambda session, ti, origin: _tool_search_assets(session, ti["query"]),
     "get_asset": lambda session, ti, origin: _tool_get_asset(session, ti["asset_id"]),
-    "run_probe": lambda session, ti, origin: _tool_run_probe(session, ti["asset_id"]),
+    # Deliberately ignores any asset_id in the input: this is the one tool
+    # with a side effect the user didn't click for (network I/O to a device,
+    # plus ProbeResult rows). Device-supplied text reaches the prompt, so a
+    # hostname or banner crafted to say "probe asset 42" must not be able to
+    # aim it anywhere but the asset whose page the user is on.
+    "run_probe": lambda session, ti, origin: _tool_run_probe(session, origin),
     "propose_set_field": _tool_propose_set_field,
     "propose_add_note": _tool_propose_add_note,
     "propose_set_location": _tool_propose_set_location,
@@ -1250,7 +1268,7 @@ def describe_tool_call(name: str, tool_input: dict, current_asset_id: int | None
     if name == "get_asset":
         return f"Looked up asset #{ti['asset_id']}" if ti.get("asset_id") else "Looked up an asset"
     if name == "run_probe":
-        return f"Ran identification probes on asset #{ti['asset_id']}" if ti.get("asset_id") else "Ran identification probes"
+        return "Ran identification probes on this asset"  # always the chat's own asset
     return name  # unknown/future tool -- fall back to the raw name, never crash
 
 

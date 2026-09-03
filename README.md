@@ -1341,14 +1341,19 @@ desk. `/valuables?all=1` shows the full inventory instead.
 `model_number` (the manufacturer part number / SKU, e.g. Apple's `A2374`) is
 usually typed by hand. But when you save an asset that has **vendor, serial
 number, model, and purchase date all filled** and the `model_number` still
-blank, the app asks Claude for a best guess and fills it in — marked
-`(unverified)` — with a note recording the guess. The purchase date is what
-lets it pin a device's generation (an Amazon Echo bought in 2019 is the 3rd
-Gen). It only fills a blank field, never overwrites, skips assets with a locked
-identity, and does nothing if there's no API key configured — so it's an opt-in
-convenience that disappears if you unset `ANTHROPIC_API_KEY`/`OPENROUTER_API_KEY`.
-The serial gates the feature but is **not** sent to the API. Verify a guess off
-the device and drop the `(unverified)` marker when you do.
+blank, the app asks Claude for a best guess and records it as a **pending
+proposal** on the asset page — the same Apply/Discard card every other
+assistant suggestion gets, so nothing the model produced ever lands on a
+field without a click. (It used to write the guess straight in with an
+`(unverified)` suffix; that was the one path where model output reached a
+field with no human in between, from inputs that are partly device-supplied.)
+The purchase date is what lets it pin a device's generation (an Amazon Echo
+bought in 2019 is the 3rd Gen). It only proposes for a blank field, never an
+existing value, skips assets with a locked identity, and does nothing if
+there's no API key configured — so it's an opt-in convenience that disappears
+if you unset `ANTHROPIC_API_KEY`/`OPENROUTER_API_KEY`. The serial gates the
+feature but is **not** sent to the API. Check the guess against the device
+before applying it.
 
 #### Replacement values
 

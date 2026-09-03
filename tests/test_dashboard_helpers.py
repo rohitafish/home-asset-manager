@@ -8,6 +8,7 @@ for a request per case. The routes that call them are covered separately in
 tests/test_dashboard_routes.py.
 """
 
+import json
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -504,7 +505,19 @@ def _notes(session, asset_id):
     return session.exec(select(AssetNote).where(AssetNote.asset_id == asset_id)).all()
 
 
-def test_autofill_model_number_fills_guess_with_unverified_marker(session, monkeypatch):
+def _auto_proposals(session, asset_id):
+    return session.exec(
+        select(ChangeProposal).where(
+            ChangeProposal.asset_id == asset_id, ChangeProposal.status == "pending"
+        )
+    ).all()
+
+
+def test_autofill_model_number_proposes_rather_than_writes(session, monkeypatch):
+    """The guess lands as a pending ChangeProposal, never on the asset. This
+    used to write "<guess> (unverified)" straight into model_number -- the
+    one path where model output reached a field with no Apply click in
+    between, from inputs (vendor/model) that are partly device-supplied."""
     monkeypatch.setattr("app.assistant.is_configured", lambda: True)
     monkeypatch.setattr("app.assistant.guess_model_number", lambda a, s=None: "Echo (3rd Gen)")
     asset = _qualifying(session)
@@ -512,18 +525,46 @@ def test_autofill_model_number_fills_guess_with_unverified_marker(session, monke
     _autofill_model_number(session, asset)
     session.commit()
 
-    assert asset.model_number == "Echo (3rd Gen) (unverified)"
-    assert any("auto-guessed" in n.body for n in _notes(session, asset.id))
+    assert asset.model_number is None
+    assert _notes(session, asset.id) == []
+    (proposal,) = _auto_proposals(session, asset.id)
+    assert proposal.kind == "set_field"
+    assert json.loads(proposal.payload_json) == {"field_name": "model_number", "value": "Echo (3rd Gen)"}
+    assert "Unverified" in proposal.rationale
+    assert proposal.origin_asset_id == asset.id
 
 
-def test_autofill_model_number_writes_na_cleanly(session, monkeypatch):
+def test_autofill_model_number_proposes_na_too(session, monkeypatch):
     monkeypatch.setattr("app.assistant.is_configured", lambda: True)
     monkeypatch.setattr("app.assistant.guess_model_number", lambda a, s=None: "N/A")
     asset = _qualifying(session)
 
     _autofill_model_number(session, asset)
 
-    assert asset.model_number == "N/A"  # no "(unverified)" on a definitive N/A
+    assert asset.model_number is None
+    (proposal,) = _auto_proposals(session, asset.id)
+    assert json.loads(proposal.payload_json)["value"] == "N/A"
+
+
+def test_autofill_model_number_proposal_applies_through_the_normal_gate(session, monkeypatch):
+    """End to end: the auto-guess proposal is an ordinary set_field proposal,
+    so the existing Apply path is what finally writes the field -- with the
+    usual AssetNote audit line, and no "(unverified)" suffix (the click is
+    the verification)."""
+    from app.assistant import apply_proposal
+
+    monkeypatch.setattr("app.assistant.is_configured", lambda: True)
+    monkeypatch.setattr("app.assistant.guess_model_number", lambda a, s=None: "A2374")
+    asset = _qualifying(session)
+    _autofill_model_number(session, asset)
+    (proposal,) = _auto_proposals(session, asset.id)
+
+    apply_proposal(session, proposal)
+    session.commit()
+
+    assert asset.model_number == "A2374"
+    assert proposal.status == "applied"
+    assert any("model_number" in n.body for n in _notes(session, asset.id))
 
 
 def test_autofill_model_number_noop_when_guess_none(session, monkeypatch):

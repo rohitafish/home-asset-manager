@@ -261,7 +261,10 @@ def test_describe_tool_call_link_same_device():
 def test_describe_tool_call_read_tools():
     assert describe_tool_call("search_assets", {"query": "sonos"}) == 'Searched the inventory for "sonos"'
     assert describe_tool_call("get_asset", {"asset_id": 12}) == "Looked up asset #12"
-    assert describe_tool_call("run_probe", {"asset_id": 7}) == "Ran identification probes on asset #7"
+    # run_probe takes no asset_id any more (it always probes the chat's own
+    # asset); an old transcript row that still carries one renders the same.
+    assert describe_tool_call("run_probe", {}) == "Ran identification probes on this asset"
+    assert describe_tool_call("run_probe", {"asset_id": 7}) == "Ran identification probes on this asset"
 
 
 def test_describe_tool_call_missing_input_falls_back_generically():
@@ -1254,3 +1257,30 @@ def test_wrap_untrusted_straddled_tag_does_not_reconstruct_closing_tag():
 def test_wrap_untrusted_plain_text_unaffected():
     wrapped = _wrap_untrusted("Living Room Sonos")
     assert wrapped == "<untrusted_device_data>\nLiving Room Sonos\n</untrusted_device_data>"
+
+
+# -- run_probe is pinned to the chat's own asset -----------------------------
+# The one tool with a side effect the user didn't click for (network I/O to
+# a device, ProbeResult rows). Device-supplied text reaches the prompt, so a
+# hostname or banner crafted to say "probe asset 42" must not be able to aim
+# it anywhere but the asset whose page the user is on.
+
+
+def test_run_probe_ignores_a_model_supplied_asset_id(session, monkeypatch):
+    from app import assistant as mod
+
+    probed = []
+    monkeypatch.setattr(mod, "_tool_run_probe", lambda s, asset_id: probed.append(asset_id) or [])
+    tool_use = SimpleNamespace(name="run_probe", id="tu_1", input={"asset_id": 999})
+
+    mod._execute_tool(session, tool_use, origin_asset_id=7)
+
+    assert probed == [7]
+
+
+def test_run_probe_tool_schema_has_no_asset_id_parameter():
+    from app.assistant import TOOLS
+
+    (tool,) = [t for t in TOOLS if t["name"] == "run_probe"]
+    assert tool["input_schema"]["properties"] == {}
+    assert "this chat is open on" in tool["description"]
