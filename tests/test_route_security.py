@@ -176,7 +176,7 @@ def test_no_route_runs_anything_as_root():
         )
 
 
-def test_unknown_host_header_is_rejected_before_auth(app_with_session):
+def test_unknown_host_header_is_rejected_before_auth(app_with_session, engine, monkeypatch):
     """TrustedHostMiddleware sits outside the routers. A request for a Host
     the app doesn't serve (DNS rebinding: a hostile page's domain re-pointed
     at the Mini's IP) is refused with a 400 -- no 401, no WWW-Authenticate
@@ -189,5 +189,10 @@ def test_unknown_host_header_is_rejected_before_auth(app_with_session):
     assert response.status_code == 400
     assert "WWW-Authenticate" not in response.headers
 
+    # /health opens app.db.engine directly rather than taking get_session as
+    # a dependency (see test_main.py's test_health_is_reachable_without_credentials),
+    # so app_with_session's dependency override doesn't reach it -- point the
+    # module's engine at the in-memory one for this assertion, same as that test.
+    monkeypatch.setattr("app.main.engine", engine)
     loopback = TestClient(app_with_session, base_url="http://127.0.0.1")
     assert loopback.get("/health").status_code == 200
