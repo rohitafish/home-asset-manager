@@ -3,7 +3,7 @@
 # requirements.in; the constraint line keeps the two resolutions consistent
 # so dev and runtime never disagree about a shared transitive:
 #
-#   pip-compile --generate-hashes --strip-extras -o requirements-dev.txt requirements-dev.in
+#   uv pip compile --universal --generate-hashes -o requirements-dev.txt requirements-dev.in
 #
 # Install both with:
 #   pip install --require-hashes -r requirements.txt -r requirements-dev.txt

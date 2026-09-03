@@ -8,7 +8,8 @@ machine-readable SPDX/CycloneDX document.
 The real, versioned source of truth is `requirements.in`/
 `requirements-dev.in` in the repo (the direct dependencies, exact `==`
 pins) and the `requirements.txt`/`requirements-dev.txt` lockfiles generated
-from them by pip-compile — every transitive package too, each with a sha256
+from them by `uv pip compile --universal` — every transitive package too,
+hashed for every platform, each with a sha256
 hash, installed with `--require-hashes` on the deployed instance and in CI.
 See [Configuration Reference](Configuration-Reference) for the same "if this
 page and the repo disagree, trust the repo" caveat. This page explains what

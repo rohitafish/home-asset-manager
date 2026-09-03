@@ -1,8 +1,10 @@
 version: 2
 updates:
-  # Python dependencies: requirements*.in (direct pins) and the pip-compile
-  # lockfiles generated from them (requirements*.txt, with hashes). Dependabot
-  # detects the pip-compile header and regenerates the lock in its PRs.
+  # Python dependencies: requirements*.in (direct pins) and the uv-generated
+  # lockfiles compiled from them (requirements*.txt, with hashes -- see
+  # CONTRIBUTING.md's "Dependencies" for the `uv pip compile --universal`
+  # command, and why --universal matters). If a Dependabot PR ever lands
+  # with bare pins and no hashes, regenerate by hand before merging.
   - package-ecosystem: pip
     directory: "/"
     schedule:

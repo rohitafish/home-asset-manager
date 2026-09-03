@@ -105,7 +105,7 @@ brew services start colima
 cd home-asset-manager   # wherever you cloned this repo
 python3 -m venv .venv
 source .venv/bin/activate
-pip install --require-hashes -r requirements.txt   # a pip-compile lockfile: every wheel hash-checked
+pip install --require-hashes -r requirements.txt   # a uv-generated lockfile: every wheel hash-checked
 
 # 5. Configure
 cp .env.example .env

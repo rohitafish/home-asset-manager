@@ -406,17 +406,21 @@ assistant or human contributor.
   then `coverage report` as two separate steps (see `.github/workflows/ci.yml`)
   so a red X unambiguously means either "a test broke" or "coverage dropped",
   never both at once.
-- `requirements.txt`/`requirements-dev.txt` are hash-locked `pip-compile`
-  lockfiles generated from `requirements.in`/`requirements-dev.in` (the
-  files a human edits -- exact `==` pins, never floors). `redeploy.sh` and
-  CI install with `--require-hashes`. This reverses an earlier decision to
+- `requirements.txt`/`requirements-dev.txt` are hash-locked lockfiles
+  generated with `uv pip compile --universal` (not bare pip-compile --
+  compiling on this arm64 Mac without `--universal` once silently dropped
+  SQLAlchemy's platform-gated `greenlet` dependency, which then failed
+  `--require-hashes` on CI's x86_64 Linux runner) from
+  `requirements.in`/`requirements-dev.in` (the files a human edits -- exact
+  `==` pins, never floors). `redeploy.sh` and CI install with
+  `--require-hashes`. This reverses an earlier decision to
   stop at exact top-level pins: that reasoning assumed exact pins removed
   the drift risk, but they only pin the ~13 direct packages -- the ~35
   transitives behind them (uvicorn's `[standard]` extras, anthropic's
   `httpx2`, ...) still floated, and were being installed unverified on the
   Mini on every deploy. The costs that decision cited are gone or automated:
-  Dependabot regenerates a pip-compile lock itself when it sees the `.in`,
-  and `--require-hashes` is a one-word change in `redeploy.sh`. See
+  Dependabot regenerates a lock itself when it sees the `.in` files, and
+  `--require-hashes` is a one-word change in `redeploy.sh`. See
   CONTRIBUTING.md's "Dependencies" for the regenerate command, and the
   brew-upgrade bullet above for why this isn't inconsistent with leaving
   `python@3.x` itself unpinned -- same rule, two different risk shapes. CI
