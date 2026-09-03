@@ -167,7 +167,7 @@ if [ -n "$RUNNING" ]; then
 fi
 
 echo "==> Installing any new/updated dependencies"
-ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && pip install -q -r requirements.txt"
+ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && pip install -q --require-hashes -r requirements.txt"
 
 echo "==> Running any new migrations"
 ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && alembic upgrade head"

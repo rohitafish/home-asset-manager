@@ -5,11 +5,15 @@ generic "what's a nice library" list, but grounded in how each one is used
 in *this* codebase specifically. Written for a human to read; not a
 machine-readable SPDX/CycloneDX document.
 
-The real, versioned source of truth is `requirements.txt`/
-`requirements-dev.txt` in the repo (exact `==` pins — see the header
-comment there for why, and [Configuration Reference](Configuration-Reference)
-for the same "if this page and the repo disagree, trust the repo" caveat).
-This page explains what each pin is *for*.
+The real, versioned source of truth is `requirements.in`/
+`requirements-dev.in` in the repo (the direct dependencies, exact `==`
+pins) and the `requirements.txt`/`requirements-dev.txt` lockfiles generated
+from them by pip-compile — every transitive package too, each with a sha256
+hash, installed with `--require-hashes` on the deployed instance and in CI.
+See [Configuration Reference](Configuration-Reference) for the same "if this
+page and the repo disagree, trust the repo" caveat. This page explains what
+each direct pin is *for*; the lockfile is where to look for the full
+transitive list.
 
 ## Language runtime
 

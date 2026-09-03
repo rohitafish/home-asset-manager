@@ -105,7 +105,7 @@ brew services start colima
 cd home-asset-manager   # wherever you cloned this repo
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt   # a pip-compile lockfile: every wheel hash-checked
 
 # 5. Configure
 cp .env.example .env
@@ -1025,7 +1025,7 @@ git clone https://github.com/rohitafish/home-asset-manager.git
 cd home-asset-manager
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt
 cp .env.example .env
 chmod 600 .env
 cp scripts/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
@@ -1685,8 +1685,14 @@ that keeps changes honest. None of it runs on the deployed instance —
 
 ```bash
 # dev tooling (pytest + ruff) on top of the runtime deps
-pip install -r requirements.txt -r requirements-dev.txt
+pip install --require-hashes -r requirements.txt -r requirements-dev.txt
 ```
+
+`requirements.txt`/`requirements-dev.txt` are **generated** lockfiles (every
+transitive dependency, with sha256 hashes) -- edit `requirements.in` /
+`requirements-dev.in` and regenerate instead; see CONTRIBUTING.md's
+"Dependencies". CI audits the lock against PyPI's advisory database on every
+push and weekly.
 
 ### Test suite (`pytest`)
 

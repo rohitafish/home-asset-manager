@@ -85,7 +85,7 @@ if [ -d "$REPO_DIR/.venv" ]; then
   if "$REPO_DIR/.venv/bin/python3" -c 'import fastapi, sqlmodel, alembic' >/dev/null 2>&1; then
     ok ".venv has fastapi/sqlmodel/alembic installed"
   else
-    fail ".venv exists but fastapi/sqlmodel/alembic aren't importable -- run: source .venv/bin/activate && pip install -r requirements.txt"
+    fail ".venv exists but fastapi/sqlmodel/alembic aren't importable -- run: source .venv/bin/activate && pip install --require-hashes -r requirements.txt"
   fi
 else
   fail ".venv does not exist -- see README's \"One-time setup\""
