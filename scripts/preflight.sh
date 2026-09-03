@@ -294,6 +294,21 @@ for label in app logrotate backup; do
 done
 
 echo
+echo "== Privilege boundaries =="
+# The app runs as an ordinary user and must stay that way. Anything that lets
+# a process running as that user become root turns "someone got into the
+# web app" into "someone owns the Mini", so the known ways are checked here
+# by name. A NOPASSWD sudoers rule for a Homebrew nmap is one: on Apple
+# silicon /opt/homebrew/bin and the binary itself are user-owned, so the rule
+# amounts to "run anything as root". See README's "Nmap privileges".
+NMAP_SUDOERS="/etc/sudoers.d/nmap-assetmgt"
+if [ -e "$NMAP_SUDOERS" ]; then
+  fail "$NMAP_SUDOERS exists -- a passwordless sudo rule on a user-owned nmap binary is a root escalation for anything running as this user. Remove it: sudo rm $NMAP_SUDOERS (privileged scans now prompt for a password from a terminal: python -m discovery.cli nmap --sudo)"
+else
+  ok "no passwordless nmap sudoers rule"
+fi
+
+echo
 echo "== Headless / UPS posture =="
 # These settings have no other visible symptom when they silently regress --
 # unlike a crashed process, a dead UPS battery or a disabled Screen Sharing

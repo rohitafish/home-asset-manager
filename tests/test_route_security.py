@@ -160,3 +160,17 @@ def test_authenticated_same_origin_request_is_allowed_through(admin_client):
     this is the counterweight to the 401/403 assertions above."""
     response = admin_client.get("/assets")
     assert response.status_code == 200
+
+
+def test_no_route_runs_anything_as_root():
+    """/discovery/run/nmap-privileged used to run `sudo nmap` from a web
+    request, backed by a NOPASSWD sudoers rule on /opt/homebrew/bin/nmap. That
+    binary and its directory are owned by the app user on a Homebrew install,
+    so the rule was a one-line root escalation for anything running as that
+    user -- the app included. Privileged scans are CLI-only now (a terminal
+    where sudo can prompt). Pin the absence so a convenience button can't
+    quietly bring the rule back."""
+    for label, method, path in ALL_GUARDED_ROUTES:
+        assert "privileged" not in path and "sudo" not in path, (
+            f"{method} {path} ({label}) looks like a privileged-execution route"
+        )

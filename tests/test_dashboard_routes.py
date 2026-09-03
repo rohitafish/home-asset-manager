@@ -385,7 +385,7 @@ def test_apply_all_applies_every_pending_proposal_for_the_asset(
 
 
 # -- discovery triggers -------------------------------------------------------
-# Every one of these seven routes repeats the same guard:
+# Every one of these six routes repeats the same guard:
 #   if _discovery_already_running(session): return RedirectResponse(...)
 # _discovery_already_running itself is unit-tested; that each route actually
 # calls it is not something a helper test can show, and a new trigger route
@@ -396,7 +396,6 @@ def test_apply_all_applies_every_pending_proposal_for_the_asset(
 DISCOVERY_TRIGGERS = [
     ("/discovery/run/unifi", "run_unifi_discovery"),
     ("/discovery/run/nmap", "run_nmap_discovery"),
-    ("/discovery/run/nmap-privileged", "run_nmap_discovery"),
     ("/discovery/run/local-mac", "run_local_host_discovery"),
     ("/discovery/run/enrich", "run_enrichment"),
     ("/discovery/run/sonos", "run_sonos_discovery"),
@@ -409,7 +408,7 @@ def collector_spy(monkeypatch):
     """Replaces every collector on discovery.cli with a recorder. The routes
     import them inside the function body, so patching the module attribute is
     enough -- and is what keeps this suite off the network and away from
-    nmap/sudo."""
+    nmap."""
     from discovery import cli
 
     calls = []

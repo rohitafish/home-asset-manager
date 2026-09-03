@@ -299,7 +299,13 @@ def unifi():
 
 
 @app.command()
-def nmap(sudo: bool = typer.Option(False, help="Use sudo for a full -sS SYN scan.")):
+def nmap(
+    sudo: bool = typer.Option(
+        False,
+        help="Use sudo for a full -sS SYN scan. Prompts for your password on a "
+        "terminal; needs no sudoers rule (and must not be given one -- see README).",
+    ),
+):
     """Ping-sweep + service/version scan the configured SCAN_SUBNETS."""
     typer.echo(run_nmap_discovery(use_sudo=sudo))
 

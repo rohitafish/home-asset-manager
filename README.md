@@ -208,32 +208,38 @@ below.
 
 ### Nmap privileges
 
-By default, "Run nmap scan now" uses an unprivileged TCP-connect scan
-(`-sT`) — no `sudo` needed.
+"Run nmap scan now" uses an unprivileged TCP-connect scan (`-sT`) — no
+`sudo` needed, and nothing on the Discovery page runs as root.
 
-For a fuller SYN scan (`-sS`, faster and more accurate port-state results),
-click **Run privileged scan (sudo)** on the Discovery page. This works because
-of a narrowly-scoped passwordless sudo rule limited to just the `nmap`
-binary — the app process itself still runs as your normal user, not root.
-Set it up once with:
+A fuller SYN scan (`-sS`, faster and more accurate port-state results) needs
+root, and is available **only from a terminal on the host**, where `sudo` can
+ask for your password:
 
 ```bash
-printf '%s ALL=(root) NOPASSWD: /opt/homebrew/bin/nmap\n' "$(whoami)" > /tmp/nmap-assetmgt
-sudo visudo -c -f /tmp/nmap-assetmgt
-sudo install -m 440 -o root -g wheel /tmp/nmap-assetmgt /etc/sudoers.d/nmap-assetmgt
-rm /tmp/nmap-assetmgt
+python -m discovery.cli nmap --sudo
+```
+
+There is deliberately **no passwordless sudoers rule** for this, and no web
+button. Earlier versions documented a `NOPASSWD: /opt/homebrew/bin/nmap`
+rule as "narrowly scoped". It wasn't: on an Apple-silicon Homebrew install
+`/opt/homebrew/bin` and the `nmap` binary (and its dylibs) are owned by your
+user, so anything running as that user — the web app included — could swap
+the binary and run it as root. `sudo` checks the *path*, not who owns what's
+at it. If you set that rule up on an earlier version, remove it now:
+
+```bash
+sudo rm /etc/sudoers.d/nmap-assetmgt
 sudo visudo -c   # should print "sudoers files ok"
 ```
 
-Without this rule, the privileged button/CLI flag fails fast with a clear
-error (`sudo -n` is used internally) rather than hanging waiting for a
-password that a non-interactive process could never supply. The same thing
-is available from a terminal: `python -m discovery.cli nmap --sudo`.
+`scripts/preflight.sh` FAILs while that file exists. Off a terminal (launchd,
+a pipe) the CLI falls back to `sudo -n`, which fails fast with a clear error
+instead of hanging on a prompt nobody can answer.
 
 Avoid the alternatives: running the whole app process as root (it has a
-web-exposed attack surface, even if LAN-only) or having the app prompt for
-your Mac password in a web form (that password would transit the app's HTTP
-layer). The scoped sudoers rule above avoids both.
+web-exposed attack surface, even if LAN-only), a passwordless rule (above), or
+having the app prompt for your Mac password in a web form (that password
+would transit the app's HTTP layer).
 
 ### NVD API key (optional)
 
@@ -1066,9 +1072,10 @@ for what each one does. Before relying on the backup agent, confirm `aws` and
 `docker` resolve where its plist expects (`which -a aws docker`) -- launchd
 agents don't inherit a login shell's `PATH`.
 
-Also re-create the nmap sudoers rule from "Nmap privileges" above if you want
-privileged (`-sS`) scans -- it's host-specific and isn't part of anything
-synced or restored here.
+Privileged (`-sS`) nmap scans need nothing installed: they're a terminal-only
+`python -m discovery.cli nmap --sudo` that prompts for your password (see "Nmap
+privileges" above). If this host ever had the old `/etc/sudoers.d/nmap-assetmgt`
+rule, remove it -- `scripts/preflight.sh` will say so.
 
 ### 5. Verify
 
@@ -1216,8 +1223,8 @@ single ICMP echo request to the asset's known IP(s) -- a quick "is this thing
 even on right now?" check, independent of whether any identification probe
 applies. It also runs automatically as part of **Run identification probe**,
 so a "no response" from Sonos/Kasa/SSDP comes with reachability context
-explaining whether the device answered ICMP at all. Unlike the nmap sudoers
-rule above, **ping needs no elevated privileges** -- macOS grants
+explaining whether the device answered ICMP at all. Unlike a privileged nmap
+scan, **ping needs no elevated privileges** -- macOS grants
 unprivileged ICMP to any user, so there's nothing extra to set up.
 
 A ping result replaces the previous one for that asset+IP rather than

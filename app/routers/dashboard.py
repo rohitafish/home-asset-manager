@@ -914,19 +914,6 @@ def discovery_run_nmap(session: Session = Depends(get_session)):
     return RedirectResponse(url="/discovery", status_code=303)
 
 
-@router.post("/discovery/run/nmap-privileged")
-def discovery_run_nmap_privileged(session: Session = Depends(get_session)):
-    if _discovery_already_running(session):
-        return RedirectResponse(url="/discovery", status_code=303)
-    from discovery.cli import run_nmap_discovery
-
-    try:
-        run_nmap_discovery(use_sudo=True)
-    except Exception:
-        logger.exception("privileged nmap discovery failed")
-    return RedirectResponse(url="/discovery", status_code=303)
-
-
 @router.post("/discovery/run/local-mac")
 def discovery_run_local_mac(session: Session = Depends(get_session)):
     if _discovery_already_running(session):
