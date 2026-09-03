@@ -20,25 +20,25 @@
 
 <div class="toolbar">
   <form method="get" class="filters">
-    <select name="asset_type" onchange="this.form.submit()">
+    <select name="asset_type" data-autosubmit>
       <option value="">All types</option>
       {% for t in asset_types %}
         <option value="{{ t }}" {% if t == filters.asset_type %}selected{% endif %}>{{ t }}</option>
       {% endfor %}
     </select>
-    <select name="criticality" onchange="this.form.submit()">
+    <select name="criticality" data-autosubmit>
       <option value="">All criticalities</option>
       {% for c in criticalities %}
         <option value="{{ c }}" {% if c == filters.criticality %}selected{% endif %}>{{ c }}</option>
       {% endfor %}
     </select>
-    <select name="lifecycle_status" onchange="this.form.submit()">
+    <select name="lifecycle_status" data-autosubmit>
       <option value="">All statuses</option>
       {% for s in lifecycle_statuses %}
         <option value="{{ s }}" {% if s == filters.lifecycle_status %}selected{% endif %}>{{ s }}</option>
       {% endfor %}
     </select>
-    <select name="location_id" onchange="this.form.submit()">
+    <select name="location_id" data-autosubmit>
       <option value="">All locations</option>
       {% for loc in locations %}
         <option value="{{ loc.id }}" {% if filters.location_id == loc.id|string %}selected{% endif %}>{{ loc.name }}</option>

@@ -38,6 +38,13 @@ fail() { printf '  FAIL  %s\n' "$1"; }
 
 HOST="${DEPLOY_HOST:-mini}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-~/claudecode/assetmgt}"
+# Interpolated into the remote ssh command string (so `~` expands there):
+# same guard as redeploy.sh -- a path is [A-Za-z0-9_./~-], nothing else.
+case "$REMOTE_DIR" in
+  ''|*[!A-Za-z0-9_./~-]*)
+    echo "DEPLOY_REMOTE_DIR contains characters outside [A-Za-z0-9_./~-] -- refusing to hand it to a remote shell." >&2
+    exit 2 ;;
+esac
 MODE="report"
 USE_REMOTE=1
 STRICT=0

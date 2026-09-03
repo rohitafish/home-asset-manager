@@ -21,13 +21,13 @@
     <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 
-  <!-- One-shot, run hourly -- not a long-running service, so no KeepAlive. -->
+  <!-- One-shot, run hourly - not a long-running service, so no KeepAlive. -->
   <key>StartInterval</key>
   <integer>3600</integer>
   <key>RunAtLoad</key>
   <true/>
 
-  <!-- Only written on failure -- rotate-logs.sh is silent on success, so
+  <!-- Only written on failure - rotate-logs.sh is silent on success, so
        this file is bounded by construction and deliberately not itself
        rotated. -->
   <key>StandardErrorPath</key>

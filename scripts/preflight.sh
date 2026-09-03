@@ -19,6 +19,16 @@ cd "$REPO_DIR"
 FAILS=0
 WARNS=0
 
+# Scratch logs for the pytest/ruff runs below. mktemp, not fixed /tmp names:
+# a predictable path in a shared directory is a symlink target for any other
+# account on the machine. Kept when something FAILs (the messages point at
+# them), removed on a clean run.
+PREFLIGHT_TMP="$(mktemp -d -t assetmgt-preflight)"
+PYTEST_LOG="$PREFLIGHT_TMP/pytest.log"
+RUFF_LOG="$PREFLIGHT_TMP/ruff.log"
+_discard_logs_if_clean() { [ "$FAILS" -eq 0 ] && rm -rf "$PREFLIGHT_TMP"; }
+trap _discard_logs_if_clean EXIT
+
 ok()   { printf '  ok    %s\n' "$1"; }
 warn() { printf '  WARN  %s\n' "$1"; WARNS=$((WARNS + 1)); }
 fail() { printf '  FAIL  %s\n' "$1"; FAILS=$((FAILS + 1)); }
@@ -85,7 +95,7 @@ if [ -d "$REPO_DIR/.venv" ]; then
   if "$REPO_DIR/.venv/bin/python3" -c 'import fastapi, sqlmodel, alembic' >/dev/null 2>&1; then
     ok ".venv has fastapi/sqlmodel/alembic installed"
   else
-    fail ".venv exists but fastapi/sqlmodel/alembic aren't importable -- run: source .venv/bin/activate && pip install -r requirements.txt"
+    fail ".venv exists but fastapi/sqlmodel/alembic aren't importable -- run: source .venv/bin/activate && pip install --require-hashes -r requirements.txt"
   fi
 else
   fail ".venv does not exist -- see README's \"One-time setup\""
@@ -106,26 +116,24 @@ echo "== Tests =="
 # .coveragerc's `source =` paths resolve correctly with no extra handling.
 if [ -x "$REPO_DIR/.venv/bin/coverage" ]; then
   if [ -x "$REPO_DIR/.venv/bin/pytest" ]; then
-    if "$REPO_DIR/.venv/bin/coverage" run -m pytest -q >/tmp/assetmgt-preflight-pytest.log 2>&1; then
-      if "$REPO_DIR/.venv/bin/coverage" report >>/tmp/assetmgt-preflight-pytest.log 2>&1; then
-        ok "pytest suite passes, coverage above threshold ($(tail -1 /tmp/assetmgt-preflight-pytest.log))"
+    if "$REPO_DIR/.venv/bin/coverage" run -m pytest -q >"$PYTEST_LOG" 2>&1; then
+      if "$REPO_DIR/.venv/bin/coverage" report >>"$PYTEST_LOG" 2>&1; then
+        ok "pytest suite passes, coverage above threshold ($(tail -1 "$PYTEST_LOG"))"
       else
-        fail "coverage dropped below the .coveragerc fail_under threshold -- see /tmp/assetmgt-preflight-pytest.log"
+        fail "coverage dropped below the .coveragerc fail_under threshold -- see $PYTEST_LOG"
       fi
     else
-      fail "pytest suite failed -- see /tmp/assetmgt-preflight-pytest.log"
+      fail "pytest suite failed -- see $PYTEST_LOG"
     fi
-    rm -f /tmp/assetmgt-preflight-pytest.log
   else
     warn "pytest not installed in .venv -- run: source .venv/bin/activate && pip install -r requirements-dev.txt"
   fi
 elif [ -x "$REPO_DIR/.venv/bin/pytest" ]; then
-  if "$REPO_DIR/.venv/bin/pytest" -q >/tmp/assetmgt-preflight-pytest.log 2>&1; then
-    ok "pytest suite passes ($(tail -1 /tmp/assetmgt-preflight-pytest.log))"
+  if "$REPO_DIR/.venv/bin/pytest" -q >"$PYTEST_LOG" 2>&1; then
+    ok "pytest suite passes ($(tail -1 "$PYTEST_LOG"))"
   else
-    fail "pytest suite failed -- see /tmp/assetmgt-preflight-pytest.log"
+    fail "pytest suite failed -- see $PYTEST_LOG"
   fi
-  rm -f /tmp/assetmgt-preflight-pytest.log
   warn "coverage not installed in .venv -- ran pytest without the coverage gate (run: source .venv/bin/activate && pip install -r requirements-dev.txt)"
 else
   warn "pytest not installed in .venv -- run: source .venv/bin/activate && pip install -r requirements-dev.txt"
@@ -136,12 +144,11 @@ echo "== Lint =="
 # Same dev-only-tooling reasoning as == Tests == above: missing ruff is a
 # WARN, a real lint failure is a FAIL, regardless of which host this runs on.
 if [ -x "$REPO_DIR/.venv/bin/ruff" ]; then
-  if "$REPO_DIR/.venv/bin/ruff" check "$REPO_DIR" --cache-dir "$REPO_DIR/.ruff_cache" >/tmp/assetmgt-preflight-ruff.log 2>&1; then
+  if "$REPO_DIR/.venv/bin/ruff" check "$REPO_DIR" --cache-dir "$REPO_DIR/.ruff_cache" >"$RUFF_LOG" 2>&1; then
     ok "ruff check passes"
   else
-    fail "ruff check failed -- see /tmp/assetmgt-preflight-ruff.log"
+    fail "ruff check failed -- see $RUFF_LOG"
   fi
-  rm -f /tmp/assetmgt-preflight-ruff.log
 else
   warn "ruff not installed in .venv -- run: source .venv/bin/activate && pip install -r requirements-dev.txt"
 fi
@@ -254,6 +261,28 @@ else
   fail ".env does not exist -- cp .env.example .env, then fill it in by hand (see README)"
 fi
 
+# Other local files holding real data. Not secrets in the credential sense,
+# but a full database dump, the vendor-account serials, and the list of real
+# names the PII scanner looks for shouldn't be readable by every account and
+# process on the machine either. WARN, not FAIL: the default umask leaves
+# them 644 and older checkouts will have them that way.
+_mode_of() { stat -f%OLp "$1" 2>/dev/null || stat -c%a "$1" 2>/dev/null || true; }
+for sensitive in .pii-denylist devices backups; do
+  target="$REPO_DIR/$sensitive"
+  [ -e "$target" ] || continue
+  mode="$(_mode_of "$target")"
+  [ -n "$mode" ] || continue
+  if [ $((8#$mode & 8#077)) -ne 0 ]; then
+    if [ -d "$target" ]; then
+      warn "$sensitive/ is mode $mode -- it holds real inventory data: chmod 700 $sensitive && chmod 600 $sensitive/*"
+    else
+      warn "$sensitive is mode $mode -- it holds real names: chmod 600 $sensitive"
+    fi
+  else
+    ok "$sensitive is owner-only"
+  fi
+done
+
 echo
 echo "== Postgres =="
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
@@ -288,10 +317,65 @@ for label in app logrotate backup; do
     else
       ok "com.assetmgt.$label is installed"
     fi
+    if [ "$label" = app ] && grep -q '0\.0\.0\.0' "$plist"; then
+      fail "$plist binds uvicorn to 0.0.0.0 -- HTTP Basic credentials and the whole inventory cross the LAN in the clear. Re-install from the current scripts/com.assetmgt.app.plist (loopback) and front it with TLS: README's \"Reaching it over HTTPS\""
+    fi
   else
     warn "com.assetmgt.$label is not installed (~/Library/LaunchAgents/com.assetmgt.$label.plist not found)"
   fi
 done
+
+echo
+echo "== Privilege boundaries =="
+# The app runs as an ordinary user and must stay that way. Anything that lets
+# a process running as that user become root turns "someone got into the
+# web app" into "someone owns the Mini", so the known ways are checked here
+# by name. A NOPASSWD sudoers rule for a Homebrew nmap is one: on Apple
+# silicon /opt/homebrew/bin and the binary itself are user-owned, so the rule
+# amounts to "run anything as root". See README's "Nmap privileges".
+NMAP_SUDOERS="/etc/sudoers.d/nmap-assetmgt"
+if [ -e "$NMAP_SUDOERS" ]; then
+  fail "$NMAP_SUDOERS exists -- a passwordless sudo rule on a user-owned nmap binary is a root escalation for anything running as this user. Remove it: sudo rm $NMAP_SUDOERS (privileged scans now prompt for a password from a terminal: python -m discovery.cli nmap --sudo)"
+else
+  ok "no passwordless nmap sudoers rule"
+fi
+
+# The UPS LaunchDaemon runs as root every 60s. It must execute a root-owned
+# copy of scripts/ups-shutdown.sh (not the one in this user-writable
+# checkout) with a PATH that never searches a user-owned directory. See
+# README's "Running the Mini headless".
+UPSMONITOR_PLIST="/Library/LaunchDaemons/com.assetmgt.upsmonitor.plist"
+UPS_INSTALLED_SCRIPT="/usr/local/libexec/assetmgt/ups-shutdown.sh"
+if [ -f "$UPSMONITOR_PLIST" ]; then
+  if grep -q '__ASSETMGT_DIR__' "$UPSMONITOR_PLIST" || grep -q "$REPO_DIR/scripts/ups-shutdown.sh" "$UPSMONITOR_PLIST"; then
+    fail "$UPSMONITOR_PLIST runs the script out of this checkout -- root executing a user-writable file. Re-install from the current template (README, \"Running the Mini headless\"): it must point at $UPS_INSTALLED_SCRIPT"
+  elif ! grep -q "$UPS_INSTALLED_SCRIPT" "$UPSMONITOR_PLIST"; then
+    warn "$UPSMONITOR_PLIST does not point at $UPS_INSTALLED_SCRIPT -- an unexpected ProgramArguments; compare it with scripts/com.assetmgt.upsmonitor.plist"
+  else
+    ok "com.assetmgt.upsmonitor runs the installed root-owned copy, not the checkout"
+  fi
+  if grep -q '/opt/homebrew' "$UPSMONITOR_PLIST"; then
+    fail "$UPSMONITOR_PLIST puts a Homebrew directory on root's PATH -- /opt/homebrew/bin is user-owned, so root would run whatever this user drops there. Re-install from the current template."
+  else
+    ok "com.assetmgt.upsmonitor PATH is system directories only"
+  fi
+  if [ -f "$UPS_INSTALLED_SCRIPT" ]; then
+    OWNER="$(stat -f%Su "$UPS_INSTALLED_SCRIPT" 2>/dev/null || stat -c%U "$UPS_INSTALLED_SCRIPT" 2>/dev/null || true)"
+    MODE="$(stat -f%OLp "$UPS_INSTALLED_SCRIPT" 2>/dev/null || stat -c%a "$UPS_INSTALLED_SCRIPT" 2>/dev/null || true)"
+    if [ "$OWNER" != "root" ] || [ -z "$MODE" ] || [ $((8#$MODE & 8#022)) -ne 0 ]; then
+      fail "$UPS_INSTALLED_SCRIPT is owner=$OWNER mode=$MODE -- root runs it, so it must be root-owned and writable by nobody else: sudo install -o root -g wheel -m 755 scripts/ups-shutdown.sh $UPS_INSTALLED_SCRIPT"
+    else
+      ok "$UPS_INSTALLED_SCRIPT is root-owned and not writable by others"
+    fi
+    if cmp -s "$UPS_INSTALLED_SCRIPT" "$REPO_DIR/scripts/ups-shutdown.sh"; then
+      ok "installed ups-shutdown.sh matches scripts/ups-shutdown.sh"
+    else
+      warn "installed $UPS_INSTALLED_SCRIPT differs from scripts/ups-shutdown.sh -- redeploy.sh does not update the root-owned copy. Re-run: sudo install -o root -g wheel -m 755 scripts/ups-shutdown.sh $UPS_INSTALLED_SCRIPT"
+    fi
+  else
+    fail "$UPSMONITOR_PLIST is installed but $UPS_INSTALLED_SCRIPT is missing -- the daemon can't run. Install it: sudo install -d -o root -g wheel -m 755 /usr/local/libexec/assetmgt && sudo install -o root -g wheel -m 755 scripts/ups-shutdown.sh $UPS_INSTALLED_SCRIPT"
+  fi
+fi
 
 echo
 echo "== Headless / UPS posture =="
@@ -300,13 +384,8 @@ echo "== Headless / UPS posture =="
 # daemon looks identical to a working one right up until the Mini reboots
 # and there's no way back in. See README's "Running the Mini headless" and
 # "Power outages and unattended restart".
-UPSMONITOR_PLIST="/Library/LaunchDaemons/com.assetmgt.upsmonitor.plist"
 if [ -f "$UPSMONITOR_PLIST" ]; then
-  if grep -q '__ASSETMGT_DIR__' "$UPSMONITOR_PLIST"; then
-    fail "$UPSMONITOR_PLIST still has the unsubstituted __ASSETMGT_DIR__ placeholder -- launchd fails to spawn it with no visible error. Re-run the sed step from README."
-  else
-    ok "com.assetmgt.upsmonitor is installed"
-  fi
+  ok "com.assetmgt.upsmonitor is installed (its privilege posture is checked under \"Privilege boundaries\" above)"
   if command -v launchctl >/dev/null 2>&1 && launchctl print system/com.assetmgt.upsmonitor >/dev/null 2>&1; then
     ok "com.assetmgt.upsmonitor is loaded"
   else

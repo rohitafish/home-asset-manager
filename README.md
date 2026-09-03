@@ -105,7 +105,7 @@ brew services start colima
 cd home-asset-manager   # wherever you cloned this repo
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt   # a uv-generated lockfile: every wheel hash-checked
 
 # 5. Configure
 cp .env.example .env
@@ -208,32 +208,38 @@ below.
 
 ### Nmap privileges
 
-By default, "Run nmap scan now" uses an unprivileged TCP-connect scan
-(`-sT`) — no `sudo` needed.
+"Run nmap scan now" uses an unprivileged TCP-connect scan (`-sT`) — no
+`sudo` needed, and nothing on the Discovery page runs as root.
 
-For a fuller SYN scan (`-sS`, faster and more accurate port-state results),
-click **Run privileged scan (sudo)** on the Discovery page. This works because
-of a narrowly-scoped passwordless sudo rule limited to just the `nmap`
-binary — the app process itself still runs as your normal user, not root.
-Set it up once with:
+A fuller SYN scan (`-sS`, faster and more accurate port-state results) needs
+root, and is available **only from a terminal on the host**, where `sudo` can
+ask for your password:
 
 ```bash
-printf '%s ALL=(root) NOPASSWD: /opt/homebrew/bin/nmap\n' "$(whoami)" > /tmp/nmap-assetmgt
-sudo visudo -c -f /tmp/nmap-assetmgt
-sudo install -m 440 -o root -g wheel /tmp/nmap-assetmgt /etc/sudoers.d/nmap-assetmgt
-rm /tmp/nmap-assetmgt
+python -m discovery.cli nmap --sudo
+```
+
+There is deliberately **no passwordless sudoers rule** for this, and no web
+button. Earlier versions documented a `NOPASSWD: /opt/homebrew/bin/nmap`
+rule as "narrowly scoped". It wasn't: on an Apple-silicon Homebrew install
+`/opt/homebrew/bin` and the `nmap` binary (and its dylibs) are owned by your
+user, so anything running as that user — the web app included — could swap
+the binary and run it as root. `sudo` checks the *path*, not who owns what's
+at it. If you set that rule up on an earlier version, remove it now:
+
+```bash
+sudo rm /etc/sudoers.d/nmap-assetmgt
 sudo visudo -c   # should print "sudoers files ok"
 ```
 
-Without this rule, the privileged button/CLI flag fails fast with a clear
-error (`sudo -n` is used internally) rather than hanging waiting for a
-password that a non-interactive process could never supply. The same thing
-is available from a terminal: `python -m discovery.cli nmap --sudo`.
+`scripts/preflight.sh` FAILs while that file exists. Off a terminal (launchd,
+a pipe) the CLI falls back to `sudo -n`, which fails fast with a clear error
+instead of hanging on a prompt nobody can answer.
 
 Avoid the alternatives: running the whole app process as root (it has a
-web-exposed attack surface, even if LAN-only) or having the app prompt for
-your Mac password in a web form (that password would transit the app's HTTP
-layer). The scoped sudoers rule above avoids both.
+web-exposed attack surface, even if LAN-only), a passwordless rule (above), or
+having the app prompt for your Mac password in a web form (that password
+would transit the app's HTTP layer).
 
 ### NVD API key (optional)
 
@@ -271,11 +277,57 @@ sed -i '' "s|__ASSETMGT_DIR__|$(pwd)|g" ~/Library/LaunchAgents/com.assetmgt.app.
 launchctl load ~/Library/LaunchAgents/com.assetmgt.app.plist
 ```
 
-This binds uvicorn to `0.0.0.0:8000`, making the dashboard reachable from any
-device on your home LAN at `http://<mac-lan-ip>:8000`. **Do not forward this
-port on your router** — reachability should stop at your home network
-boundary. The app requires HTTP Basic auth (`APP_ADMIN_USER`/
-`APP_ADMIN_PASSWORD` from `.env`) regardless, as a second layer.
+This binds uvicorn to **loopback only** (`127.0.0.1:8000`). Nothing on the
+LAN can reach it directly, on purpose: the app uses HTTP Basic auth
+(`APP_ADMIN_USER`/`APP_ADMIN_PASSWORD` from `.env`), which puts the password
+on every request, and the inventory it serves (serials, purchase prices,
+uploaded receipts) is exactly the kind of thing that shouldn't cross a home
+network in the clear -- the same network whose IoT devices this app
+catalogues CVEs for. To use it from other devices, put a TLS terminator in
+front of it on the same host: see "Reaching it over HTTPS" just below. **Do
+not forward any port to it on your router** -- reachability should stop at
+your home network (or tailnet) boundary.
+
+The plist also passes `--proxy-headers --forwarded-allow-ips 127.0.0.1`, so
+the loopback proxy can hand the real client IP and scheme through: the
+per-client login throttle then keys on the actual visitor instead of
+collapsing everyone into `127.0.0.1` (where one attacker's failures would
+lock you out too), and the app can send `Strict-Transport-Security` on
+https responses. Only loopback is trusted for those headers.
+
+### Reaching it over HTTPS
+
+The app answers only for `localhost`, `127.0.0.1`, and whatever you list in
+`APP_ALLOWED_HOSTS` in `.env` -- any other `Host` header gets a `400` before
+auth or routing run. So whichever option below you pick, add the name it
+serves to `APP_ALLOWED_HOSTS` and restart the app.
+
+**Recommended: Tailscale Serve.** Nothing listens on the LAN at all; the
+dashboard is reachable only from devices on your tailnet, over a real
+certificate Tailscale issues for the Mini's tailnet name.
+
+```bash
+brew install tailscale && sudo tailscale up      # once; sign in
+tailscale cert --help >/dev/null                 # HTTPS certs need MagicDNS + HTTPS enabled in the admin console, once
+tailscale serve --bg 8000                        # https://<mini>.<tailnet>.ts.net -> 127.0.0.1:8000
+tailscale serve status
+```
+
+Then `APP_ALLOWED_HOSTS=<mini>.<tailnet>.ts.net` in `.env`, and
+`launchctl kickstart -k gui/$(id -u)/com.assetmgt.app`. `tailscale serve`
+persists across reboots on its own. Don't use `tailscale funnel` -- that is
+the public internet.
+
+**Alternative: Caddy on the LAN.** For devices that can't run Tailscale.
+`brew install caddy`, copy `scripts/Caddyfile.example` to
+`/opt/homebrew/etc/Caddyfile`, set the hostname in it and in
+`APP_ALLOWED_HOSTS`, point that name at the Mini (router DNS or `/etc/hosts`),
+and `brew services start caddy`. It uses Caddy's internal CA (`tls internal`);
+trust that root certificate once per client device or browsers will warn.
+Caddy runs as your user, not root, and only ever proxies to loopback.
+
+Either way, `scripts/preflight.sh` FAILs if the installed app plist still
+binds `0.0.0.0`, and warns if `APP_ALLOWED_HOSTS` is missing from `.env`.
 
 **The app refuses to start if `APP_ADMIN_PASSWORD` is unset or still the
 `.env.example` placeholder `change-me`** -- an empty expected password isn't
@@ -511,15 +563,28 @@ none of the user's LaunchAgents started yet), and it needs to call `shutdown`
 directly. That means it installs differently: to `/Library/LaunchDaemons`,
 with `sudo`, not `~/Library/LaunchAgents`.
 
+Because it runs as root, **nothing it executes may be writable by your user**.
+The daemon therefore runs a root-owned *copy* of the script from
+`/usr/local/libexec/assetmgt/`, never the one in this checkout, and its
+`PATH` is the system directories only (`/opt/homebrew/bin` is owned by your
+user on Apple silicon -- a root process that searched it first would run
+whatever you, or anything running as you, dropped there). There is no
+`__ASSETMGT_DIR__` placeholder in this plist for the same reason.
+
 ```bash
 cd ~/claudecode/assetmgt
+sudo install -d -o root -g wheel -m 755 /usr/local/libexec/assetmgt
+sudo install -o root -g wheel -m 755 scripts/ups-shutdown.sh /usr/local/libexec/assetmgt/ups-shutdown.sh
 sudo cp scripts/com.assetmgt.upsmonitor.plist /Library/LaunchDaemons/
-sudo sed -i '' "s|__ASSETMGT_DIR__|$(pwd)|g" /Library/LaunchDaemons/com.assetmgt.upsmonitor.plist
 sudo launchctl load /Library/LaunchDaemons/com.assetmgt.upsmonitor.plist
 ```
 
 (If a previous version is already loaded, `sudo launchctl unload` it first --
-same reasoning as the other three plists' install steps.)
+same reasoning as the other three plists' install steps.) **After any edit to
+`scripts/ups-shutdown.sh`, re-run the `sudo install` line** -- `redeploy.sh`
+syncs the checkout, not the root-owned copy, and `scripts/preflight.sh` warns
+when the two have drifted (and FAILs if the installed copy is writable by
+anyone but root, or the daemon still points into the checkout).
 
 Verify it the same way as the backup agent -- run it once exactly as launchd
 will, rather than trusting a manual `bash scripts/ups-shutdown.sh` run under
@@ -960,7 +1025,7 @@ git clone https://github.com/rohitafish/home-asset-manager.git
 cd home-asset-manager
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt
 cp .env.example .env
 chmod 600 .env
 cp scripts/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
@@ -1066,9 +1131,10 @@ for what each one does. Before relying on the backup agent, confirm `aws` and
 `docker` resolve where its plist expects (`which -a aws docker`) -- launchd
 agents don't inherit a login shell's `PATH`.
 
-Also re-create the nmap sudoers rule from "Nmap privileges" above if you want
-privileged (`-sS`) scans -- it's host-specific and isn't part of anything
-synced or restored here.
+Privileged (`-sS`) nmap scans need nothing installed: they're a terminal-only
+`python -m discovery.cli nmap --sudo` that prompts for your password (see "Nmap
+privileges" above). If this host ever had the old `/etc/sudoers.d/nmap-assetmgt`
+rule, remove it -- `scripts/preflight.sh` will say so.
 
 ### 5. Verify
 
@@ -1216,8 +1282,8 @@ single ICMP echo request to the asset's known IP(s) -- a quick "is this thing
 even on right now?" check, independent of whether any identification probe
 applies. It also runs automatically as part of **Run identification probe**,
 so a "no response" from Sonos/Kasa/SSDP comes with reachability context
-explaining whether the device answered ICMP at all. Unlike the nmap sudoers
-rule above, **ping needs no elevated privileges** -- macOS grants
+explaining whether the device answered ICMP at all. Unlike a privileged nmap
+scan, **ping needs no elevated privileges** -- macOS grants
 unprivileged ICMP to any user, so there's nothing extra to set up.
 
 A ping result replaces the previous one for that asset+IP rather than
@@ -1275,14 +1341,19 @@ desk. `/valuables?all=1` shows the full inventory instead.
 `model_number` (the manufacturer part number / SKU, e.g. Apple's `A2374`) is
 usually typed by hand. But when you save an asset that has **vendor, serial
 number, model, and purchase date all filled** and the `model_number` still
-blank, the app asks Claude for a best guess and fills it in — marked
-`(unverified)` — with a note recording the guess. The purchase date is what
-lets it pin a device's generation (an Amazon Echo bought in 2019 is the 3rd
-Gen). It only fills a blank field, never overwrites, skips assets with a locked
-identity, and does nothing if there's no API key configured — so it's an opt-in
-convenience that disappears if you unset `ANTHROPIC_API_KEY`/`OPENROUTER_API_KEY`.
-The serial gates the feature but is **not** sent to the API. Verify a guess off
-the device and drop the `(unverified)` marker when you do.
+blank, the app asks Claude for a best guess and records it as a **pending
+proposal** on the asset page — the same Apply/Discard card every other
+assistant suggestion gets, so nothing the model produced ever lands on a
+field without a click. (It used to write the guess straight in with an
+`(unverified)` suffix; that was the one path where model output reached a
+field with no human in between, from inputs that are partly device-supplied.)
+The purchase date is what lets it pin a device's generation (an Amazon Echo
+bought in 2019 is the 3rd Gen). It only proposes for a blank field, never an
+existing value, skips assets with a locked identity, and does nothing if
+there's no API key configured — so it's an opt-in convenience that disappears
+if you unset `ANTHROPIC_API_KEY`/`OPENROUTER_API_KEY`. The serial gates the
+feature but is **not** sent to the API. Check the guess against the device
+before applying it.
 
 #### Replacement values
 
@@ -1619,8 +1690,14 @@ that keeps changes honest. None of it runs on the deployed instance —
 
 ```bash
 # dev tooling (pytest + ruff) on top of the runtime deps
-pip install -r requirements.txt -r requirements-dev.txt
+pip install --require-hashes -r requirements.txt -r requirements-dev.txt
 ```
+
+`requirements.txt`/`requirements-dev.txt` are **generated** lockfiles (every
+transitive dependency, with sha256 hashes) -- edit `requirements.in` /
+`requirements-dev.in` and regenerate instead; see CONTRIBUTING.md's
+"Dependencies". CI audits the lock against PyPI's advisory database on every
+push and weekly.
 
 ### Test suite (`pytest`)
 

@@ -83,15 +83,37 @@ def test_each_call_gets_a_fresh_instance():
     assert "Beta" in second.toc
 
 
-def test_html_in_the_source_is_passed_through_not_escaped():
-    """Not a bug -- it's the documented premise of the SECURITY INVARIANT.
-    Markdown output is HTML by design and rendered with `|safe`, which is
-    only sound while the input is the repo's own README. Pinned so that
-    pointing this helper at asset notes or a chat message has to be a
-    deliberate change that fails a test first."""
+def test_benign_html_in_the_source_is_kept():
+    """Markdown output is HTML by design and rendered with `|safe`; harmless
+    raw HTML in the README (a <div> with a class) survives sanitisation."""
     rendered = render_readme_html("<div class='raw'>kept</div>\n")
 
-    assert "<div class='raw'>kept</div>" in rendered.html
+    assert '<div class="raw">kept</div>' in rendered.html
+
+
+def test_script_and_event_handlers_in_the_source_are_removed():
+    """The README is trusted but hand-edited and PR-edited; the rendered
+    fragment is sanitised regardless so a stray <script> or onclick never
+    reaches the operator's authenticated session."""
+    rendered = render_readme_html(
+        "# T\n\n<script>alert(1)</script>\n\n"
+        "<a href=\"javascript:alert(2)\" onclick=\"alert(3)\">x</a>\n\n"
+        "<img src=x onerror=alert(4)>\n"
+    )
+
+    assert "<script" not in rendered.html
+    assert "onclick" not in rendered.html
+    assert "onerror" not in rendered.html
+    assert "javascript:" not in rendered.html
+    assert "alert(1)" not in rendered.html
+
+
+def test_toc_anchors_survive_sanitisation():
+    """The sanitiser must keep the heading ids the toc links point at."""
+    rendered = render_readme_html("# T\n\n## Restoring\n\ntext\n")
+
+    assert 'id="restoring"' in rendered.html
+    assert 'href="#restoring"' in rendered.toc
 
 
 def test_the_real_readme_renders():

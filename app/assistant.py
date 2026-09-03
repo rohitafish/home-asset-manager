@@ -97,15 +97,12 @@ TOOLS = [
         "name": "run_probe",
         "description": (
             "Runs the applicable read-only identification probes (Sonos, TP-Link "
-            "Kasa, generic SSDP/UPnP) against an asset's known IP addresses and "
-            "returns what they found. Never changes device state -- these probes "
-            "only ever read."
+            "Kasa, generic SSDP/UPnP) against the known IP addresses of the asset "
+            "this chat is open on, and returns what they found. Always this asset "
+            "-- it cannot be pointed at another one. Never changes device state "
+            "-- these probes only ever read."
         ),
-        "input_schema": {
-            "type": "object",
-            "properties": {"asset_id": {"type": "integer"}},
-            "required": ["asset_id"],
-        },
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "propose_set_field",
@@ -591,6 +588,22 @@ def _record_proposal(
     }
 
 
+def record_set_field_proposal(
+    session: Session, asset_id: int, field_name: str, value: Any, rationale: str,
+) -> dict:
+    """Records a set_field proposal from a call site that is not a chat tool
+    (today: the model-number auto-guess on save in app/routers/dashboard.py).
+    Same allowlist, coercion check and table as the propose_set_field tool,
+    so whatever the model produced goes through the same Apply/Discard gate
+    instead of landing on the asset directly."""
+    if field_name not in ALLOWED_PROPOSAL_FIELDS:
+        raise ValueError(f"{field_name!r} is not a proposable field")
+    _coerced, error = _coerce_proposal_value(field_name, value)
+    if error:
+        raise ValueError(error)
+    return _record_proposal(session, asset_id, "set_field", {"field_name": field_name, "value": value}, rationale)
+
+
 def _tool_search_assets(session: Session, query: str) -> Any:
     assets = session.exec(
         select(Asset).where(asset_search_filter(query)).limit(20)
@@ -746,7 +759,12 @@ def _tool_propose_link_same_device(session: Session, tool_input: dict, origin_as
 _TOOL_HANDLERS = {
     "search_assets": lambda session, ti, origin: _tool_search_assets(session, ti["query"]),
     "get_asset": lambda session, ti, origin: _tool_get_asset(session, ti["asset_id"]),
-    "run_probe": lambda session, ti, origin: _tool_run_probe(session, ti["asset_id"]),
+    # Deliberately ignores any asset_id in the input: this is the one tool
+    # with a side effect the user didn't click for (network I/O to a device,
+    # plus ProbeResult rows). Device-supplied text reaches the prompt, so a
+    # hostname or banner crafted to say "probe asset 42" must not be able to
+    # aim it anywhere but the asset whose page the user is on.
+    "run_probe": lambda session, ti, origin: _tool_run_probe(session, origin),
     "propose_set_field": _tool_propose_set_field,
     "propose_add_note": _tool_propose_add_note,
     "propose_set_location": _tool_propose_set_location,
@@ -787,8 +805,54 @@ def _execute_tool(session: Session, tool_use, origin_asset_id: int) -> dict:
     return {"type": "tool_result", "tool_use_id": tool_use.id, "content": content, "is_error": is_error}
 
 
-def _append_message(session: Session, asset_id: int, role: str, content: list) -> None:
-    session.add(ChatMessage(asset_id=asset_id, role=role, content_json=json.dumps(content)))
+def _append_message(session: Session, asset_id: int, role: str, content: list) -> ChatMessage:
+    row = ChatMessage(asset_id=asset_id, role=role, content_json=json.dumps(content))
+    session.add(row)
+    return row
+
+
+def _attachment_placeholder(block: dict) -> dict:
+    """The text block that stands in for an image/document block once its
+    bytes are no longer sent: Claude still sees that an attachment was there
+    and what was said about it, just not the content."""
+    name = block.get("title") or "attachment"
+    return {
+        "type": "text",
+        "text": f'[{block["type"]} "{name}" from an earlier turn -- re-upload to re-examine it]',
+    }
+
+
+def _retire_attachments(session: Session, row: ChatMessage) -> None:
+    """Replace the stored image/document blocks on a persisted user message
+    with placeholders, once the turn that uploaded them is over.
+
+    The bytes are needed only while this turn's API calls are being made
+    (every iteration of the tool loop resends them). Replay already strips
+    them from older turns before sending (see _build_messages), so keeping
+    the base64 in ChatMessage.content_json afterwards bought nothing and
+    left every receipt, warranty PDF and screenshot ever uploaded sitting in
+    the database -- and therefore in every backup dump -- indefinitely.
+    Rows written before this existed are handled by the replay-time strip."""
+    try:
+        blocks = json.loads(row.content_json)
+    except (TypeError, ValueError):
+        return
+    if not isinstance(blocks, list) or not any(
+        isinstance(b, dict) and b.get("type") in ("image", "document") for b in blocks
+    ):
+        return
+    row.content_json = json.dumps([
+        _attachment_placeholder(b) if isinstance(b, dict) and b.get("type") in ("image", "document") else b
+        for b in blocks
+    ])
+    try:
+        session.add(row)
+        session.commit()
+    except Exception:
+        # Same shape as _log_usage's guard: a wedged session here must not
+        # turn a turn that already completed into a 500.
+        session.rollback()
+        logger.exception("Could not retire attachments on chat message %s", row.id)
 
 
 # How many real user turns of history to resend. Each turn is one real
@@ -884,11 +948,7 @@ def _replay(session: Session, asset_id: int) -> list[dict]:
             stripped = []
             for block in msg["content"]:
                 if isinstance(block, dict) and block.get("type") in ("image", "document"):
-                    name = block.get("title") or "attachment"
-                    stripped.append({
-                        "type": "text",
-                        "text": f'[{block["type"]} "{name}" from an earlier turn -- re-upload to re-examine it]',
-                    })
+                    stripped.append(_attachment_placeholder(block))
                 else:
                     stripped.append(block)
             msg["content"] = stripped
@@ -1060,7 +1120,7 @@ def run_chat_turn(
         )
     content.append({"type": "text", "text": text})
 
-    _append_message(session, asset.id, "user", content)
+    user_row = _append_message(session, asset.id, "user", content)
     session.commit()
 
     using_openrouter = not os.environ.get("ANTHROPIC_API_KEY")
@@ -1076,104 +1136,110 @@ def run_chat_turn(
     # as of turn start.
     system_prompt = _system_prompt(session, asset)
 
-    for iteration in range(MAX_TOOL_ITERATIONS):
-        # Re-checked every iteration (not just once above): a budget crossed
-        # mid-turn -- by this same multi-iteration turn, or by a concurrent
-        # chat/guess request against another asset -- stops the loop here
-        # rather than continuing to spend past the ceiling. Returning here
-        # (before the API call) leaves the transcript on the same
-        # already-persisted, resendable state as the MAX_TOOL_ITERATIONS
-        # exhaustion path below.
-        reason = budget_block_reason(session)
-        if reason:
-            return f"{reason} This question is saved -- ask again once the budget allows it."
-        create_kwargs: dict = dict(
-            model=MODEL,
-            max_tokens=MAX_TOKENS,
-            # Render order is tools -> system -> messages, so this
-            # breakpoint plus the one on TOOLS' last entry covers the whole
-            # static prefix in one cache entry.
-            system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
-            tools=TOOLS,
-            messages=messages,
-        )
-        if not using_openrouter:
-            # Server-side refusal fallback is an Anthropic-only beta param --
-            # no documented support on OpenRouter's compatible endpoint, so
-            # only send it against the real Anthropic API.
-            create_kwargs["betas"] = ["server-side-fallback-2026-07-01"]
-            create_kwargs["fallbacks"] = "default"
-        try:
-            # Streaming rather than one blocking create() call: Opus 5 has
-            # thinking on by default and thinking tokens count against
-            # MAX_TOKENS=16000, which sits at the top of the non-streaming
-            # band -- well past what reliably finishes inside the 120s
-            # client timeout above. get_final_message() waits for the same
-            # complete Message this used to return directly.
-            with client.beta.messages.stream(**create_kwargs) as stream:
-                resp = stream.get_final_message()
-        except anthropic.AuthenticationError:
-            key_name = "OPENROUTER_API_KEY" if using_openrouter else "ANTHROPIC_API_KEY"
-            return f"The API rejected the key -- check {key_name} in .env."
-        except anthropic.RateLimitError:
-            return "Rate limited by the API. Try again shortly."
-        except anthropic.APITimeoutError:
-            # Must precede APIConnectionError -- APITimeoutError subclasses
-            # it, and "check your internet connection" is the wrong advice
-            # for a request that reached the API and just took too long.
-            return "The API didn't respond in time. Try again -- if it keeps happening, try a shorter question."
-        except anthropic.APIConnectionError:
-            return "Couldn't reach the API -- check this machine's internet connection."
-        except anthropic.NotFoundError:
-            # Most common cause: a stale or typo'd ANTHROPIC_MODEL override
-            # (a documented, user-settable env var). This is a config
-            # problem, not a transient one -- don't imply retrying helps.
-            return f"Model '{MODEL}' was not found -- check ANTHROPIC_MODEL in .env."
-        except anthropic.BadRequestError as exc:
-            return f"The API rejected the request ({exc}). This is a bug, not a transient failure -- retrying won't help."
-        except anthropic.APIStatusError as exc:
-            return f"API error ({exc.status_code}). Try again."
+    # try/finally, not a call at each `return` below: whichever way the turn
+    # ends (final answer, API error, iteration cap), the uploaded bytes have
+    # done their job once no more API calls will be made for this turn.
+    try:
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            # Re-checked every iteration (not just once above): a budget crossed
+            # mid-turn -- by this same multi-iteration turn, or by a concurrent
+            # chat/guess request against another asset -- stops the loop here
+            # rather than continuing to spend past the ceiling. Returning here
+            # (before the API call) leaves the transcript on the same
+            # already-persisted, resendable state as the MAX_TOOL_ITERATIONS
+            # exhaustion path below.
+            reason = budget_block_reason(session)
+            if reason:
+                return f"{reason} This question is saved -- ask again once the budget allows it."
+            create_kwargs: dict = dict(
+                model=MODEL,
+                max_tokens=MAX_TOKENS,
+                # Render order is tools -> system -> messages, so this
+                # breakpoint plus the one on TOOLS' last entry covers the whole
+                # static prefix in one cache entry.
+                system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
+                tools=TOOLS,
+                messages=messages,
+            )
+            if not using_openrouter:
+                # Server-side refusal fallback is an Anthropic-only beta param --
+                # no documented support on OpenRouter's compatible endpoint, so
+                # only send it against the real Anthropic API.
+                create_kwargs["betas"] = ["server-side-fallback-2026-07-01"]
+                create_kwargs["fallbacks"] = "default"
+            try:
+                # Streaming rather than one blocking create() call: Opus 5 has
+                # thinking on by default and thinking tokens count against
+                # MAX_TOKENS=16000, which sits at the top of the non-streaming
+                # band -- well past what reliably finishes inside the 120s
+                # client timeout above. get_final_message() waits for the same
+                # complete Message this used to return directly.
+                with client.beta.messages.stream(**create_kwargs) as stream:
+                    resp = stream.get_final_message()
+            except anthropic.AuthenticationError:
+                key_name = "OPENROUTER_API_KEY" if using_openrouter else "ANTHROPIC_API_KEY"
+                return f"The API rejected the key -- check {key_name} in .env."
+            except anthropic.RateLimitError:
+                return "Rate limited by the API. Try again shortly."
+            except anthropic.APITimeoutError:
+                # Must precede APIConnectionError -- APITimeoutError subclasses
+                # it, and "check your internet connection" is the wrong advice
+                # for a request that reached the API and just took too long.
+                return "The API didn't respond in time. Try again -- if it keeps happening, try a shorter question."
+            except anthropic.APIConnectionError:
+                return "Couldn't reach the API -- check this machine's internet connection."
+            except anthropic.NotFoundError:
+                # Most common cause: a stale or typo'd ANTHROPIC_MODEL override
+                # (a documented, user-settable env var). This is a config
+                # problem, not a transient one -- don't imply retrying helps.
+                return f"Model '{MODEL}' was not found -- check ANTHROPIC_MODEL in .env."
+            except anthropic.BadRequestError as exc:
+                return f"The API rejected the request ({exc}). This is a bug, not a transient failure -- retrying won't help."
+            except anthropic.APIStatusError as exc:
+                return f"API error ({exc.status_code}). Try again."
 
-        # Before the stop_reason branches below: those return early, and a
-        # refused or truncated call is still a billed call worth accounting
-        # for.
-        _log_usage(
-            asset.id, iteration, using_openrouter, getattr(resp, "usage", None),
-            session=session, call_site="chat",
-            model=getattr(resp, "model", None), stop_reason=getattr(resp, "stop_reason", None),
-        )
-
-        if resp.stop_reason == "refusal":
-            category = getattr(resp.stop_details, "category", None) if resp.stop_details else None
-            return f"Claude declined to respond to this request{f' ({category})' if category else ''}."
-
-        if resp.stop_reason == "max_tokens":
-            # Nothing from this response is persisted: a truncated
-            # tool_use block would carry incomplete JSON input, and an
-            # orphaned tool_use with no tool_result pair would break the
-            # *next* call's replay (the API 400s on that). Ending on the
-            # last complete, already-persisted user turn keeps it
-            # resendable instead.
-            return (
-                "Claude's response was cut off after hitting the token limit -- "
-                "try asking something more specific, or breaking the question into smaller parts."
+            # Before the stop_reason branches below: those return early, and a
+            # refused or truncated call is still a billed call worth accounting
+            # for.
+            _log_usage(
+                asset.id, iteration, using_openrouter, getattr(resp, "usage", None),
+                session=session, call_site="chat",
+                model=getattr(resp, "model", None), stop_reason=getattr(resp, "stop_reason", None),
             )
 
-        content = _request_safe_blocks([block.model_dump() for block in resp.content])
-        _append_message(session, asset.id, "assistant", content)
-        messages.append({"role": "assistant", "content": content})
-        session.commit()
+            if resp.stop_reason == "refusal":
+                category = getattr(resp.stop_details, "category", None) if resp.stop_details else None
+                return f"Claude declined to respond to this request{f' ({category})' if category else ''}."
 
-        tool_uses = [b for b in resp.content if b.type == "tool_use"]
-        if not tool_uses:
-            return None
+            if resp.stop_reason == "max_tokens":
+                # Nothing from this response is persisted: a truncated
+                # tool_use block would carry incomplete JSON input, and an
+                # orphaned tool_use with no tool_result pair would break the
+                # *next* call's replay (the API 400s on that). Ending on the
+                # last complete, already-persisted user turn keeps it
+                # resendable instead.
+                return (
+                    "Claude's response was cut off after hitting the token limit -- "
+                    "try asking something more specific, or breaking the question into smaller parts."
+                )
 
-        results = [_execute_tool(session, tu, asset.id) for tu in tool_uses]
-        _append_message(session, asset.id, "user", results)
-        messages.append({"role": "user", "content": results})
-        session.commit()
+            content = _request_safe_blocks([block.model_dump() for block in resp.content])
+            _append_message(session, asset.id, "assistant", content)
+            messages.append({"role": "assistant", "content": content})
+            session.commit()
 
-    return "Stopped after several tool calls without a final answer -- ask a follow-up to continue."
+            tool_uses = [b for b in resp.content if b.type == "tool_use"]
+            if not tool_uses:
+                return None
+
+            results = [_execute_tool(session, tu, asset.id) for tu in tool_uses]
+            _append_message(session, asset.id, "user", results)
+            messages.append({"role": "user", "content": results})
+            session.commit()
+
+        return "Stopped after several tool calls without a final answer -- ask a follow-up to continue."
+    finally:
+        _retire_attachments(session, user_row)
 
 
 def chat_transcript(session: Session, asset_id: int) -> list[dict]:
@@ -1250,7 +1316,7 @@ def describe_tool_call(name: str, tool_input: dict, current_asset_id: int | None
     if name == "get_asset":
         return f"Looked up asset #{ti['asset_id']}" if ti.get("asset_id") else "Looked up an asset"
     if name == "run_probe":
-        return f"Ran identification probes on asset #{ti['asset_id']}" if ti.get("asset_id") else "Ran identification probes"
+        return "Ran identification probes on this asset"  # always the chat's own asset
     return name  # unknown/future tool -- fall back to the raw name, never crash
 
 

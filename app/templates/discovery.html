@@ -11,9 +11,6 @@
   <form method="post" action="/discovery/run/nmap">
     <button type="submit">Run nmap scan now</button>
   </form>
-  <form method="post" action="/discovery/run/nmap-privileged">
-    <button type="submit">Run privileged scan (sudo)</button>
-  </form>
   <form method="post" action="/discovery/run/sonos">
     <button type="submit">Discover Sonos household</button>
   </form>
@@ -30,11 +27,10 @@
   </form>
 </div>
 <p>"Run nmap scan now" uses an unprivileged TCP-connect scan (<code>-sT</code>).
-   "Run privileged scan (sudo)" uses a full SYN scan (<code>-sS</code>), which
-   is faster and gives more accurate port-state results, via a narrowly-scoped
-   passwordless sudo rule limited to just the <code>nmap</code> binary (see
-   README) &mdash; the app process itself still runs as a normal user, not
-   root.</p>
+   Nothing on this page runs as root. A fuller SYN scan (<code>-sS</code>) is
+   available only from a terminal on the host, where <code>sudo</code> can ask
+   for your password: <code>python -m discovery.cli nmap --sudo</code> (see
+   README's "Nmap privileges").</p>
 <p>"Discover Sonos household" enumerates every Sonos player from the local
    port-1400 API of one already-known player, and writes what it finds into the
    inventory. It seeds only from Sonos IPs <em>already</em> in the inventory

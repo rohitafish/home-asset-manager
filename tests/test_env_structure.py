@@ -12,6 +12,7 @@ is byte-unchanged at teardown -- cheap insurance that no test escaped tmp_path.
 """
 
 import hashlib
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -308,3 +309,32 @@ def test_secret_regex_matches_check_pii():
     check_pii = SCRIPT.parent / "check-pii.sh"
     env_struct = SCRIPT
     assert extract(check_pii, "SECRET_RE") == extract(env_struct, "secret_re")
+
+
+# --- the remote directory is a path, never shell ------------------------------
+
+@pytest.mark.parametrize("bad", ["$(touch pwned)", "~/x; rm -rf /", "a b", "`id`"])
+def test_remote_dir_with_shell_characters_is_refused_before_anything_runs(sandbox, bad):
+    """DEPLOY_REMOTE_DIR is interpolated into the remote ssh command string
+    on purpose (so `~` expands on the Mini). The guard is what makes that
+    safe: anything outside [A-Za-z0-9_./~-] exits 2 before ssh, before
+    reading .env, before --write-example could touch anything."""
+    _write_env(sandbox, "DATABASE_URL=x\n")
+    proc = subprocess.run(
+        ["bash", "scripts/env-structure.sh", "--no-remote"],
+        cwd=sandbox, capture_output=True, text=True,
+        env={**os.environ, "DEPLOY_REMOTE_DIR": bad},
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "DEPLOY_REMOTE_DIR" in proc.stderr
+    assert not (sandbox / "pwned").exists()
+
+
+def test_default_remote_dir_passes_the_guard(sandbox):
+    _write_env(sandbox, "DATABASE_URL=x\n")
+    proc = subprocess.run(
+        ["bash", "scripts/env-structure.sh", "--no-remote"],
+        cwd=sandbox, capture_output=True, text=True,
+        env={k: v for k, v in os.environ.items() if k != "DEPLOY_REMOTE_DIR"},
+    )
+    assert proc.returncode in (0, 1), proc.stdout + proc.stderr   # 2 is the guard

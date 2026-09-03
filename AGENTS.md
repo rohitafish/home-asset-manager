@@ -43,7 +43,11 @@ assistant or human contributor.
   `com.assetmgt.upsmonitor.plist` is the one exception to "`~/Library/
   LaunchAgents`" in that sentence -- it's a LaunchDaemon and installs to
   `/Library/LaunchDaemons` with `sudo`, see README's "Running the Mini
-  headless".
+  headless". It runs as root, so it executes a root-owned copy of
+  `scripts/ups-shutdown.sh` under `/usr/local/libexec/assetmgt/` (no
+  `__ASSETMGT_DIR__` sed step for this one); an edit to that script needs
+  the `sudo install` line from the README re-run on the Mini, or the daemon
+  keeps running the old copy.
 - The Mini runs headless (no display or keyboard attached) with FileVault
   **on** and auto-login **off** -- deliberately, and don't propose disabling
   either. `~/Library/LaunchAgents` (the app, Colima, backups) lives on the
@@ -402,16 +406,25 @@ assistant or human contributor.
   then `coverage report` as two separate steps (see `.github/workflows/ci.yml`)
   so a red X unambiguously means either "a test broke" or "coverage dropped",
   never both at once.
-- `requirements.txt`/`requirements-dev.txt` use exact `==` pins, not floors —
-  see the header comment in `requirements.txt` for why (redeploy.sh installing
-  a floor on every deploy is the same dev/prod drift risk as the brew-upgrade
-  incident above), and the brew-upgrade bullet above for why this isn't
-  inconsistent with leaving `python@3.x` itself unpinned -- same rule, two
-  different risk shapes. Not a hash-locked `pip-compile` lockfile: that would
-  defend against a tampered release, which Dependabot's alerts (0 open as of
-  writing) don't cover, at the cost of `redeploy.sh` needing
-  `--require-hashes` and every Dependabot PR needing the lock regenerated.
-  Exact pins remove the drift risk with neither cost.
+- `requirements.txt`/`requirements-dev.txt` are hash-locked lockfiles
+  generated with `uv pip compile --universal` (not bare pip-compile --
+  compiling on this arm64 Mac without `--universal` once silently dropped
+  SQLAlchemy's platform-gated `greenlet` dependency, which then failed
+  `--require-hashes` on CI's x86_64 Linux runner) from
+  `requirements.in`/`requirements-dev.in` (the files a human edits -- exact
+  `==` pins, never floors). `redeploy.sh` and CI install with
+  `--require-hashes`. This reverses an earlier decision to
+  stop at exact top-level pins: that reasoning assumed exact pins removed
+  the drift risk, but they only pin the ~13 direct packages -- the ~35
+  transitives behind them (uvicorn's `[standard]` extras, anthropic's
+  `httpx2`, ...) still floated, and were being installed unverified on the
+  Mini on every deploy. The costs that decision cited are gone or automated:
+  Dependabot regenerates a lock itself when it sees the `.in` files, and
+  `--require-hashes` is a one-word change in `redeploy.sh`. See
+  CONTRIBUTING.md's "Dependencies" for the regenerate command, and the
+  brew-upgrade bullet above for why this isn't inconsistent with leaving
+  `python@3.x` itself unpinned -- same rule, two different risk shapes. CI
+  also runs `pip-audit` against the lock on every push and weekly.
 - Dependencies are in `requirements-dev.txt`, not `requirements.txt` —
   `scripts/redeploy.sh` only installs the latter, so a *fresh* checkout
   anywhere (including a from-scratch Mini rebuild) starts without pytest.

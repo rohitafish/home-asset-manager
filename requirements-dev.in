@@ -1,0 +1,15 @@
+# Dev-only tooling -- not installed on the deployed instance (scripts/redeploy.sh
+# only installs requirements.txt). Same edit-here-then-regenerate rule as
+# requirements.in; the constraint line keeps the two resolutions consistent
+# so dev and runtime never disagree about a shared transitive:
+#
+#   uv pip compile --universal --generate-hashes -o requirements-dev.txt requirements-dev.in
+#
+# Install both with:
+#   pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+-c requirements.txt
+pytest==9.1.1
+ruff==0.16.4
+# Measures what the suite actually reaches (settings in .coveragerc). CI runs
+# the suite under it and fails below the threshold there.
+coverage==7.16.0

@@ -8,21 +8,49 @@ Two phases, matching the plan:
   2. `-sV` service/version fingerprinting against the hosts found up.
 
 Raw SYN scans and OS detection need root; default here is `-sT` (TCP connect,
-no privileges required) with an opt-in `use_sudo=True` for a fuller `-sS` scan
-when the caller has confirmed they can provide elevated privileges (see
-README). This module shells out to the `nmap` binary rather than depending on
-python-nmap so the exact command run is explicit and auditable.
+no privileges required) with an opt-in `use_sudo=True` for a fuller `-sS` scan.
+The sudo path is CLI-only (`python -m discovery.cli nmap --sudo`, run from a
+terminal that can answer sudo's password prompt): there is deliberately no
+web route for it and no passwordless sudoers rule. A NOPASSWD rule on a
+Homebrew-installed nmap is a root escalation for anything running as the
+app user, because /opt/homebrew/bin and the binary itself are user-owned --
+swap the binary, run it as root. See README's "Nmap privileges". This module
+shells out to the `nmap` binary rather than depending on python-nmap so the
+exact command run is explicit and auditable.
 """
 
+import ipaddress
+import logging
 import shutil
 import subprocess
+import sys
 import xml.etree.ElementTree as ET  # Element type for annotations only
 
 from defusedxml.ElementTree import fromstring  # safe parse of nmap's XML output
 
+logger = logging.getLogger(__name__)
+
 
 class NmapNotFoundError(RuntimeError):
     pass
+
+
+def _ipv4_only(values) -> list[str]:
+    """The subset of `values` that parse as IPv4 literals, in order.
+
+    Everything that reaches nmap's argv from outside this module -- the
+    addresses parsed back out of the previous scan's XML -- goes through
+    here first. No shell is involved, but nmap reads its own argv: a value
+    beginning with `-` would be taken as an option, and a hostname would
+    trigger a DNS lookup this module never intends. Drop and log rather
+    than raise; one odd address shouldn't abort a whole sweep."""
+    kept = []
+    for value in values:
+        try:
+            kept.append(str(ipaddress.IPv4Address(value)))
+        except (ipaddress.AddressValueError, ValueError, TypeError):
+            logger.warning("nmap: dropping non-IPv4 scan target %r", value)
+    return kept
 
 
 def _require_nmap() -> str:
@@ -38,11 +66,28 @@ def _require_nmap() -> str:
 _KILL_GRACE_SECONDS = 10
 
 
+def _stdin_is_tty() -> bool:
+    """Split out so tests can pin both branches of _sudo_prefix without a
+    real terminal."""
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _sudo_prefix() -> list[str]:
+    """argv prefix for a privileged run. On a terminal, plain `sudo` so it can
+    prompt for the password (the supported way to get an -sS scan). Anywhere
+    else -- launchd, a web request, a pipe -- `sudo -n` so a missing
+    credential fails fast with a clear error instead of hanging forever on a
+    prompt nobody can answer. No web route calls this any more; the -n branch
+    is the backstop for a non-interactive CLI invocation."""
+    return ["sudo"] if _stdin_is_tty() else ["sudo", "-n"]
+
+
 def _run_nmap(args: list[str], use_sudo: bool = False, timeout: int = 1800) -> str:
     nmap_path = _require_nmap()
-    # -n: non-interactive. Fails fast with a clear error instead of hanging if
-    # the scoped NOPASSWD sudoers rule for nmap isn't present (see README).
-    cmd = (["sudo", "-n", nmap_path] if use_sudo else [nmap_path]) + args
+    cmd = [*_sudo_prefix(), nmap_path, *args] if use_sudo else [nmap_path, *args]
     # Not plain subprocess.run(..., timeout=timeout): on a timeout, run()
     # kills only the direct child and then calls an UNTIMED communicate() to
     # drain output before re-raising. With use_sudo=True the direct child is
@@ -164,7 +209,7 @@ def discover_network(
 ) -> list[dict]:
     """Full two-phase discovery: ping sweep, then service scan on hosts up."""
     up_hosts = ping_sweep(subnets, use_sudo=use_sudo)
-    ips = [h["ip"] for h in up_hosts if h["ip"]]
+    ips = _ipv4_only(h["ip"] for h in up_hosts if h["ip"])
     scanned = service_scan(ips, top_ports=top_ports, use_sudo=use_sudo)
     scanned_by_ip = {h["ip"]: h for h in scanned if h["ip"]}
 

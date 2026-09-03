@@ -5,11 +5,16 @@ generic "what's a nice library" list, but grounded in how each one is used
 in *this* codebase specifically. Written for a human to read; not a
 machine-readable SPDX/CycloneDX document.
 
-The real, versioned source of truth is `requirements.txt`/
-`requirements-dev.txt` in the repo (exact `==` pins — see the header
-comment there for why, and [Configuration Reference](Configuration-Reference)
-for the same "if this page and the repo disagree, trust the repo" caveat).
-This page explains what each pin is *for*.
+The real, versioned source of truth is `requirements.in`/
+`requirements-dev.in` in the repo (the direct dependencies, exact `==`
+pins) and the `requirements.txt`/`requirements-dev.txt` lockfiles generated
+from them by `uv pip compile --universal` — every transitive package too,
+hashed for every platform, each with a sha256
+hash, installed with `--require-hashes` on the deployed instance and in CI.
+See [Configuration Reference](Configuration-Reference) for the same "if this
+page and the repo disagree, trust the repo" caveat. This page explains what
+each direct pin is *for*; the lockfile is where to look for the full
+transitive list.
 
 ## Language runtime
 
@@ -32,6 +37,7 @@ This page explains what each pin is *for*.
 | **httpx** | 0.28.1 | The HTTP client behind every other outbound call this app makes: UniFi's API (`discovery/unifi_client.py`), a Sonos player's local UPnP/SOAP API (`probes/sonos_api.py`), and the CVE/KEV/EPSS feeds (`discovery/cve_enrich.py`). No longer used for the Anthropic/OpenRouter API — see **anthropic** below. |
 | **typer** | 0.27.1 | The CLI framework behind `discovery/cli.py` (`python -m discovery.cli ...`) — how discovery collectors run standalone or from cron, outside the web UI. |
 | **markdown** | 3.10.3 | Renders `README.md` to HTML for the in-app `/readme` route. |
+| **nh3** | 0.3.7 | Sanitises that rendered HTML (an allowlist of tags/attributes; drops `<script>`, event handlers, `javascript:` URLs) before the template marks it `\|safe`. Python-Markdown passes raw HTML through untouched, and the README is the one `\|safe` output in the app. |
 | **anthropic** | 1.0.0 | The official Anthropic API client, used by the optional investigation assistant (`app/assistant.py`) — and for the OpenRouter fallback too, since OpenRouter exposes an Anthropic-compatible endpoint. As of 1.0.0 it brings its own HTTP transport, **httpx2** (a separate package from **httpx** above, pulled in transitively — not pinned directly in `requirements.txt`), so this is the one outbound call in the app that no longer rides `httpx`. |
 | **defusedxml** | 0.7.1 | Safe parsing for anything device-supplied: nmap's `-oX` output, a Sonos player's UPnP/SOAP responses. Closes the standard XML entity-expansion class of attack the stdlib parser doesn't guard against by default — see [Security Model](Security-Model). |
 

@@ -28,7 +28,7 @@ claim you have made a change; only that you've proposed one."*
 |---|---|
 | `search_assets` | Substring search by hostname/vendor/owner. Read-only. |
 | `get_asset` | Full detail for one asset — type, location, interfaces, recent notes, recent probe evidence, existing relationships. Read-only. |
-| `run_probe` | Runs whatever [probes](Probes-Reference) apply to an asset's known IPs and returns what they found. Read-only. |
+| `run_probe` | Runs whatever [probes](Probes-Reference) apply to the known IPs of **the asset the chat is open on** and returns what they found. It takes no asset id: this is the one tool with a side effect the user didn't click for (network I/O, probe-result rows), and device-supplied text reaches the prompt, so it deliberately cannot be aimed at any other asset. Read-only on the device. |
 | `propose_set_field` | Draft a change to **one** field, from an explicit allowlist (below). Validated before it's even recorded. |
 | `propose_add_note` | Draft an investigation-log note. |
 | `propose_set_location` | Draft assigning a room/position (a new room is created on Apply if the name doesn't match one). |
@@ -81,8 +81,9 @@ out of the envelope.
 The assistant doesn't get everything just because it might help. Two concrete
 examples:
 
-- The one-shot **model-number guess** (used to auto-fill `model_number` on
-  save) sends only vendor, model, and purchase date — **never the serial
+- The one-shot **model-number guess** (which proposes a `model_number` on
+  save, as a normal Apply/Discard card — it never writes the field itself)
+  sends only vendor, model, and purchase date — **never the serial
   number**, since it barely helps that specific guess and is identifying data.
 - The system prompt explicitly forbids copying a **billing/shipping address
   or a personal contact detail** (name, email, phone) from an attached

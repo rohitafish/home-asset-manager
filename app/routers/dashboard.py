@@ -63,7 +63,10 @@ templates.env.filters["money"] = template_filters.money
 # fresh fetch, regardless of how aggressively a given browser caches -- some
 # (e.g. Chrome) won't revalidate a stale stylesheet on a normal reload, only
 # a hard reload, unless the URL itself changes.
-_STATIC_VERSION = str(int(Path("app/static/style.css").stat().st_mtime))
+_STATIC_VERSION = str(int(max(
+    Path("app/static/style.css").stat().st_mtime,
+    Path("app/static/dashboard.js").stat().st_mtime,
+)))
 templates.env.globals["static_version"] = _STATIC_VERSION
 
 
@@ -146,12 +149,17 @@ def _autofill_replacement_value(asset: Asset) -> None:
 
 def _autofill_model_number(session: Session, asset: Asset) -> None:
     """When an asset is well-documented (vendor + serial + model + purchase date
-    all set) but has no model_number, ask Claude for a best guess and fill it,
-    marked unverified. A synchronous one-shot LLM call -- assistant.guess_model_number
-    returns None on any failure / no API key, so the save is never blocked or
-    broken. Fills only when empty (never overwrites), skips a locked identity,
-    and records provenance as an AssetNote. `asset.id` must be set (call after
-    the row is flushed) for the note. The serial gates but isn't sent to the API.
+    all set) but has no model_number, ask Claude for a best guess and record
+    it as a pending ChangeProposal for the user to Apply or Discard -- the
+    same approve-first path every other assistant suggestion takes. It used
+    to write the guess straight onto the asset with an "(unverified)" suffix;
+    that was the one place model output reached a field with no human in
+    between, and the inputs (vendor/model) are partly device-supplied. A
+    synchronous one-shot LLM call -- assistant.guess_model_number returns
+    None on any failure / no API key, so the save is never blocked or broken.
+    Proposes only when the field is empty (never overwrites), skips a locked
+    identity. `asset.id` must be set (call after the row is flushed). The
+    serial gates but isn't sent to the API.
 
     Runs at most once per asset: model_number_guess_attempted_at is stamped on
     any real attempt (including a no-answer miss), so a guess that comes back
@@ -174,16 +182,16 @@ def _autofill_model_number(session: Session, asset: Asset) -> None:
     if not guess:
         return
     if guess == "N/A":
-        asset.model_number = "N/A"
-        body = "model_number set to N/A -- no distinct model number for this device (auto, Claude)."
-    else:
-        asset.model_number = f"{guess} (unverified)"
-        body = (
-            f"model_number auto-guessed as '{guess}' from vendor/model/purchase date "
-            "(Claude). Unverified -- confirm on the device."
+        rationale = (
+            "Auto-guess on save (Claude): this device has no distinct model number "
+            "beyond its model name. Apply to record N/A, or discard."
         )
-    session.add(asset)
-    session.add(AssetNote(asset_id=asset.id, author="claude", body=body))
+    else:
+        rationale = (
+            "Auto-guess on save (Claude), from vendor/model/purchase date only. "
+            "Unverified -- confirm on the device before applying."
+        )
+    assistant.record_set_field_proposal(session, asset.id, "model_number", guess, rationale)
 
 
 _WARRANTY_LEAVING_SOON_DAYS = 90
@@ -911,19 +919,6 @@ def discovery_run_nmap(session: Session = Depends(get_session)):
         run_nmap_discovery()
     except Exception:
         logger.exception("nmap discovery failed")
-    return RedirectResponse(url="/discovery", status_code=303)
-
-
-@router.post("/discovery/run/nmap-privileged")
-def discovery_run_nmap_privileged(session: Session = Depends(get_session)):
-    if _discovery_already_running(session):
-        return RedirectResponse(url="/discovery", status_code=303)
-    from discovery.cli import run_nmap_discovery
-
-    try:
-        run_nmap_discovery(use_sudo=True)
-    except Exception:
-        logger.exception("privileged nmap discovery failed")
     return RedirectResponse(url="/discovery", status_code=303)
 
 

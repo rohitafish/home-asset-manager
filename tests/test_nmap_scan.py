@@ -62,3 +62,92 @@ def test_run_nmap_kills_the_child_process(monkeypatch):
     # that no leftover `sleep 30` from this test is still running.
     ps = subprocess.run(["pgrep", "-f", "sleep 30"], capture_output=True, text=True)
     assert ps.stdout.strip() == "", f"leftover sleep process(es): {ps.stdout!r}"
+
+
+# -- sudo argv -----------------------------------------------------------------
+# The privileged (-sS) path is CLI-only. There is no web route for it and no
+# passwordless sudoers rule: on a Homebrew install /opt/homebrew/bin and the
+# nmap binary are owned by the app user, so `NOPASSWD: /opt/homebrew/bin/nmap`
+# is "run anything as root" for every process running as that user. The
+# supported way is a terminal where sudo can prompt; off a terminal, -n keeps
+# a missing credential from hanging forever on a prompt nobody can answer.
+
+
+def test_sudo_prefix_prompts_on_a_terminal(monkeypatch):
+    monkeypatch.setattr(nmap_scan, "_stdin_is_tty", lambda: True)
+    assert nmap_scan._sudo_prefix() == ["sudo"]
+
+
+def test_sudo_prefix_is_non_interactive_off_a_terminal(monkeypatch):
+    monkeypatch.setattr(nmap_scan, "_stdin_is_tty", lambda: False)
+    assert nmap_scan._sudo_prefix() == ["sudo", "-n"]
+
+
+def test_stdin_is_tty_is_false_for_a_pipe(monkeypatch):
+    import io
+
+    monkeypatch.setattr(nmap_scan.sys, "stdin", io.StringIO())
+    assert nmap_scan._stdin_is_tty() is False
+
+
+def test_stdin_is_tty_is_false_when_stdin_is_closed(monkeypatch):
+    class Closed:
+        def isatty(self):
+            raise ValueError("I/O operation on closed file")
+
+    monkeypatch.setattr(nmap_scan.sys, "stdin", Closed())
+    assert nmap_scan._stdin_is_tty() is False
+
+
+def test_run_nmap_only_prefixes_sudo_when_asked(monkeypatch):
+    captured = {}
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return ("<nmaprun/>", "")
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return FakeProc()
+
+    monkeypatch.setattr(nmap_scan.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(nmap_scan, "_require_nmap", lambda: "/fake/nmap")
+    monkeypatch.setattr(nmap_scan, "_stdin_is_tty", lambda: False)
+
+    nmap_scan._run_nmap(["-sn"], use_sudo=True)
+    assert captured["cmd"] == ["sudo", "-n", "/fake/nmap", "-sn"]
+
+    nmap_scan._run_nmap(["-sn"])
+    assert captured["cmd"] == ["/fake/nmap", "-sn"], "unprivileged runs must never touch sudo"
+
+
+# -- argv hygiene ---------------------------------------------------------------
+
+
+def test_ipv4_only_keeps_literal_addresses_and_drops_the_rest(caplog):
+    values = ["192.168.1.5", "--script=evil.nse", "printer.local", "fe80::1", None, "10.0.0.256", " 10.0.0.1"]
+    with caplog.at_level("WARNING"):
+        kept = nmap_scan._ipv4_only(values)
+    assert kept == ["192.168.1.5"]
+    assert caplog.text.count("dropping non-IPv4 scan target") == 6
+
+
+def test_discover_network_only_hands_ipv4_literals_to_the_service_scan(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(nmap_scan, "ping_sweep", lambda subnets, use_sudo=False: [
+        {"ip": "192.168.1.9", "mac": None, "vendor": None, "hostname": None},
+        {"ip": "-oN /tmp/x", "mac": None, "vendor": None, "hostname": None},
+        {"ip": None, "mac": "aa:bb:cc:00:00:01", "vendor": None, "hostname": None},
+    ])
+
+    def fake_service_scan(ips, top_ports=1000, use_sudo=False):
+        seen["ips"] = list(ips)
+        return []
+
+    monkeypatch.setattr(nmap_scan, "service_scan", fake_service_scan)
+
+    nmap_scan.discover_network(["192.168.1.0/24"])
+
+    assert seen["ips"] == ["192.168.1.9"]
