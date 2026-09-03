@@ -63,7 +63,10 @@ templates.env.filters["money"] = template_filters.money
 # fresh fetch, regardless of how aggressively a given browser caches -- some
 # (e.g. Chrome) won't revalidate a stale stylesheet on a normal reload, only
 # a hard reload, unless the URL itself changes.
-_STATIC_VERSION = str(int(Path("app/static/style.css").stat().st_mtime))
+_STATIC_VERSION = str(int(max(
+    Path("app/static/style.css").stat().st_mtime,
+    Path("app/static/dashboard.js").stat().st_mtime,
+)))
 templates.env.globals["static_version"] = _STATIC_VERSION
 
 

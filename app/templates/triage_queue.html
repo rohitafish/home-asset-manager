@@ -12,7 +12,7 @@
   </div>
   {% if assets %}
   <form method="post" action="/assets/triage/confirm-all"
-        onsubmit="return confirm('Confirm all {{ assets|length }} discovered device(s) as active?')">
+        data-confirm='Confirm all {{ assets|length }} discovered device(s) as active?'>
     <button type="submit">Confirm all</button>
   </form>
   {% endif %}

@@ -48,15 +48,30 @@ def test_referrer_policy_is_not_no_referrer():
     assert _apply_security_headers(Response()).headers["Referrer-Policy"] != "no-referrer"
 
 
-def test_csp_permits_self_hosted_inline_script_and_style():
-    """script-src/style-src deliberately keep 'unsafe-inline' -- see the
-    comment above _SECURITY_HEADERS for why (a handful of inline onclick/
-    onchange/onsubmit handlers, no untrusted-HTML render path for it to
-    defend against). Pin the choice so it isn't silently tightened or
-    loosened without updating that reasoning."""
+def test_csp_script_src_is_self_only_and_style_keeps_inline():
+    """No inline script executes anywhere in the app: the templates'
+    behaviours live in app/static/dashboard.js. style-src keeps
+    'unsafe-inline' for the style=\"...\" attributes -- CSS can't run code.
+    Pin both so neither is silently loosened."""
     csp = _apply_security_headers(Response()).headers["Content-Security-Policy"]
-    assert "script-src 'self' 'unsafe-inline'" in csp
+    assert "script-src 'self'; " in csp
+    assert "'unsafe-inline'" not in csp.split("script-src")[1].split(";")[0]
     assert "style-src 'self' 'unsafe-inline'" in csp
+
+
+def test_no_template_carries_an_inline_event_handler():
+    """The CSP above blocks them, so one added back by hand would fail
+    silently in the browser -- catch it here instead. htmx's hx-* attributes
+    are not inline script and are fine."""
+    import re
+    from pathlib import Path
+
+    offenders = [
+        (p.name, m.group(0))
+        for p in Path("app/templates").glob("*.html")
+        for m in re.finditer(r"\son[a-z]+=", p.read_text())
+    ]
+    assert offenders == []
 
 
 def test_hsts_only_on_a_secure_response():
