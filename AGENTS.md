@@ -176,6 +176,38 @@ assistant or human contributor.
   host responsive". Don't chase this by tuning the app, Colima's `cpu`/
   `memory` allocation, or the launchd agents' priority; there's no measured
   gain there.
+- **TLS for `assets.rohita.com` comes from ACM's managed ACME endpoint, not
+  Let's Encrypt.** `assets.rohita.com` is a public A record in Route 53
+  (`Z05906141QTVV2UUOL5D6`) pointing at the Mini's private LAN address --
+  nothing outside the LAN can actually reach it, since no port is forwarded,
+  but the name still needs a publicly trusted cert for LAN browsers to accept
+  it without a per-device CA install (see README's "Reaching it over HTTPS").
+  ACM's ACME endpoint (`arn:aws:acm:us-east-1:430443789074:acme-endpoint/
+  63638726-6c66-4f01-9430-0e5c9e5ce45d`) has `rohita.com` subdomains
+  pre-approved via a domain validation ACM auto-provisioned as a CNAME in the
+  zone, so issuance uses `PRE_APPROVED` authorizations -- **no DNS-01
+  challenge runs per issuance/renewal**, and no Route 53 write credentials
+  need to live on the Mini at all (an earlier `assetmgt-acme` IAM user,
+  created for a Let's Encrypt dns-01 approach, is superseded by this and
+  should be deleted once issuance is confirmed working). What the Mini does
+  need: an external-account-binding (EAB) key ID + HMAC key, tied to an IAM
+  role (`assetmgt-acme-eab-role`) scoped to `acm:RequestCertificate`/
+  `acm:RevokeCertificate` for `*.rohita.com` only. Treat the EAB HMAC key like
+  `APP_ADMIN_PASSWORD` -- it authorizes issuance for the whole pre-approved
+  scope, so it's generated and placed on the Mini directly, never through an
+  AI coding session (see "PII / privacy" for the general secrets-handling
+  rule). Certbot on the Mini requests against the endpoint's directory URL
+  with `--eab-kid`/`--eab-hmac-key`; Caddy then serves the resulting
+  `fullchain.pem`/`privkey.pem` directly (`scripts/Caddyfile.example`).
+  Certificates are 45-day, so **`--issuance-timeout 120`** is required
+  (issuance can take up to two minutes and most clients' default timeout is
+  shorter) and renewal needs to run roughly monthly --
+  `scripts/com.assetmgt.certrenew.plist` is a user LaunchAgent (not installed
+  by `redeploy.sh`; install it the same manual way as the other agents, per
+  the plist note above) running `certbot renew` with a `--deploy-hook` that
+  reloads Caddy. `rohita.com` has no CAA record; add one pinning Amazon
+  issuance (`0 issue "amazon.com"`) only *after* the first certificate is
+  issued -- adding it first risks a `CAA_ERROR` on the domain validation.
 
 ## Authentication
 - `app/auth.py`'s `require_admin` is the only thing between a LAN device and
