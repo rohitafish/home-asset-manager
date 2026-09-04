@@ -59,11 +59,11 @@ def test_daemon_has_no_user_name_key_so_it_really_is_root():
 
 
 def test_agents_still_take_the_checkout_placeholder():
-    """The counterweight: the three user-level agents legitimately run out of
+    """The counterweight: the user-level agents legitimately run out of
     the checkout via the __ASSETMGT_DIR__ sed step, and preflight.sh relies on
     that placeholder to detect an unsubstituted install. Don't let the
     daemon's stricter rule leak into them by accident."""
-    assert len(AGENT_PLISTS) == 3, AGENT_PLISTS
+    assert len(AGENT_PLISTS) == 4, AGENT_PLISTS
     for plist in AGENT_PLISTS:
         assert "__ASSETMGT_DIR__" in plist.read_text(), plist.name
 

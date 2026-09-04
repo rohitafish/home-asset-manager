@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.assetmgt.certrenew</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__ASSETMGT_DIR__/scripts/certbot-renew.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__ASSETMGT_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Homebrew installs both certbot and caddy under /opt/homebrew/bin;
+         `brew services restart caddy` (certbot-renew.sh's deploy hook) also
+         needs Homebrew's own bin on PATH. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- Certificates are 45-day (ACM ACME, not Let's Encrypt's 90-day); a
+       daily check with renew_before_expiry set to 15 days in certbot's
+       renewal conf renews roughly monthly, well inside the window, at
+       $1/FQDN per renewal. One-shot, not a long-running service, so no
+       KeepAlive - same shape as com.assetmgt.logrotate. -->
+  <key>StartInterval</key>
+  <integer>86400</integer>
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Only written on failure - certbot-renew.sh runs certbot renew quietly,
+       so a successful no-op (the common case, most days) stays silent. -->
+  <key>StandardErrorPath</key>
+  <string>__ASSETMGT_DIR__/logs/certrenew.error.log</string>
+</dict>
+</plist>
