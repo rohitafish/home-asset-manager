@@ -208,6 +208,27 @@ assistant or human contributor.
   reloads Caddy. `rohita.com` has no CAA record; add one pinning Amazon
   issuance (`0 issue "amazon.com"`) only *after* the first certificate is
   issued -- adding it first risks a `CAA_ERROR` on the domain validation.
+- **Provisioning the EAB (already done, recorded here because the ARNs and
+  the profile gotcha are not discoverable from the code).** The binding is
+  `arn:aws:acm:us-east-1:430443789074:acme-endpoint/
+  63638726-6c66-4f01-9430-0e5c9e5ce45d/acme-external-account-binding/
+  bdcbf8e4-3e23-4c00-bcb5-90eccd30e316`, tied to IAM role
+  `assetmgt-acme-eab-role` (trust policy naming `acm-acme.amazonaws.com` as
+  principal -- ACM's ACME service assumes it via STS at issuance time, which
+  is why this has to be a *role*; an IAM user has no trust policy and cannot
+  be the target of `sts:AssumeRole`). Two things that cost time the first
+  time round:
+  - **Use `--profile schengen-iac-test`, not `default`.** Creating the role
+    needs IAM write, and `create-acme-external-account-binding` needs
+    `iam:PassRole` on the role -- `default`/s3-user has neither and fails
+    with `AccessDeniedException`. See "AWS credentials" below.
+  - **`create-acme-external-account-binding` returns only ARNs, not
+    credentials.** The key ID and MAC key come from a separate call,
+    `aws acm get-acme-external-account-binding-credentials
+    --acme-external-account-binding-arn <EAB ARN>`, which is re-runnable --
+    so the secret is retrievable later and losing the terminal output does
+    not mean recreating the binding. Retrieve and place it directly on the
+    Mini; never through an AI coding session.
 
 ## Authentication
 - `app/auth.py`'s `require_admin` is the only thing between a LAN device and
@@ -279,8 +300,12 @@ assistant or human contributor.
   `BACKUP_AWS_ACCESS_KEY_ID`, `BACKUP_AWS_SECRET_ACCESS_KEY`,
   `BACKUP_AWS_REGION`) live **in `.env`**, not `~/.aws/credentials` —
   deliberately different from the original design, because this uses an
-  existing, full-S3-access IAM identity (`s3-user`) shared with other work
-  in the account, not a dedicated one scoped to this project. `backup-db.sh`
+  existing, broadly-scoped IAM identity (`s3-user`) shared with other work
+  in the account, not a dedicated one scoped to this project. "Full S3
+  access" undersells it: `s3-user` also has unscoped IAM list/read and
+  Route 53 `ChangeResourceRecordSets` on *any* zone in the account. It has
+  no IAM write, though (no `iam:CreateUser`/`CreateAccessKey`/`PassRole`) --
+  that's the `schengen-iac-test` profile's job, per the TLS section above. `backup-db.sh`
   reads these directly via `grep`/`cut` (see the script's `_env_var()`
   helper) rather than sourcing `.env`, specifically to avoid exporting every
   *other* secret in that file into the process for no reason.
