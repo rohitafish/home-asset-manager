@@ -2,19 +2,26 @@
 # Serve (README, "Reaching it over HTTPS"). Copy to /opt/homebrew/etc/Caddyfile
 # and `brew services start caddy`. Caddy runs as your user, not root.
 #
-# Replace assets.home with the name your LAN resolves to this Mac (a static
-# DNS entry on the router, or /etc/hosts on each client), and list the same
-# name in APP_ALLOWED_HOSTS in .env. `tls internal` issues a certificate from
-# Caddy's own local CA; trust that CA once per client device (`caddy trust`
-# on the Mini prints where the root certificate lives) or browsers will warn.
+# This serves a publicly trusted certificate for assets.rohita.com, issued by
+# ACM's managed ACME endpoint and renewed on the Mini by certbot (see
+# AGENTS.md's "Deployment topology" for the full issuance/renewal setup and
+# scripts/com.assetmgt.certrenew.plist). Because the cert is publicly trusted,
+# there's no per-client CA to install, unlike the old `tls internal` setup.
+# List the same name in APP_ALLOWED_HOSTS in .env.
 #
 # Caddy sets X-Forwarded-For / X-Forwarded-Proto on its own; uvicorn trusts
 # them only from 127.0.0.1 (see scripts/com.assetmgt.app.plist).
 
-assets.home {
-	tls internal
+assets.rohita.com {
+	tls /Users/YOURUSER/.certbot/config/live/assets.rohita.com/fullchain.pem \
+	    /Users/YOURUSER/.certbot/config/live/assets.rohita.com/privkey.pem
 	reverse_proxy 127.0.0.1:8000
 }
 
 # Plain http on the LAN stays closed: nothing listens on :80 for the app, and
 # the app itself only listens on loopback.
+#
+# Have a device that can't reach a public name (fully offline LAN, or a
+# client that won't do public DNS)? Fall back to the old local-CA approach:
+# a separate site block for a LAN-only name with `tls internal`, trusted
+# once per client device with `caddy trust`.

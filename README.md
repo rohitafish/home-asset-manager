@@ -318,13 +318,25 @@ Then `APP_ALLOWED_HOSTS=<mini>.<tailnet>.ts.net` in `.env`, and
 persists across reboots on its own. Don't use `tailscale funnel` -- that is
 the public internet.
 
-**Alternative: Caddy on the LAN.** For devices that can't run Tailscale.
-`brew install caddy`, copy `scripts/Caddyfile.example` to
-`/opt/homebrew/etc/Caddyfile`, set the hostname in it and in
-`APP_ALLOWED_HOSTS`, point that name at the Mini (router DNS or `/etc/hosts`),
-and `brew services start caddy`. It uses Caddy's internal CA (`tls internal`);
-trust that root certificate once per client device or browsers will warn.
-Caddy runs as your user, not root, and only ever proxies to loopback.
+**Alternative: Caddy on the LAN, with a real certificate.** For devices that
+can't run Tailscale. `brew install caddy`, copy `scripts/Caddyfile.example` to
+`/opt/homebrew/etc/Caddyfile`, and point a name you own at the Mini's LAN
+address (an A record in your own public DNS zone works fine even though the
+address itself is private -- nothing outside your LAN can actually reach it,
+since no port is forwarded). Get a publicly trusted certificate for that name
+via ACM's managed ACME endpoint and certbot's DNS-01-free `PRE_APPROVED`
+issuance flow -- see AGENTS.md's "Deployment topology" for the one-time AWS
+setup, the certbot invocation, and the renewal LaunchAgent
+(`scripts/com.assetmgt.certrenew.plist`). Point the Caddyfile's `tls` line at
+the issued cert/key, add the name to `APP_ALLOWED_HOSTS`, and
+`brew services start caddy`. Because the certificate is publicly trusted,
+there's no per-client CA to install. Caddy runs as your user, not root, and
+only ever proxies to loopback.
+
+No public DNS zone, or a client that won't do public DNS at all? Fall back to
+Caddy's internal CA (`tls internal` in place of the cert/key paths) for a
+LAN-only name (router DNS or `/etc/hosts`); trust that root certificate once
+per client device (`caddy trust`) or browsers will warn.
 
 Either way, `scripts/preflight.sh` FAILs if the installed app plist still
 binds `0.0.0.0`, and warns if `APP_ALLOWED_HOSTS` is missing from `.env`.

@@ -19,7 +19,10 @@ uploaded receipts) shouldn't cross the network in the clear — least of all a
 network full of the IoT devices this app catalogues CVEs for. It is reached
 through a TLS terminator on the same host: Tailscale Serve (recommended;
 nothing listens on the LAN, access is tailnet-only, real certificate) or
-Caddy with a local CA. The app answers only for `localhost`, `127.0.0.1` and
+Caddy with a publicly trusted certificate for a name you own (issued via
+ACM's managed ACME endpoint, renewed automatically -- no per-device CA to
+install, unlike Caddy's older local-CA setup). The app answers only for
+`localhost`, `127.0.0.1` and
 the names listed in `APP_ALLOWED_HOSTS`; any other `Host` header is refused
 with a `400` before authentication or routing run, which closes DNS-rebinding
 and Host-confusion tricks. `Strict-Transport-Security` is sent on https
