@@ -776,18 +776,27 @@ assistant or human contributor.
   This is the supported way to notice and close Mini-vs-template drift, since
   `redeploy.sh` never syncs `.env`.
 - **`IP_ALLOWLIST`** (inside `check-pii.sh`) suppresses dotted-quad strings
-  confirmed *not* to be IP addresses — currently just the Sonos test
-  fixture's `<hardwareVersion>`, which the pattern can't tell from an
-  address. Without it that WARN re-fires on every push touching the file
-  forever, and a warning people learn to scroll past is exactly how a real
-  one gets missed later. Two rules for it: entries are `<path>|<literal>`
-  and **file-scoped on purpose**, so the same digits elsewhere still warn
+  confirmed *not* to be IP addresses — the Sonos test fixture's
+  `<hardwareVersion>`, which the pattern can't tell from an address, plus a
+  few reserved or well-known public addresses used deliberately as test
+  fixtures (Google Public DNS, RFC 5737 TEST-NET-3). Without it that WARN
+  re-fires on every push touching the file forever, and a warning people
+  learn to scroll past is exactly how a real one gets missed later. Two
+  rules for it: entries are `<path>|<literal>` and **file-scoped on
+  purpose**, so the same digits elsewhere still warn
   (`tests/test_check_pii.py` pins that — don't "simplify" it to a bare list
   of values); and the bar for adding one is **confirmed not an IP**, not
   "probably fine". A real public endpoint that's genuinely meant to be
   there should stay a WARN. Note an entry has to cover `check-pii.sh`
   itself as well, since writing the literal puts that dotted quad into the
-  script's own source.
+  script's own source. **It is not the tool for an impossible quad**,
+  though: `_is_possible_ipv4` gates the rule on four octets of 0-255 before
+  the allowlist is consulted, so something like `999.1.1.1` never reaches it
+  — an octet over 255 can't be an address, so it can't be a leaked one, and
+  buying those off with entries inverts what the allowlist is for. That gate
+  is a validity check rather than a stricter regex on purpose: the tail of an
+  impossible quad is itself well-formed, so a tighter pattern would report
+  the same false positive with a truncated value.
 - **Install the pre-push hook once per dev-machine clone** (hooks aren't
   cloned/synced by git):
   ```bash
