@@ -298,17 +298,45 @@ assistant or human contributor.
   `redeploy.sh`'s exclude list) in the same commit that introduces it.
 - AWS credentials for the backup job (`BACKUP_S3_BUCKET`,
   `BACKUP_AWS_ACCESS_KEY_ID`, `BACKUP_AWS_SECRET_ACCESS_KEY`,
-  `BACKUP_AWS_REGION`) live **in `.env`**, not `~/.aws/credentials` —
-  deliberately different from the original design, because this uses an
-  existing, broadly-scoped IAM identity (`s3-user`) shared with other work
-  in the account, not a dedicated one scoped to this project. "Full S3
-  access" undersells it: `s3-user` also has unscoped IAM list/read and
-  Route 53 `ChangeResourceRecordSets` on *any* zone in the account. It has
-  no IAM write, though (no `iam:CreateUser`/`CreateAccessKey`/`PassRole`) --
-  that's the `schengen-iac-test` profile's job, per the TLS section above. `backup-db.sh`
-  reads these directly via `grep`/`cut` (see the script's `_env_var()`
-  helper) rather than sourcing `.env`, specifically to avoid exporting every
-  *other* secret in that file into the process for no reason.
+  `BACKUP_AWS_REGION`) live **in `.env`**, not `~/.aws/credentials`.
+  `backup-db.sh` reads them directly via `grep`/`cut` (see the script's
+  `_env_var()` helper) rather than sourcing `.env`, specifically to avoid
+  exporting every *other* secret in that file into the process for no
+  reason.
+- **The backup identity is `assetmgt-backup`**, a dedicated IAM user
+  created 2026-09-06. Its inline policy (`assetmgt-backup-s3`) is tracked
+  as `scripts/assetmgt-backup-policy.json` carrying a `__BUCKET__`
+  placeholder substituted at apply time -- the bucket name is an `.env`
+  value and this repo is public, so the same pattern as the plists'
+  `__ASSETMGT_DIR__` applies. It grants exactly what the script calls:
+  `s3:ListBucket` on the bucket (the monthly-exists check), and
+  `s3:PutObject` + `s3:PutObjectRetention` + `s3:GetObject` on `daily/*`
+  and `monthly/*`. A put carrying Object Lock params needs **both** of the
+  first two -- with `PutObject` alone it fails `AccessDenied` in a way that
+  reads like a bucket problem; `GetObject` is for the `head-object` probe
+  in the upload retry path. A `aws:SecureTransport` deny makes the
+  HTTPS-only property explicit rather than merely the CLI's default.
+  **There is deliberately no `s3:DeleteObject`** -- the script never
+  deletes in S3, lifecycle does that server-side, so Object Lock is the
+  backstop rather than the only thing standing between a leaked credential
+  and the backup history. Creating the user needs IAM write, i.e. the
+  `schengen-iac-test` profile: `default`/s3-user has none (no
+  `iam:CreateUser`/`CreateAccessKey`/`PassRole`), per the TLS section
+  above.
+- **Not yet switched over (as of 2026-09-06).** The user, its policy and
+  its access key all exist, every permission is confirmed via `aws iam
+  simulate-principal-policy` (`DeleteObject` correctly `implicitDeny`), and
+  the key pair is in the password manager. But the Mini's `.env` still
+  authenticates as **`s3-user`**, a broadly-scoped identity shared with
+  other work in the account -- "full S3 access" undersells it: it also
+  carries unscoped IAM list/read and Route 53 `ChangeResourceRecordSets` on
+  *any* zone in the account, so a `.env` leak on the Mini currently exposes
+  the DNS control plane the whole TLS setup depends on. Swapping the two
+  `BACKUP_AWS_*` values needs a session on the LAN. Afterwards: run
+  `scripts/backup-db.sh` by hand and confirm both the `daily/` upload and
+  the `backups/last-success` marker before walking away, then **rotate
+  `s3-user`'s access key** -- that pair has sat in a `.env` for months, and
+  creating a new identity does not retroactively protect the old one.
 - `pg_dump`/`pg_restore` always run **inside** the `db` container
   (`docker compose exec -T db sh -c '...'`), never against `DATABASE_URL` —
   its `postgresql+psycopg://` prefix is a SQLAlchemy dialect string, not a
