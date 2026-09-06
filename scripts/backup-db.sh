@@ -243,8 +243,35 @@ _put_object_with_retries "daily/$NAME" "$RETAIN_UNTIL_DAILY"
 # monthly copy yet creates it; later days that month find it present and skip.
 # Still a second *upload*, not an S3-side copy: no ordering dependency on the
 # daily upload, and its own (longer) Object Lock retention.
+#
+# The existence check is `s3api list-objects-v2`, deliberately not the more
+# obvious `aws s3 ls`. `s3 ls` exits 1 both for "the prefix matched nothing"
+# and for a real failure (a denied ListBucket, a network error), so the
+# earlier `[ -z "$(aws s3 ls ... 2>/dev/null)" ]` -- stderr discarded, only
+# emptiness tested -- read *every* failure as "no monthly copy yet" and
+# uploaded one. Every day, for as long as the failure lasted, each under a
+# 186-day COMPLIANCE lock that nobody (not the account owner, not AWS
+# support) can remove early. list-objects-v2 separates the two cases: exit 0
+# with `None` when the prefix is genuinely empty, non-zero on a real error.
+# That distinction became load-bearing with the move to the least-privilege
+# assetmgt-backup identity, which is the first credential that could
+# plausibly lack s3:ListBucket at all (see AGENTS.md).
 YEAR_MONTH="$(date -u +%Y-%m)"
-if [ -z "$(aws s3 ls "s3://$BUCKET/monthly/assetmgt-$YEAR_MONTH-" 2>/dev/null)" ]; then
+if ! MONTHLY_EXISTING="$(aws s3api list-objects-v2 \
+      --bucket "$BUCKET" \
+      --prefix "monthly/assetmgt-$YEAR_MONTH-" \
+      --query 'Contents[0].Key' \
+      --output text)"; then
+  # Loud, and without writing the success marker: /health's backup_stale then
+  # surfaces this the same way it surfaces any other silent backup failure.
+  # Today's daily is already safely in S3 -- only the monthly promotion is
+  # unresolved -- but the alternative is skipping it silently, and if the
+  # cause persists the whole month that loses the monthly copy entirely,
+  # which is exactly the failure the marker exists to catch.
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh: could not list monthly/ to check for this month's copy -- refusing to guess (a blind upload here would duplicate a 186-day locked object). Today's daily/$NAME uploaded fine." >&2
+  exit 1
+fi
+if [ "$MONTHLY_EXISTING" = "None" ]; then
   RETAIN_UNTIL_MONTHLY="$(date -u -v+186d +%Y-%m-%dT%H:%M:%SZ)"
   _put_object_with_retries "monthly/$NAME" "$RETAIN_UNTIL_MONTHLY"
 fi
