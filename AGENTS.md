@@ -346,19 +346,31 @@ assistant or human contributor.
 - Never dump per-table — there's no `ON DELETE CASCADE` anywhere in this
   schema (see "Asset-child tables" below), so FK integrity depends on the
   dump being one transactionally-consistent snapshot.
-- Because the backup credential has full S3 access (not least-privilege),
-  delete protection is enforced by **S3 Object Lock (Compliance mode)** on
-  the bucket itself instead of by an IAM policy — S3 refuses to delete or
-  overwrite a locked object before its retention date regardless of what
-  permissions the caller has. This is why uploads use `aws s3api put-object
-  --object-lock-mode COMPLIANCE --object-lock-retain-until-date ...` rather
-  than `aws s3 cp`, which doesn't expose Object Lock at all. **Object Lock
-  can only be enabled at bucket *creation*** — it cannot be retrofitted onto
-  an existing bucket, and locking an object is a genuine one-way door for
-  its retention period (30 days for `daily/`, 186 for `monthly/`), with no
-  override, not even for the account owner or AWS support. Don't "simplify"
-  this back to `aws s3 sync --delete` — the whole point is that nothing can
-  delete these objects early, including a fully compromised Mini.
+- Delete protection is enforced by **S3 Object Lock (Compliance mode)**
+  rather than by an IAM policy — S3 refuses to delete or overwrite a locked
+  object before its retention date regardless of what permissions the caller
+  has, which is what makes the history survive even a fully compromised
+  Mini. This is why uploads use `aws s3api put-object --object-lock-mode
+  COMPLIANCE --object-lock-retain-until-date ...` rather than `aws s3 cp`,
+  which doesn't expose Object Lock at all. **Object Lock can only be enabled
+  at bucket *creation*** — it cannot be retrofitted onto an existing bucket,
+  and locking an object is a genuine one-way door for its retention period
+  (30 days for `daily/`, 186 for `monthly/`), with no override, not even for
+  the account owner or AWS support. Don't "simplify" this back to
+  `aws s3 sync --delete`.
+- **The bucket also carries a default retention of COMPLIANCE / 30 days**,
+  set 2026-09-06. Object Lock was *enabled* on the bucket from creation, but
+  until then every lock came from the per-object flags above — so an upload
+  that omitted them would have landed **unlocked**, and an unlocked object is
+  deletable by anything holding `s3:DeleteObject` (`s3-user` still does).
+  The default closes that fail-open gap without changing current behaviour:
+  the script's explicit values still win where it sets them, `daily/` at the
+  same 30 days and `monthly/` overriding upward to 186. The cost is that
+  **every** object written to this bucket from now on is undeletable for at
+  least 30 days — stray and mistaken ones included, with no override for
+  anyone — so don't point test uploads at it. Removing the rule later stops
+  *future* objects being auto-locked; it does not unlock anything already
+  locked.
 - Retention is age-based (S3 Lifecycle deletes what Object Lock's retention
   has already released — the two work together, not against each other),
   which means **a silently failing job loses the entire backup history
