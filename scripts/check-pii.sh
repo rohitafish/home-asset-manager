@@ -351,8 +351,11 @@ fi
 # The next two entries are a different case: genuine IP addresses (not
 # lookalikes like 1.9.1.10 above), but standard, reserved, or well-known
 # public ones used deliberately as test fixtures -- 8.8.8.8 is Google Public
-# DNS (test_sonos_api.py's SSRF-guard test uses it as an obvious "reject this
-# public address" case); 203.0.113.7 is inside 203.0.113.0/24, the IANA
+# DNS, the canonical "obviously not on my LAN, reject it" fixture, and three
+# security tests use it as exactly that: test_sonos_api.py's and
+# test_sonos_household.py's SSRF guards (a device-supplied host pointing off
+# the LAN) and test_ping.py's argv guard (a non-literal that must never reach
+# ping's argv). 203.0.113.7 is inside 203.0.113.0/24, the IANA
 # TEST-NET-3 block reserved by RFC 5737 specifically for documentation/
 # examples and never assignable to a real host (test_check_pii.py's own
 # fixture data, confirming the "genuine public address" WARN path still
@@ -361,6 +364,8 @@ IP_ALLOWLIST='tests/test_sonos_api.py|1.9.1.10
 scripts/check-pii.sh|1.9.1.10
 tests/test_check_pii.py|1.9.1.10
 tests/test_sonos_api.py|8.8.8.8
+tests/test_ping.py|8.8.8.8
+tests/test_sonos_household.py|8.8.8.8
 tests/test_check_pii.py|203.0.113.7
 scripts/check-pii.sh|8.8.8.8
 scripts/check-pii.sh|203.0.113.7
@@ -375,11 +380,41 @@ scripts/check-pii.sh|203.0.113.0'
 # tree:file:line:match output), not the whole line -- a naive "exclude
 # lines containing :192.168." check misses matches with other text (a URL
 # scheme, a key=value prefix) between the field separator and the IP.
+#
+# Validity gate: the extraction regex matches any three-dot run of digits, so
+# version strings and deliberately-unassignable test sentinels come through it
+# too -- 999.1.1.1 in tests/test_ping.py is not an address anyone could ever
+# hold, so it cannot be a leaked one. Those used to warn forever and had to be
+# bought off with an allowlist entry each, which is backwards: the allowlist is
+# for values that *look* like addresses and had to be investigated, not for
+# strings that arithmetic alone rules out.
+#
+# Done here rather than by tightening the regex, because a stricter pattern
+# still matches the valid-looking tail *inside* an impossible quad (the last
+# eight characters of 999.1.1.1 are a perfectly well-formed address), so it
+# would report the same false positive with a truncated value -- worse, not
+# better. Base 10 is forced with 10# so a zero-padded octet isn't read as octal.
+_is_possible_ipv4() {
+  local o
+  local -a octets
+  IFS=. read -r -a octets <<< "$1"
+  [ "${#octets[@]}" -eq 4 ] || return 1
+  for o in "${octets[@]}"; do
+    case "$o" in
+      ''|*[!0-9]*) return 1 ;;
+    esac
+    [ "${#o}" -le 3 ] && [ "$((10#$o))" -le 255 ] || return 1
+  done
+  return 0
+}
+
 IP_RAW="$(echo "$COMMITS" | xargs -I{} git --no-pager grep --no-color -noE '([0-9]{1,3}\.){3}[0-9]{1,3}' {} -- 2>/dev/null)"
 IP_HITS=""
 if [ -n "$IP_RAW" ]; then
   while IFS= read -r line; do
     ip="${line##*:}"
+    # Not a possible address at all -- nothing here can be a leaked one.
+    _is_possible_ipv4 "$ip" || continue
     case "$ip" in
       10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.2[0-9].*|172.30.*|172.31.*|192.168.*|127.*|169.254.*|0.0.0.0|22[4-9].*|23[0-9].*)
         continue

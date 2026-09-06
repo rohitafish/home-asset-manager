@@ -137,6 +137,53 @@ def test_a_genuine_public_address_still_warns(repo):
     assert "WARN" in out and "203.0.113.7" in out, f"expected a warning:\n{out}"
 
 
+def test_impossible_dotted_quad_does_not_warn(repo):
+    """An octet over 255 can never be an IPv4 address, so it can never be a
+    leaked one. These used to warn forever and had to be bought off with an
+    allowlist entry each -- which inverts what the allowlist is for, and
+    trains people to scroll past the control.
+    """
+    rng = _commit_file(repo, UNLISTED_PATH, 'HOST = "999.1.1.1"\n')
+
+    out = _run(repo, rng)
+
+    assert "999.1.1.1" not in out, f"impossible address must not warn:\n{out}"
+
+
+def test_the_valid_tail_of_an_impossible_quad_is_not_reported(repo):
+    """Why the gate is a validity check and not a stricter regex: drop the
+    leading digit of an impossible quad and what remains is itself a
+    well-formed address, so a tighter pattern would report the same false
+    positive with a truncated value. Nothing from that line may surface.
+
+    The tail is derived rather than written out: spelling it here would put
+    a genuinely routable address into this file, which the scanner would
+    then warn on at every push forever -- the exact noise this gate exists
+    to remove, and it caught this test when it was first written that way.
+    """
+    impossible = "999.1.1.1"
+    rng = _commit_file(repo, UNLISTED_PATH, f'HOST = "{impossible}"\n')
+
+    out = _run(repo, rng)
+
+    assert impossible[1:] not in out, f"no substring may be reported:\n{out}"
+
+
+def test_octet_boundary(repo):
+    """255 is assignable, 256 is not -- pin both sides in one commit. The
+    valid case reuses the already-allowlisted TEST-NET-3 value so this test
+    doesn't plant a permanent WARN in the project's own history.
+    """
+    rng = _commit_file(
+        repo, UNLISTED_PATH, 'GOOD = "203.0.113.7"\nBAD = "203.0.113.256"\n',
+    )
+
+    out = _run(repo, rng)
+
+    assert "203.0.113.7" in out, f"a valid address must still warn:\n{out}"
+    assert "203.0.113.256" not in out, f"an octet over 255 must not warn:\n{out}"
+
+
 # --- Rule (a): vendor-prefixed secret formats ------------------------------
 
 # Synthetic samples, each built to satisfy one pattern without being a real
