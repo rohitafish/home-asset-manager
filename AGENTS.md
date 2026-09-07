@@ -323,20 +323,36 @@ assistant or human contributor.
   `schengen-iac-test` profile: `default`/s3-user has none (no
   `iam:CreateUser`/`CreateAccessKey`/`PassRole`), per the TLS section
   above.
-- **Not yet switched over (as of 2026-09-06).** The user, its policy and
-  its access key all exist, every permission is confirmed via `aws iam
-  simulate-principal-policy` (`DeleteObject` correctly `implicitDeny`), and
-  the key pair is in the password manager. But the Mini's `.env` still
-  authenticates as **`s3-user`**, a broadly-scoped identity shared with
-  other work in the account -- "full S3 access" undersells it: it also
-  carries unscoped IAM list/read and Route 53 `ChangeResourceRecordSets` on
-  *any* zone in the account, so a `.env` leak on the Mini currently exposes
-  the DNS control plane the whole TLS setup depends on. Swapping the two
-  `BACKUP_AWS_*` values needs a session on the LAN. Afterwards: run
-  `scripts/backup-db.sh` by hand and confirm both the `daily/` upload and
-  the `backups/last-success` marker before walking away, then **rotate
-  `s3-user`'s access key** -- that pair has sat in a `.env` for months, and
-  creating a new identity does not retroactively protect the old one.
+- **Switched over 2026-09-07.** The Mini's `.env` now authenticates as
+  `assetmgt-backup`, verified live from the Mini rather than by simulation:
+  `sts get-caller-identity` resolves to the user, `ListBucket` (the monthly
+  check) and `GetObject` (the idempotency guard) both succeed, a
+  `put-object` carrying `--object-lock-mode COMPLIANCE` lands an object
+  holding exactly the retention it asked for, and `DeleteObject` is refused
+  with "no identity-based policy allows the s3:DeleteObject action".
+- **`head-object` from this identity does not show Object Lock, and that is
+  expected.** `ObjectLockMode` / `ObjectLockRetainUntilDate` come back
+  `None`, because S3 omits those headers unless the caller holds
+  `s3:GetObjectRetention` -- which `assetmgt-backup-s3` deliberately does
+  not grant, since the script never reads retention. The lock is applied
+  regardless. Debug retention from a broader profile (the dev Mac's
+  `default`), never from the Mini, or you will reasonably conclude Object
+  Lock is broken when it is working fine.
+- **Testing a switchover the same day is largely a no-op.** If today's
+  `daily/` object already exists, `backup-db.sh` hits the head-object
+  idempotency guard, refreshes the marker and exits 0 -- exercising
+  `GetObject` and nothing else. To prove the write path without waiting for
+  the next 03:15 tick, put a few bytes at a throwaway `daily/` key with the
+  same `--server-side-encryption`/`--object-lock-*` arguments the script
+  uses. It is billed as an object nobody can delete for 30 days, so keep it
+  small; the bucket's own lifecycle rule clears it.
+- **Still outstanding: rotate `s3-user`'s access key** (created 2021-11-23,
+  and sat in the Mini's `.env` for years). Two ordering constraints, both
+  easy to trip over. It is the `default` profile on the dev Mac *and* on
+  the Mini, so rotating breaks both until each is updated -- though the Mini
+  no longer needs `~/.aws` at all now that backups read `.env`. And it is
+  the only identity in the account with Route 53 write, so the rotation has
+  to come *after* the CAA record described in the TLS section above.
 - `pg_dump`/`pg_restore` always run **inside** the `db` container
   (`docker compose exec -T db sh -c '...'`), never against `DATABASE_URL` —
   its `postgresql+psycopg://` prefix is a SQLAlchemy dialect string, not a
