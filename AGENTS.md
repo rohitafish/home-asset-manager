@@ -176,6 +176,35 @@ assistant or human contributor.
   host responsive". Don't chase this by tuning the app, Colima's `cpu`/
   `memory` allocation, or the launchd agents' priority; there's no measured
   gain there.
+- **Two network facts live only in the UniFi console, not in this repo.**
+  Both are load-bearing, neither is discoverable from the code, and both
+  had to be set by hand (see the read-only API key note below). No literal
+  addresses here, per "PII / privacy" -- read them off the console.
+  - **The Mini's LAN address is a DHCP reservation**, not a lease that
+    merely happens to be sticky. Three separate things pin that address:
+    the `mini` ssh alias's `HostName`, the Route 53 A record, and the
+    local DNS record below -- so a lease move breaks deploys and the
+    dashboard together. One trap when setting it: the client record
+    carried a *disabled* fixed IP belonging to the Mini's **other**
+    network (it has a second interface on a different VLAN). Enabling
+    "Use Fixed IP" without also correcting the address moves the wired
+    interface off the LAN entirely. Set the address first, enable second.
+  - **A local DNS record on that same client answers `assets.rohita.com`
+    authoritatively.** Its replies carry TTL 0 against the Route 53
+    record's 300, which is how you tell which one answered. Because the
+    app binds loopback only and Caddy serves the name, this record is what
+    keeps the dashboard reachable during an internet outage; without it,
+    reaching a machine on your own LAN depends on resolving a public
+    record. It shadows nothing -- both point at the same address.
+- **`UNIFI_API_KEY` is a read-only admin** (`site_role: readonly`, empty
+  `site_permissions`), so every console *write* returns
+  `403 api.err.NoPermission`. That is a role restriction, not a CSRF
+  problem and not an endpoint quirk -- confirm it with
+  `GET /proxy/network/api/s/<site>/self`. Both changes above are therefore
+  UI-only. Don't widen this key to automate them: discovery only ever
+  reads, and the key lives in the Mini's `.env`. If write automation is
+  ever genuinely needed, create a separate full-admin key and keep it off
+  the Mini.
 - **TLS for `assets.rohita.com` comes from ACM's managed ACME endpoint, not
   Let's Encrypt.** `assets.rohita.com` is a public A record in Route 53
   (`Z05906141QTVV2UUOL5D6`) pointing at the Mini's private LAN address --
