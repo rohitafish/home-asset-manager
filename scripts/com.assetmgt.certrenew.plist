@@ -25,10 +25,12 @@
   </dict>
 
   <!-- Certificates are 45-day (ACM ACME, not Let's Encrypt's 90-day); a
-       daily check with renew_before_expiry set to 15 days in certbot's
-       renewal conf renews roughly monthly, well inside the window, at
-       $1/FQDN per renewal. One-shot, not a long-running service, so no
-       KeepAlive - same shape as com.assetmgt.logrotate. -->
+       daily check with renew_before_expiry set to 10 days in certbot's
+       renewal conf renews every ~35 days, well inside the window, at
+       $1/FQDN per renewal; see AGENTS.md's TLS section for why 10 and
+       not certbot's 30-day default, which would cost 2.3x as much.
+       One-shot, not a long-running service, so no KeepAlive - same shape
+       as com.assetmgt.logrotate. -->
   <key>StartInterval</key>
   <integer>86400</integer>
   <key>RunAtLoad</key>

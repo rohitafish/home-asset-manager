@@ -208,6 +208,32 @@ assistant or human contributor.
   reloads Caddy. `rohita.com` has no CAA record; add one pinning Amazon
   issuance (`0 issue "amazon.com"`) only *after* the first certificate is
   issued -- adding it first risks a `CAA_ERROR` on the domain validation.
+- **What issuance costs, and how not to overpay.** ACME certificates are
+  billed separately from ACM's *exportable* public certificates ($7/FQDN):
+  the ACME tier is **$1.00 per FQDN, charged at issuance and again at every
+  renewal** (first 1k domains/month; wildcards $5). Since the certificates
+  are capped at 45 days, the renewal interval is
+  `45 - renew_before_expiry`, which makes that one setting the entire cost
+  lever:
+  - certbot's default (30 days) renews every 15 days -- **$24.33/yr**.
+  - `renew_before_expiry = 10 days`, which is what's configured, renews
+    every 35 days -- **$10.43/yr**, still tolerating a 10-day outage. The
+    Mini is not always up (power cuts, FileVault blocking unattended
+    restart), so that buffer is not theoretical.
+  - The floor is $8.30/yr at a 1-day buffer. Chasing the last $2 trades
+    real availability for pennies; don't.
+- **Never run `certbot renew --dry-run` against this endpoint.** ACM's ACME
+  service has no staging equivalent, so `--dry-run` performs a real,
+  billable issuance and then throws the result away. Verify the renewal
+  machinery with plain `certbot renew` instead -- it makes no ACME call at
+  all when nothing is due -- and exercise the `--deploy-hook` separately.
+  Two other ways to pay twice: re-running `certonly` rather than `renew`
+  (it issues unconditionally), and retrying after `--issuance-timeout`
+  fires client-side on an issuance the CA actually completed. Check
+  `certbot certificates` before any re-run.
+- **Adding more names later?** A second FQDN is another $1/renewal; a
+  wildcard is $5. Break-even is five subdomains, so name them individually
+  until then.
 - **Provisioning the EAB (already done, recorded here because the ARNs and
   the profile gotcha are not discoverable from the code).** The binding is
   `arn:aws:acm:us-east-1:430443789074:acme-endpoint/
