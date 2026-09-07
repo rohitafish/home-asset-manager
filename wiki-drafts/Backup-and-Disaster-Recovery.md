@@ -191,6 +191,13 @@ that before it becomes invisible:
    there for anything that wants to check.
 3. **The Summary page's "Since last DB backup" card**, which turns to a
    warning state once `backup_stale` is true.
+4. **`scripts/aws-status.sh`**, run on demand from your dev machine, which
+   checks the S3 side directly rather than inferring it from the marker: the
+   identity the job authenticates as, the age of the newest `daily/` object,
+   whether this month's `monthly/` copy exists, and `/health`'s own view.
+   The first three items above all derive from the deploy host's local
+   state, so they agree with each other even when the objects aren't
+   actually in the bucket; this one asks S3.
 
 `backup_stale` trips past **26 hours**, derived from the actual tick
 schedule rather than a round number: normal operation never lets the marker

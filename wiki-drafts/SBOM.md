@@ -61,6 +61,8 @@ transitive list.
 | **Docker / Docker Compose** | Runs and manages the Postgres container per `docker-compose.yml`. |
 | **nmap** | The actual network scanner behind discovery's port/service scanning (`discovery/nmap_scan.py`) — invoked as a subprocess; its XML output is parsed with `defusedxml`, above. |
 | **AWS CLI** | Invoked by `scripts/backup-db.sh` to upload the nightly Postgres dump to S3, under Object Lock. |
+| **Caddy** | The TLS-terminating reverse proxy in front of the app on the deployed host, serving `fullchain.pem`/`privkey.pem` from certbot and proxying to uvicorn on loopback (`scripts/Caddyfile.example`). Optional — the Tailscale Serve path doesn't use it — but where it is used it terminates TLS for the entire dashboard, so it belongs in any security-relevant inventory. Stock Homebrew build: the ACM ACME issuance flow needs no DNS-provider module, so no `xcaddy` custom build. |
+| **certbot** | Obtains and renews that certificate against ACM's managed ACME endpoint, run daily by `com.assetmgt.certrenew`. Holds the ACME **account key** under `~/.certbot/config/accounts`, which is what authorises renewal requests for the domain — treat it like any other credential on that host. See [Security Model](Security-Model). |
 
 Versions for this group aren't pinned in the repo the way Python packages
 are (Homebrew-managed, upgraded independently) — Colima is the one
@@ -71,6 +73,9 @@ exception, pinned specifically because of the risk above.
 | Component | Notes |
 |---|---|
 | **Anthropic API**, or **OpenRouter** as a compatible fallback | Powers the optional investigation assistant chat. Inert with no API key set — every call site checks `is_configured()` first. See [Security Model](Security-Model)'s "nothing leaves your network unless you configure this feature". |
+| **Amazon S3** | Where the nightly database dump goes. This is the one place a complete copy of the inventory leaves the network by design, so it is the most consequential entry in this table — the bucket is versioned with Object Lock, and the credential that writes it cannot delete (see [Backup & Disaster Recovery](Backup-and-Disaster-Recovery)). Inert with the `BACKUP_*` keys unset. |
+| **AWS Certificate Manager** (ACME endpoint) | Issues the 45-day certificate for the dashboard's public hostname. Only reached during issuance and renewal, and only if you use the Caddy path above. |
+| **Amazon Route 53** | Hosts the DNS zone for that hostname. Nothing on the deploy host talks to it — the record is managed from the dev machine, and issuance is pre-approved so renewals need no DNS write. |
 
 ## Development-only tooling (`requirements-dev.txt` — not installed on the deployed instance)
 

@@ -38,6 +38,12 @@ problem look broken. It just means the last off-site backup is older than
 or [Backup & Disaster Recovery](Backup-and-Disaster-Recovery) for how the
 staleness threshold and the success marker actually work.
 
+Start with `./scripts/aws-status.sh` from your dev machine, though: the
+marker is host-local, so it can only tell you what the host believes. That
+script asks S3 what is actually in the bucket, and distinguishes the two
+cases that look identical from the host — uploads genuinely failing, versus
+uploads succeeding while the marker isn't being refreshed.
+
 ---
 
 **UniFi discovery fails with a TLS/certificate error.**
@@ -109,7 +115,9 @@ problem. If it's a genuine migration error, check `alembic current` against
 
 ---
 
-**Still stuck?** Open an issue with what `./scripts/preflight.sh` reported.
+**Still stuck?** Open an issue with what `./scripts/preflight.sh` reported —
+and `./scripts/aws-status.sh` too if the problem touches backups, TLS or
+DNS, since preflight only covers the deploy host itself.
 For a security-relevant problem, see
 [SECURITY.md](https://github.com/rohitafish/home-asset-manager/blob/main/SECURITY.md)
 instead of a public issue.
