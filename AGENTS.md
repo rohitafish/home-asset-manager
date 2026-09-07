@@ -474,6 +474,25 @@ assistant or human contributor.
   set — read `.env` the same grep/cut way `backup-db.sh`'s `_env_var()` does
   if you extend it, not by sourcing the file. Deliberately has no `set -e`:
   its job is to report every problem in one pass, not stop at the first.
+- `scripts/aws-status.sh` is the same idea for the AWS-side state --
+  backups, certificate, renewal wiring, DNS -- and shares preflight's
+  contract (no `set -e`, ok/WARN/FAIL, exit 1 on FAIL, never prints a
+  secret). Unlike preflight it is **not** host-local: it runs from the dev
+  Mac and reaches the Mini over ssh in a single round trip, because the two
+  halves need different credentials (the Mini's `.env` for S3, the dev
+  Mac's profile for Route 53/IAM -- the Mini has no AWS credential of its
+  own). Its reason for existing is the last TLS check: comparing the
+  certificate Caddy *serves* against the one on disk. A renewal that
+  succeeds while the `--deploy-hook` fails to reload Caddy leaves every
+  file-based check green while clients get the stale certificate, and with
+  no staging endpoint to rehearse against (see the TLS section), the first
+  real renewal is unrehearsed. Two of its checks exist because they were
+  wrong first: listing bare `daily/` reported a one-off permission-probe
+  object as the newest backup, and comparing an absent A record against a
+  name that resolves nowhere reported `ok`, two empty strings being equal.
+  Both are pinned in `tests/test_aws_status_script.py` -- a status check
+  that wrongly reports `ok` is worse than no check, because it ends the
+  investigation.
 
 ## Dates and timestamps
 

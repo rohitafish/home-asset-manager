@@ -161,6 +161,27 @@ It never
 prints a secret's value, only whether one is set. Safe to re-run any time
 something isn't working, not just at install.
 
+### Checking the AWS side: `scripts/aws-status.sh`
+
+The companion to `preflight.sh`, for the half of the deployment that lives
+in AWS rather than on the host: the off-site backups, the TLS certificate
+and its renewal path, and the DNS records that make the dashboard reachable
+at all. Same conventions -- every problem reported in one pass, `FAIL` for
+broken and `WARN` for informational, exit 1 if anything FAILs, and never a
+secret's value.
+
+Run it from your **dev machine**, not the always-on host. It needs both
+sides: the host's `.env` holds the S3 credentials, while the Route 53 and
+IAM lookups use your dev machine's AWS profile. That split is deliberate --
+the deploy host holds no AWS credential beyond the narrowly-scoped backup
+one, so it cannot answer the DNS half by itself.
+
+The check most worth having is the last one under TLS: it compares the
+certificate the reverse proxy is *serving* against the one on disk. A
+renewal that succeeds while its deploy-hook fails to reload the proxy leaves
+every file-based check passing while clients are handed a certificate
+marching toward expiry -- nothing else here would notice.
+
 ### UniFi API key
 
 Requires a local UniFi Network application/console reachable on your LAN
