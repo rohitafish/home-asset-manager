@@ -120,14 +120,24 @@ def test_run_nmap_only_prefixes_sudo_when_asked(monkeypatch):
     assert captured["cmd"] == ["sudo", "-n", "/fake/nmap", "-sn"]
 
     nmap_scan._run_nmap(["-sn"])
-    assert captured["cmd"] == ["/fake/nmap", "-sn"], "unprivileged runs must never touch sudo"
+    assert captured["cmd"] == ["/fake/nmap", "-sn"], (
+        "unprivileged runs must never touch sudo"
+    )
 
 
 # -- argv hygiene ---------------------------------------------------------------
 
 
 def test_ipv4_only_keeps_literal_addresses_and_drops_the_rest(caplog):
-    values = ["192.168.1.5", "--script=evil.nse", "printer.local", "fe80::1", None, "10.0.0.256", " 10.0.0.1"]
+    values = [
+        "192.168.1.5",
+        "--script=evil.nse",
+        "printer.local",
+        "fe80::1",
+        None,
+        "10.0.0.256",
+        " 10.0.0.1",
+    ]
     with caplog.at_level("WARNING"):
         kept = nmap_scan._ipv4_only(values)
     assert kept == ["192.168.1.5"]
@@ -136,11 +146,15 @@ def test_ipv4_only_keeps_literal_addresses_and_drops_the_rest(caplog):
 
 def test_discover_network_only_hands_ipv4_literals_to_the_service_scan(monkeypatch):
     seen = {}
-    monkeypatch.setattr(nmap_scan, "ping_sweep", lambda subnets, use_sudo=False: [
-        {"ip": "192.168.1.9", "mac": None, "vendor": None, "hostname": None},
-        {"ip": "-oN /tmp/x", "mac": None, "vendor": None, "hostname": None},
-        {"ip": None, "mac": "aa:bb:cc:00:00:01", "vendor": None, "hostname": None},
-    ])
+    monkeypatch.setattr(
+        nmap_scan,
+        "ping_sweep",
+        lambda subnets, use_sudo=False: [
+            {"ip": "192.168.1.9", "mac": None, "vendor": None, "hostname": None},
+            {"ip": "-oN /tmp/x", "mac": None, "vendor": None, "hostname": None},
+            {"ip": None, "mac": "aa:bb:cc:00:00:01", "vendor": None, "hostname": None},
+        ],
+    )
 
     def fake_service_scan(ips, top_ports=1000, use_sudo=False):
         seen["ips"] = list(ips)
@@ -151,3 +165,117 @@ def test_discover_network_only_hands_ipv4_literals_to_the_service_scan(monkeypat
     nmap_scan.discover_network(["192.168.1.0/24"])
 
     assert seen["ips"] == ["192.168.1.9"]
+
+
+# ---- neighbour-table MAC fill-in (unprivileged nmap reports no MACs) ------
+
+
+def _stub_run(stdout):
+    class R:
+        pass
+
+    r = R()
+    r.stdout = stdout
+    return lambda *a, **k: r
+
+
+def test_normalise_mac_pads_and_lowercases():
+    assert (
+        nmap_scan._normalise_mac("0:1a:2b:3c:4d:4") == "00:1a:2b:3c:4d:04"
+    )  # macOS arp style
+    assert nmap_scan._normalise_mac("00:1A:2B:3C:4D:01") == "00:1a:2b:3c:4d:01"
+    assert nmap_scan._normalise_mac("0:1a:2b:3c:4d") is None  # 5 octets
+    assert nmap_scan._normalise_mac("0:1a:2b:3c:4d:4:00") is None  # 7 octets
+    assert nmap_scan._normalise_mac("ff:ff:ff:ff:ff:ff") is None
+    assert nmap_scan._normalise_mac("01:00:5e:00:00:fb") is None  # multicast
+    assert nmap_scan._normalise_mac("(incomplete)") is None
+
+
+def test_neighbour_macs_linux_skips_failed_entries(monkeypatch):
+    monkeypatch.setattr(nmap_scan.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        nmap_scan.subprocess,
+        "run",
+        _stub_run(
+            "172.16.1.46 dev ens9 lladdr 00:1a:2b:3c:4d:01 REACHABLE\n"
+            "172.16.1.18 dev ens9 lladdr 00:1a:2b:3c:4d:03 STALE\n"
+            "172.16.1.99 dev ens9  FAILED\n"
+            "172.16.1.98 dev ens9 lladdr 00:11:22:33:44:55 INCOMPLETE\n"
+        ),
+    )
+    assert nmap_scan.neighbour_macs() == {
+        "172.16.1.46": "00:1a:2b:3c:4d:01",
+        "172.16.1.18": "00:1a:2b:3c:4d:03",
+    }
+
+
+def test_neighbour_macs_darwin_pads_octets_and_skips_incomplete(monkeypatch):
+    monkeypatch.setattr(nmap_scan.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        nmap_scan.subprocess,
+        "run",
+        _stub_run(
+            "? (172.16.1.19) at 0:1a:2b:3c:4d:2 on en0 ifscope [ethernet]\n"
+            "? (172.16.1.77) at (incomplete) on en0 ifscope [ethernet]\n"
+            "? (172.16.1.255) at ff:ff:ff:ff:ff:ff on en0 ifscope [ethernet]\n"
+        ),
+    )
+    assert nmap_scan.neighbour_macs() == {"172.16.1.19": "00:1a:2b:3c:4d:02"}
+
+
+def test_neighbour_macs_is_empty_off_linux_and_mac(monkeypatch):
+    monkeypatch.setattr(nmap_scan.platform, "system", lambda: "Windows")
+    assert nmap_scan.neighbour_macs() == {}
+
+
+def test_neighbour_macs_never_raises(monkeypatch):
+    monkeypatch.setattr(nmap_scan.platform, "system", lambda: "Linux")
+
+    def boom(*a, **k):
+        raise FileNotFoundError("ip")
+
+    monkeypatch.setattr(nmap_scan.subprocess, "run", boom)
+    assert nmap_scan.neighbour_macs() == {}
+
+
+_SWEEP_XML = """<nmaprun>
+<host><status state="up"/><address addr="172.16.1.46" addrtype="ipv4"/></host>
+<host><status state="up"/><address addr="172.16.1.19" addrtype="ipv4"/>
+  <address addr="00:1A:2B:3C:4D:02" addrtype="mac" vendor="Sonos"/></host>
+<host><status state="down"/><address addr="172.16.1.50" addrtype="ipv4"/></host>
+<host><status state="up"/><address addr="192.168.1.40" addrtype="ipv4"/></host>
+</nmaprun>"""
+
+
+def test_ping_sweep_fills_missing_macs_from_the_neighbour_table(monkeypatch):
+    monkeypatch.setattr(nmap_scan, "_run_nmap", lambda *a, **k: _SWEEP_XML)
+    monkeypatch.setattr(
+        nmap_scan,
+        "neighbour_macs",
+        lambda: {
+            "172.16.1.46": "00:1a:2b:3c:4d:01",
+            "172.16.1.19": "ee:ee:ee:ee:ee:ee",
+        },
+    )
+    by_ip = {h["ip"]: h for h in nmap_scan.ping_sweep(["172.16.1.0/24"])}
+    assert by_ip["172.16.1.46"]["mac"] == "00:1a:2b:3c:4d:01"  # filled in
+    assert by_ip["172.16.1.19"]["mac"] == "00:1A:2B:3C:4D:02"  # nmap's own wins
+    assert by_ip["192.168.1.40"]["mac"] is None  # routed subnet: no ARP, stays MAC-less
+    assert "172.16.1.50" not in by_ip
+
+
+def test_ping_sweep_skips_the_neighbour_table_when_nmap_had_every_mac(monkeypatch):
+    xml = _SWEEP_XML.replace(
+        '<address addr="172.16.1.46" addrtype="ipv4"/>',
+        '<address addr="172.16.1.46" addrtype="ipv4"/><address addr="00:1A:2B:3C:4D:01" addrtype="mac"/>',
+    ).replace(
+        '<host><status state="up"/><address addr="192.168.1.40" addrtype="ipv4"/></host>',
+        "",
+    )
+    monkeypatch.setattr(nmap_scan, "_run_nmap", lambda *a, **k: xml)
+
+    def never():
+        raise AssertionError("neighbour table consulted needlessly")
+
+    monkeypatch.setattr(nmap_scan, "neighbour_macs", never)
+    assert all(h["mac"] for h in nmap_scan.ping_sweep(["172.16.1.0/24"]))

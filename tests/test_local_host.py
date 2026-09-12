@@ -140,12 +140,12 @@ def test_darwin_macs_skip_locally_administered(monkeypatch):
         local_host.subprocess,
         "run",
         _fake_run(
-            "en0: flags=8863\n\tether 00:00:5e:00:53:02\n"
-            "awdl0: flags=8943\n\tether 6a:d1:33:19:8f:1d\n"  # 0x6a: LA bit set
+            "en0: flags=8863\n\tether 00:1a:2b:3c:4d:06\n"
+            "awdl0: flags=8943\n\tether 02:1a:2b:3c:4d:07\n"  # 0x6a: LA bit set
             "bridge0:\n\tether 00:00:00:00:00:00\n"
         ),
     )
-    assert local_host.local_macs() == ["00:00:5e:00:53:02"]
+    assert local_host.local_macs() == ["00:1a:2b:3c:4d:06"]
 
 
 def _net_tree(tmp_path: Path, ifaces: dict[str, tuple[str, bool]]) -> Path:
@@ -170,18 +170,18 @@ def test_linux_macs_take_physical_nics_only(monkeypatch, tmp_path):
             tmp_path,
             {
                 "docker0": (
-                    "86:aa:93:bc:47:6b",
+                    "02:42:ac:11:00:02",
                     False,
                 ),  # Docker bridge: the false join
-                "veth1a2b": ("aa:bb:cc:dd:ee:01", False),
+                "veth1a2b": ("02:1a:2b:3c:4d:08", False),
                 "br-9f8e": ("02:42:ac:11:00:01", False),
                 "lo": ("00:00:00:00:00:00", False),
-                "ens9": ("00:00:5e:00:53:01", True),
-                "wlp3s0": ("00:00:5e:00:53:03", True),
+                "ens9": ("00:1A:2B:3C:4D:04", True),
+                "wlp3s0": ("00:1a:2b:3c:4d:05", True),
             },
         ),
     )
-    assert local_host.local_macs() == ["00:00:5e:00:53:01", "00:00:5e:00:53:03"]
+    assert local_host.local_macs() == ["00:1a:2b:3c:4d:04", "00:1a:2b:3c:4d:05"]
 
 
 def test_linux_macs_skip_randomized_physical(monkeypatch, tmp_path):
@@ -189,7 +189,7 @@ def test_linux_macs_skip_randomized_physical(monkeypatch, tmp_path):
     monkeypatch.setattr(
         local_host,
         "_NET_DIR",
-        _net_tree(tmp_path, {"wlan0": ("7a:31:c1:b7:51:42", True)}),
+        _net_tree(tmp_path, {"wlan0": ("02:1a:2b:3c:4d:05", True)}),
     )
     assert local_host.local_macs() == []  # 0x7a has the locally-administered bit
 

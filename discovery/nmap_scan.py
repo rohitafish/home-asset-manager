@@ -21,6 +21,8 @@ exact command run is explicit and auditable.
 
 import ipaddress
 import logging
+import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -107,7 +109,11 @@ def _run_nmap(args: list[str], use_sudo: bool = False, timeout: int = 1800) -> s
     # which is a separate, undone piece of hardening; this only guarantees
     # the caller stops waiting.
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
     )
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
@@ -143,8 +149,76 @@ def _parse_host_addresses(host_el: ET.Element) -> dict:
     return {"ip": ip, "mac": mac, "vendor": vendor, "hostname": hostname}
 
 
+def _normalise_mac(raw: str) -> str | None:
+    """Lowercase, colon-separated, zero-padded -- macOS's arp prints
+    `0:c:4d:e9:9e:ce:c6`-style octets without padding, which would never
+    match the `0c:4d:...` form UniFi and nmap report."""
+    parts = raw.strip().lower().split(":")
+    if len(parts) != 6 or not all(re.fullmatch(r"[0-9a-f]{1,2}", p) for p in parts):
+        return None
+    mac = ":".join(p.zfill(2) for p in parts)
+    if mac == "ff:ff:ff:ff:ff:ff" or int(mac[:2], 16) & 0x01:  # broadcast / multicast
+        return None
+    return mac
+
+
+def neighbour_macs() -> dict[str, str]:
+    """{ip: mac} from the OS neighbour (ARP) table. Never raises; empty on
+    an unsupported platform or a failed read.
+
+    Why this exists: an unprivileged nmap reports no MAC addresses at all --
+    ARP-level detail needs raw sockets on every platform -- and the
+    reconciler deliberately refuses to match a MAC-less host to an interface
+    that has a MAC (see reconcile._find_asset_by_ip: an IP is a transient
+    identity, a MAC is not). Every UniFi-known interface has a MAC, so a
+    sweep that returns none would create a MAC-less duplicate of every
+    device on the LAN (observed 2026-09-12: 26 of them in one run). But the
+    sweep has just exchanged packets with every host on a directly attached
+    subnet, so the kernel's neighbour table now holds exactly the MACs nmap
+    could not read. Hosts on a routed subnet stay MAC-less, correctly."""
+    system = platform.system()
+    try:
+        if system == "Linux":
+            out = subprocess.run(
+                ["ip", "-4", "neigh", "show"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            ).stdout
+            pairs = [
+                (m.group(1), m.group(2))
+                for m in re.finditer(
+                    r"^(\S+)\s+dev\s+\S+\s+lladdr\s+(\S+)\s+(?!FAILED|INCOMPLETE)\S+",
+                    out,
+                    re.MULTILINE,
+                )
+            ]
+        elif system == "Darwin":
+            out = subprocess.run(
+                ["arp", "-an"], capture_output=True, text=True, timeout=10, check=True
+            ).stdout
+            pairs = re.findall(r"\((\d+\.\d+\.\d+\.\d+)\) at ([0-9a-fA-F:]+) on ", out)
+        else:
+            return {}
+    except Exception:
+        logger.warning(
+            "neighbour table read failed; sweep results keep nmap's MACs only",
+            exc_info=True,
+        )
+        return {}
+    result = {}
+    for ip, raw in pairs:
+        mac = _normalise_mac(raw)
+        if mac:
+            result[ip] = mac
+    return result
+
+
 def ping_sweep(subnets: list[str], use_sudo: bool = False) -> list[dict]:
-    """Returns hosts found up: [{ip, mac, vendor, hostname}]."""
+    """Returns hosts found up: [{ip, mac, vendor, hostname}]. MACs come from
+    nmap when it could read them (a privileged run) and otherwise from the
+    neighbour table the sweep itself just populated -- see neighbour_macs."""
     # -T4: "Aggressive" timing -- safe to assume a reliable, low-latency
     # network for a home LAN, and meaningfully faster than the default.
     args = ["-sn", "-T4", "-oX", "-", *subnets]
@@ -156,6 +230,11 @@ def ping_sweep(subnets: list[str], use_sudo: bool = False) -> list[dict]:
         if status is None or status.get("state") != "up":
             continue
         hosts.append(_parse_host_addresses(host_el))
+    if any(not h["mac"] for h in hosts):
+        neigh = neighbour_macs()
+        for h in hosts:
+            if not h["mac"] and h["ip"] in neigh:
+                h["mac"] = neigh[h["ip"]]
     return hosts
 
 
@@ -188,7 +267,9 @@ def service_scan(
                 product = service_el.get("product") if service_el is not None else None
                 version = service_el.get("version") if service_el is not None else None
                 name = service_el.get("name") if service_el is not None else None
-                extrainfo = service_el.get("extrainfo") if service_el is not None else None
+                extrainfo = (
+                    service_el.get("extrainfo") if service_el is not None else None
+                )
                 banner = " ".join(filter(None, [name, extrainfo]))
                 services.append(
                     {
