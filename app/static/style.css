@@ -79,6 +79,10 @@ table.report td.num { text-align: right; white-space: nowrap; font-variant-numer
    columns -- chiefly Replacement value, whose width comes from its long
    header rather than its figures, which are already nowrap above. */
 table.report td.date { white-space: nowrap; }
+/* Asset type labels (end_user, network, ...) are single tokens; Safari treats
+   the underscore as a break opportunity and folds "end_user" onto two lines
+   once the Assets table gets tight, which nothing else in the row does. */
+td.type { white-space: nowrap; }
 tr.report-totals th, tr.report-totals td { font-weight: bold; background: #eef2f7; color: #1a1a1a; }
 
 @media print {

@@ -63,7 +63,7 @@
     <tr class="crit-{{ asset.criticality.value }}">
       <td>{{ asset.id }}</td>
       <td><a href="/assets/{{ asset.id }}">{{ asset.hostname or ('Asset #' ~ asset.id) }}</a></td>
-      <td>{{ asset.asset_type.value.replace('_device', '') }}</td>
+      <td class="type">{{ asset.asset_type.value.replace('_device', '') }}</td>
       <td>{{ asset.vendor or "—" }}</td>
       <td>{{ asset.owner or "—" }}</td>
       <td>{{ asset.criticality.value }}</td>
