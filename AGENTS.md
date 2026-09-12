@@ -795,6 +795,19 @@ assistant or human contributor.
   repo onto itself.
 
 ## PII / privacy
+- **`.pii-denylist` is kept in step with the live inventory by
+  `scripts/pii-denylist-sync.sh`**, which `redeploy.sh` runs on every deploy
+  (and which you can run by hand, `--dry-run` to preview). It pulls every
+  interface MAC, serial number and owner/custodian name from the host's
+  Postgres, plus the household-name keys from the host's `.env`, into a
+  marked block at the end of the file; your own lines above the marker are
+  never touched, the block is replaced whole, and nothing is ever printed
+  but counts. Before it existed (2026-09-12) the file knew 1 of 56 MACs,
+  and real MACs reached GitHub in a test file that same morning. Hostnames,
+  model numbers and private IPs are deliberately not pulled -- too many
+  are generic and would collide with the docs' illustrative values.
+  Tests must use fabricated identifiers (`00:1a:2b:3c:4d:xx`-style MACs,
+  `C02FAKE...` serials), never real ones "because they're handy".
 - Real personal data has leaked into this repo twice: household names,
   a real hostname/LAN IP, and an SSH key filename sat in git history for
   weeks after a commit *scrubbed the current files* without rewriting

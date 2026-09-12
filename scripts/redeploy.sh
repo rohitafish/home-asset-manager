@@ -84,6 +84,14 @@ if [ -n "$DIRTY" ]; then
   fi
 fi
 
+# Refresh .pii-denylist from the live inventory before it's copied over:
+# every MAC, serial and owner name the app knows becomes a known value for
+# scripts/check-pii.sh. Non-fatal -- a deploy must not hinge on it -- but
+# loud, because a stale denylist is a check that silently knows less.
+echo "==> Syncing .pii-denylist from the live inventory on $HOST"
+DEPLOY_HOST="$HOST" DEPLOY_REMOTE_DIR="$REMOTE_DIR" "$LOCAL_DIR/scripts/pii-denylist-sync.sh" \
+  || echo "!!! .pii-denylist sync failed -- deploying with the existing file; run scripts/pii-denylist-sync.sh by hand." >&2
+
 # Warn before clobbering the Mini's .pii-denylist. It's gitignored but rsynced
 # on purpose (the check needs it on both machines), which makes the sync one-way:
 # a term added on the Mini is overwritten by the next deploy. Can't merge it

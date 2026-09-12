@@ -159,7 +159,7 @@ def test_build_asset_context_includes_identity_and_valuation_fields(session):
     empty because _asset_dict never included it at all."""
     asset = make_asset(
         session,
-        serial_number="FAKESERIAL001",
+        serial_number="C02FAKESERIAL0",
         model_number="S17",
         model_identifier="1707000-xx-y",
         purchase_date=date(2025, 7, 28),
@@ -170,7 +170,7 @@ def test_build_asset_context_includes_identity_and_valuation_fields(session):
 
     context = build_asset_context(session, asset)
 
-    assert context["serial_number"] == "FAKESERIAL001"
+    assert context["serial_number"] == "C02FAKESERIAL0"
     assert context["model_number"] == "S17"
     assert context["model_identifier"] == "1707000-xx-y"
     assert context["purchase_date"] == "2025-07-28"
@@ -771,7 +771,7 @@ def test_run_chat_turn_with_attachment_persists_image_block_and_note(session, mo
 
     responses = [
         _FakeMessage(
-            content=[_FakeContentBlock(type="text", text="Serial looks like FAKESERIAL001.")],
+            content=[_FakeContentBlock(type="text", text="Serial looks like C02FAKESERIAL0.")],
             stop_reason="end_turn",
         ),
     ]
