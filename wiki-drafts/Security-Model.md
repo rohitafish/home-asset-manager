@@ -172,20 +172,17 @@ identifiers that `check-pii.sh`'s known-values list catches — so the list is
 kept in step with the live inventory automatically, and the scanner covers
 the tokens and keys a list can't anticipate.
 
-That guarantee has one known, deliberate exception. After the repo went
-public, four device identifiers — a MAC address and some serial numbers,
-none of them credentials, nothing that authenticates anything — reached two
-test files in old commits and were scrubbed from the current tree the same
-day they were noticed. The history was not rewritten to remove them: the
-branch requires signed commits, which a rewrite strips, and a force-push
-would not have removed the old commits from GitHub anyway (they stay
-reachable by hash until GitHub garbage-collects them on request). Instead
-the exact commit-and-path locations are listed in a tracked `.pii-baseline`
-file, so the scanner reports them as a counted warning rather than failing
-forever on something it cannot change, while the same values in any other
-file or any newer commit still fail. The file holds locations only, never
-values. The reasoning is recorded in the file's own header and in
-`AGENTS.md`.
+That guarantee was tested once. After the repo went public, four device
+identifiers — a MAC address and some serial numbers, none of them
+credentials, nothing that authenticates anything — reached two test files in
+old commits and were scrubbed from the current tree the same day they were
+noticed. Rewriting the history in place would have left the old commits
+reachable by hash on GitHub, so on 2026-09-12 the repository was deleted and
+recreated under the same name from a rewritten, re-signed copy of its
+history: same commits, same messages, same trees everywhere except where
+the values had been. No commit in this repository has ever carried them.
+Anyone who cloned before that date has the old history; the values cannot
+be used to authenticate anything.
 
 ## What this is *not*
 
