@@ -136,6 +136,25 @@ for page in "${PAGES[@]}"; do
   fi
 done
 
+# Images the pages embed (wiki-drafts/images/, referenced as images/NAME).
+# Published on every run, not per named page: two pages embed screenshots,
+# and until this existed the images had reached the wiki only by hand --
+# which is exactly the manual clone/copy/push this script exists to
+# replace, and after the repo was recreated on 2026-09-12 the fresh wiki
+# had none of them. Same rm-then-cp as the pages, same symlink guard above.
+if [ -d "$DRAFTS_DIR/images" ]; then
+  mkdir -p -- "$SCRATCH/wiki/images"
+  for img in "$DRAFTS_DIR"/images/*; do
+    [ -f "$img" ] || continue
+    name="images/$(basename "$img")"
+    if ! diff -q "$img" "$SCRATCH/wiki/$name" >/dev/null 2>&1; then
+      rm -f -- "$SCRATCH/wiki/$name"
+      cp -- "$img" "$SCRATCH/wiki/$name"
+      CHANGED+=("$name")
+    fi
+  done
+fi
+
 if [ "${#CHANGED[@]}" -eq 0 ]; then
   echo "==> Nothing to publish -- the wiki already matches wiki-drafts/."
   exit 0
