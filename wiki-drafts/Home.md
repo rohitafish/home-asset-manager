@@ -17,7 +17,7 @@ your own LAN, with nothing exposed to the internet.
 
 | | |
 |---|---|
-| **Runs on** | macOS (native host process — see [Architecture Deep-Dive](Architecture-Deep-Dive)) |
+| **Runs on** | Linux (systemd) or macOS (launchd) — a native host process either way; see [Architecture Deep-Dive](Architecture-Deep-Dive) |
 | **Needs** | A Ubiquiti UniFi network (self-hosted controller or UDM/Cloud Gateway) |
 | **Network exposure** | LAN-only. No port forwarded, ever. |
 | **Discovery** | On-demand only — nothing scans continuously in the background |

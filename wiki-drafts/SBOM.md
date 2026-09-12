@@ -27,7 +27,7 @@ transitive list.
 | Component | Version | What it's for, here |
 |---|---|---|
 | **fastapi** | 0.141.1 | The web framework the whole app is built on — every route in `app/routers/`, and the dependency-injection mechanism `require_admin`/`require_same_origin` (`app/auth.py`) hook into. |
-| **uvicorn**[standard] | 0.52.4 | The ASGI server that actually runs the app as an OS process — the literal command in `com.assetmgt.app.plist`'s `ProgramArguments`, which launchd starts and supervises. `[standard]` pulls in `uvloop`/`httptools` for a faster event loop and HTTP parser. |
+| **uvicorn**[standard] | 0.52.4 | The ASGI server that actually runs the app as an OS process — the literal command in `assetmgt-app.service`'s `ExecStart` (systemd) or `com.assetmgt.app.plist`'s `ProgramArguments` (launchd), which the service manager starts and supervises. `[standard]` pulls in `uvloop`/`httptools` for a faster event loop and HTTP parser. |
 | **sqlmodel** | 0.0.39 | Combines SQLAlchemy (the SQL toolkit) with Pydantic validation in one model definition — every table in `app/models.py` (`Asset`, `Finding`, `DiscoveryRun`, ...) is a SQLModel class. |
 | **alembic** | 1.19.1 | Database migrations. Every schema change is a file under `migrations/versions/`, applied via `alembic upgrade head` — part of every `redeploy.sh` run. |
 | **psycopg**[binary] | 3.3.4 | The PostgreSQL driver SQLAlchemy talks through. `[binary]` bundles a precompiled `libpq`, so there's no separate system Postgres client library to install. |
@@ -51,22 +51,22 @@ transitive list.
 
 | Component | Version | Notes |
 |---|---|---|
-| **PostgreSQL** | 16 (`postgres:16-alpine`) | The actual datastore, run via `docker-compose.yml` inside Colima's VM. The live household inventory lives here, backed up nightly to S3 (`scripts/backup-db.sh`). |
+| **PostgreSQL** | 16 (`postgres:16-alpine`) | The actual datastore, run via `docker-compose.yml` (native `dockerd` on the Linux host; inside Colima's VM on a Mac). The live household inventory lives here, backed up nightly to S3 (`scripts/backup-db.sh`). |
 
-## System tools (Homebrew — not Python packages, see the README's "One-time setup")
+## System tools (apt/pipx on the Linux host, Homebrew on a Mac — not Python packages; see the README's "Installing on Linux" and "One-time setup")
 
 | Component | Notes |
 |---|---|
-| **Colima** | Runs the Docker daemon inside a lightweight Linux VM on macOS — the free, open-source alternative to Docker Desktop this project uses. Hosts the Postgres container. The one Homebrew formula this project pins (`brew pin colima`) — an upgrade has previously forced a destructive VM recreation; see `AGENTS.md`'s "Deployment topology". |
+| **Colima** | macOS only. Runs the Docker daemon inside a lightweight Linux VM — the free, open-source alternative to Docker Desktop this project uses there. Hosts the Postgres container; on Linux, `docker.io`'s native daemon does that with no VM. The one Homebrew formula this project pins (`brew pin colima`) — an upgrade has previously forced a destructive VM recreation; see `AGENTS.md`'s "Deployment topology". |
 | **Docker / Docker Compose** | Runs and manages the Postgres container per `docker-compose.yml`. |
 | **nmap** | The actual network scanner behind discovery's port/service scanning (`discovery/nmap_scan.py`) — invoked as a subprocess; its XML output is parsed with `defusedxml`, above. |
 | **AWS CLI** | Invoked by `scripts/backup-db.sh` to upload the nightly Postgres dump to S3, under Object Lock. |
-| **Caddy** | The TLS-terminating reverse proxy in front of the app on the deployed host, serving `fullchain.pem`/`privkey.pem` from certbot and proxying to uvicorn on loopback (`scripts/Caddyfile.example`). Optional — the Tailscale Serve path doesn't use it — but where it is used it terminates TLS for the entire dashboard, so it belongs in any security-relevant inventory. Stock Homebrew build: the ACM ACME issuance flow needs no DNS-provider module, so no `xcaddy` custom build. |
-| **certbot** | Obtains and renews that certificate against ACM's managed ACME endpoint, run daily by `com.assetmgt.certrenew`. Holds the ACME **account key** under `~/.certbot/config/accounts`, which is what authorises renewal requests for the domain — treat it like any other credential on that host. See [Security Model](Security-Model). |
+| **Caddy** | The TLS-terminating reverse proxy in front of the app on the deployed host, serving `fullchain.pem`/`privkey.pem` from certbot and proxying to uvicorn on loopback (`scripts/Caddyfile.example`). Optional — the Tailscale Serve path doesn't use it — but where it is used it terminates TLS for the entire dashboard, so it belongs in any security-relevant inventory. Stock build (apt on Linux, Homebrew on a Mac): the ACM ACME issuance flow needs no DNS-provider module, so no `xcaddy` custom build. On Linux it runs as its own `caddy` user and reads the pair from `/etc/caddy/certs/`, placed there by `scripts/certbot-deploy-hook.sh` on each renewal. |
+| **certbot** | Obtains and renews that certificate against ACM's managed ACME endpoint, run daily by `assetmgt-certrenew.timer` (systemd) or `com.assetmgt.certrenew` (launchd). Holds the ACME **account key** under `~/.certbot/config/accounts`, which is what authorises renewal requests for the domain — treat it like any other credential on that host. See [Security Model](Security-Model). |
 
 Versions for this group aren't pinned in the repo the way Python packages
-are (Homebrew-managed, upgraded independently) — Colima is the one
-exception, pinned specifically because of the risk above.
+are (package-manager-managed, upgraded independently) — Colima is the one
+exception on a Mac, pinned specifically because of the risk above.
 
 ## External services (optional — nothing is sent unless configured)
 

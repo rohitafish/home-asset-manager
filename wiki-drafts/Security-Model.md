@@ -29,11 +29,16 @@ and Host-confusion tricks. `Strict-Transport-Security` is sent on https
 responses. See the README's "Reaching it over HTTPS".
 
 The app process runs as an ordinary user and nothing it can reach runs as
-root on its behalf: there is no passwordless `sudo` rule (an earlier version
-documented one for `nmap`; on a Homebrew install that binary is user-owned,
-so the rule was a root escalation, and `scripts/preflight.sh` now fails
-while it exists), and the one root LaunchDaemon (UPS shutdown) runs a
-root-owned copy of its script with a system-only `PATH`.
+root on its behalf. On a Mac there is no passwordless `sudo` rule (an earlier
+version documented one for `nmap`; on a Homebrew install that binary is
+user-owned, so the rule was a root escalation, and `scripts/preflight.sh`
+fails while it exists), and the one root LaunchDaemon (UPS shutdown) runs a
+root-owned copy of its script with a system-only `PATH`. On the Linux host
+the app user does hold passwordless `sudo` — it is a single-user appliance
+administered entirely over SSH, and `redeploy.sh`, the certificate deploy
+hook and the serial-number read (`dmidecode`) all rely on it — so there the
+boundary is the host's SSH key, not a sudo rule; `nmap` there is a
+root-owned apt binary, which closes the escalation the Mac rule had opened.
 
 Given that, the realistic threat isn't "a random attacker on the internet" —
 it's **a compromised or malicious device already on your LAN** (a smart plug

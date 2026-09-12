@@ -40,9 +40,9 @@ serving an unauthenticated dashboard.
 | `LOG_LEVEL` | `INFO` | No |
 
 Set `DEBUG` to see `httpx`/app detail and per-seed probe misses; `WARNING` to
-quiet routine access logs. Logs go to stdout/stderr; launchd captures them
-into `logs/app.log` and `logs/app.error.log` (`WARNING`+) — nothing here
-writes a log file directly.
+quiet routine access logs. Logs go to stdout/stderr; the service manager
+(systemd on Linux, launchd on macOS) captures them into `logs/app.log` and
+`logs/app.error.log` (`WARNING`+) — nothing here writes a log file directly.
 
 ## UniFi
 
@@ -125,9 +125,9 @@ README's "Off-site database backups" section for the setup and restore steps.
 
 > **Not read from `.env`:** `BACKUP_KEEP_LOCAL` (local dump retention count)
 > is a `backup-db.sh` shell variable read from the *process* environment —
-> under launchd that's just `PATH`, so setting it in `.env` is a silent
-> no-op. Override it in `com.assetmgt.backup.plist` instead if you ever need
-> to change it.
+> under the service manager that's just `PATH`, so setting it in `.env` is a
+> silent no-op. Override it in the unit (`scripts/systemd/assetmgt-backup.service`)
+> or the plist (`com.assetmgt.backup.plist`) instead if you ever need to change it.
 
 ## If something's misconfigured
 

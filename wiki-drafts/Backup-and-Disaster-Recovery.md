@@ -10,11 +10,11 @@ section — this page won't duplicate those verbatim.
 
 ## What's protected, and the trade-off accepted
 
-Time Machine backing up the host does **not** protect the database: Postgres
-runs inside a Colima VM, so Time Machine only ever sees one large opaque VM
-disk image, not the database files inside it — a snapshot taken mid-write has
-no crash-consistency guarantee. `scripts/backup-db.sh` exists specifically to
-get a real, restorable copy off that Mac and into S3.
+A host-level backup does **not** protect the database: Postgres runs inside
+Docker (on a Mac, inside a Colima VM, where Time Machine only ever sees one
+large opaque VM disk image), and a filesystem snapshot taken mid-write has no
+crash-consistency guarantee. `scripts/backup-db.sh` exists specifically to
+get a real, restorable copy off the host and into S3.
 
 This is deliberately a *durability* answer, not an *availability* one: after
 losing the host the app is down until you rebuild it — it has to run on
@@ -67,7 +67,12 @@ a dump nobody can read is worse than no dump, because it looks like success.
 
 ## Backup schedule
 
-A `launchd` LaunchAgent (`com.assetmgt.backup`, installed from
+On the Linux host (the deployment since September 2026) a systemd timer,
+`assetmgt-backup.timer` (`scripts/systemd/`), fires **once a day at 03:15
+local time** with `Persistent=true`, which re-runs a missed tick at the next
+boot — the catch-up the launchd version below needs three ticks to approximate.
+
+On a Mac, a `launchd` LaunchAgent (`com.assetmgt.backup`, installed from
 `scripts/com.assetmgt.backup.plist`) ticks **three times a day, local time**:
 
 | Tick | Purpose |
@@ -94,8 +99,9 @@ a genuine unattended power-off, either way.)
 
 The job is **idempotent**: it `head-object`s that day's `daily/` key first
 and exits immediately if it's already there. That's what makes three ticks a
-day safe rather than wasteful — whichever tick first finds the Mac up and
-Colima ready does the day's backup, and the rest no-op. It also has to be
+day (or a catch-up run after a reboot) safe rather than wasteful — whichever
+run first finds the host up and Docker ready does the day's backup, and the
+rest no-op. It also has to be
 idempotent for a structural reason, not just efficiency: the daily object is
 under Object Lock (below), so a same-key re-upload would be *rejected*, not
 merely redundant.
@@ -230,5 +236,6 @@ password manager, and keep that copy current.
 - [Troubleshooting / FAQ](Troubleshooting-FAQ) — what a stale `/health`
   response actually means and how to check on it.
 - The README's ["Off-site database backups"](https://github.com/rohitafish/home-asset-manager#off-site-database-backups)
-  section — the one-time AWS setup commands, installing the LaunchAgent, and
-  the full restore runbook (including the "verify it actually works" drill).
+  section — the one-time AWS setup commands, installing the scheduler
+  (LaunchAgent or systemd timer), and the full restore runbook (including
+  the "verify it actually works" drill).

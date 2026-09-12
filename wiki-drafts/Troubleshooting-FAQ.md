@@ -1,8 +1,9 @@
 # Troubleshooting / FAQ
 
 Start here for anything that isn't working: **`./scripts/preflight.sh`** is a
-one-command sanity check — Mac toolchain, Docker/Colima, Python version,
-`.env` configuration, Postgres/migration state, and the LaunchAgents. It
+one-command sanity check — toolchain, Docker, Python version, `.env`
+configuration, Postgres/migration state, and the scheduler (systemd units on
+Linux, LaunchAgents on a Mac). It
 never prints a secret's value, only whether one is set. Run it after setup,
 or any time something's wrong, to narrow down where.
 
@@ -21,8 +22,10 @@ restart.
 
 **The dashboard is unreachable, and `curl` on `/health` fails (e.g. exit
 code 7, connection refused).**
-Almost always Colima (and therefore Postgres) is down. `colima start`, wait
-for it, confirm Postgres is reachable, then restart the app service. A clean
+Almost always Docker (and therefore Postgres) is down. On the Linux host:
+`systemctl status docker`, `docker compose up -d` in the repo, then
+`sudo systemctl restart assetmgt-app`. On a Mac: `colima start`, wait for it,
+confirm Postgres is reachable, then restart the app service; a clean
 shutdown (`colima stop`) before any reboot/OS update/machine move avoids this
 — see the README's Colima section for why an unclean stop can leave the VM
 refusing to restart.
@@ -108,7 +111,7 @@ own `identity_locked` flag.
 ---
 
 **A migration fails during `redeploy.sh`.**
-Confirm Postgres is actually up and reachable first (see the Colima entry
+Confirm Postgres is actually up and reachable first (see the Docker entry
 above) — most migration failures are really "couldn't connect," not a schema
 problem. If it's a genuine migration error, check `alembic current` against
 `alembic history` to see where the DB actually is before retrying.

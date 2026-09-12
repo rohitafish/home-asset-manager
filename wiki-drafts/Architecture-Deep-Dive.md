@@ -10,10 +10,10 @@ question: **does it need real access to the LAN?**
 
 ```mermaid
 flowchart LR
-    subgraph Mac["macOS host (native)"]
+    subgraph Host["always-on host (native process)"]
         App["FastAPI app\n+ discovery/scanning code"]
     end
-    subgraph Docker["Colima (Docker VM)"]
+    subgraph Docker["Docker (dockerd on Linux; Colima VM on macOS)"]
         PG[("Postgres")]
     end
     LAN["Home LAN\n(UniFi, Sonos, every device)"]
@@ -22,14 +22,17 @@ flowchart LR
 ```
 
 - **The FastAPI app and every discovery/scanning module run natively** in a
-  Python venv on the Mac — not in a container. `nmap` needs raw-socket/L2
+  Python venv on the host — not in a container. `nmap` needs raw-socket/L2
   access to the LAN, and on macOS *every* Docker runtime (Colima, Docker
   Desktop) puts containers behind a Linux VM's virtualised networking, which
-  can't reliably provide that.
-- **Postgres runs in Docker**, via [Colima](https://github.com/abiosoft/colima)
-  (a lightweight, GUI-free Docker runtime). It only ever needs a `localhost`
-  TCP port, never the LAN — so the VM boundary costs it nothing, and
-  containerising it avoids a native Postgres install to maintain.
+  can't reliably provide that. The deployed host has been a Linux laptop
+  (systemd units, `scripts/systemd/`) since September 2026; the Mac mini it
+  replaced (launchd plists, `scripts/*.plist`) remains a supported host.
+- **Postgres runs in Docker** — native `dockerd` on Linux, or
+  [Colima](https://github.com/abiosoft/colima) (a lightweight, GUI-free Docker
+  runtime) on macOS. It only ever needs a `localhost` TCP port, never the LAN
+  — so a VM boundary costs it nothing, and containerising it avoids a native
+  Postgres install to maintain.
 
 ## The discovery pipeline
 
