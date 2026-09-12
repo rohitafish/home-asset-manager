@@ -285,7 +285,13 @@ assistant or human contributor.
   - **Use `--profile schengen-iac-test`, not `default`.** Creating the role
     needs IAM write, and `create-acme-external-account-binding` needs
     `iam:PassRole` on the role -- `default`/s3-user has neither and fails
-    with `AccessDeniedException`. See "AWS credentials" below.
+    with `AccessDeniedException`.
+  - **Since 2026-09-12 the preferred admin profile is `admin-sso`** (IAM
+    Identity Center: MFA, 12-hour credentials, no static key; `aws sso login
+    --profile admin-sso` first). It can do everything `schengen-iac-test`
+    can. The static `schengen-iac-test` key is kept until the SSO path has
+    proved itself, then deleted. Details and the reasoning are in
+    `~/claudecode/AWS guardrails/GUARDRAILS-REVIEW.md`.
   - **`create-acme-external-account-binding` returns only ARNs, not
     credentials.** The key ID and MAC key come from a separate call,
     `aws acm get-acme-external-account-binding-credentials
