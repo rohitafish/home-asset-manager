@@ -57,7 +57,7 @@ def _require_nmap() -> str:
     path = shutil.which("nmap")
     if not path:
         raise NmapNotFoundError(
-            "nmap binary not found on PATH; install it with `brew install nmap`"
+            "nmap binary not found on PATH; install it (brew install nmap, or apt install nmap)"
         )
     return path
 

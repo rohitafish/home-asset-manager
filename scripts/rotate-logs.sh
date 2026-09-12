@@ -22,7 +22,8 @@ rotate_one() {
   [ -f "$log" ] || return 0
 
   local size
-  size="$(stat -f%z "$log")"
+  # stat -f%z is BSD/macOS, stat -c%s is GNU/Linux; the host may be either.
+  size="$(stat -f%z "$log" 2>/dev/null || stat -c%s "$log")"
   [ "$size" -ge "$MAX_BYTES" ] || return 0
 
   rm -f "$log.$KEEP.gz"

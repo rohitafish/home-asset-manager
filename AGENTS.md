@@ -5,19 +5,28 @@ assistant or human contributor.
 
 ## Deployment topology
 - This repo is developed on a dev machine, but the live/always-on instance
-  runs on a separate always-on Mac on the same LAN, per the README's launchd
-  setup.
-- Code is synced to that machine via `ssh mini` (an SSH config alias — set
+  runs on a separate always-on host on the same LAN. **Since 2026-09-12 that
+  host is `mint`** (SSH alias; a 2014 MacBook Pro on Linux Mint 22, "the
+  oldMacBook"), running the app under systemd -- see README's "Installing on
+  Linux". Before that it was the Mac mini (`mini`, launchd); the Mac path
+  is kept working and documented because the mini remains the rollback.
+  Much of the prose below still says "the Mini" for that history; read it
+  as "the always-on host" unless it is about launchd, Colima or FileVault,
+  which are Mac-only.
+- Code is synced to that machine via `ssh mint` (an SSH config alias — set
   this up yourself pointing at your own always-on host; see README).
-- **A fix committed/tested locally is NOT live until it's deployed to `mini`.**
+  `DEPLOY_HOST=mini` targets the old host.
+- **A fix committed/tested locally is NOT live until it's deployed to `mint`.**
   Always deploy with `./scripts/redeploy.sh` from this repo's root — do not
   reinvent the deployment steps manually. It rsyncs the code (excluding
   `.venv`, `.env`, logs, `.git`), installs any new Python dependencies, runs
   `alembic upgrade head`, checks for an in-progress discovery run (prompts
   before restarting if one is running, since a restart kills it mid-scan),
-  restarts the service via `launchctl kickstart -k`, and health-checks
-  `/health` at the end. It only needs `launchctl unload`/`load` (not
-  `kickstart`) if the launchd plist itself changed, which is rare.
+  restarts the service (`systemctl restart assetmgt-app` on Linux,
+  `launchctl kickstart -k` on a Mac), and health-checks `/health` at the
+  end. A scheduler-definition change (a unit file under `scripts/systemd/`,
+  or a plist) is not deployed by it: re-run `scripts/install-systemd-units.sh`
+  on the host (Linux), or the cp/sed/launchctl-load step (Mac).
 - Standard workflow for any change: edit code locally → verify in the local
   preview server (`assetmgt-web` launch config) → run `./scripts/redeploy.sh`
   → spot-check the change against real data on the Mini over `ssh mini`.

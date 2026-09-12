@@ -1010,6 +1010,77 @@ hand, by design -- free-text typed on the host is exactly where a stray
 secret or personal identifier could hide, so it's never copied into a
 tracked file.)
 
+## Installing on Linux (the oldMacBook)
+
+Since 2026-09-12 the always-on host is `mint`, a 2014 MacBook Pro running
+Linux Mint 22 (called "oldMacBook" in conversation), not the Mac mini. The
+app is the same; what differs is the host plumbing, and this section is the
+Linux counterpart of "Installing on a new Mac" below. The runbook there
+still applies to a Mac.
+
+What is different on Linux, all of it already in the repo:
+
+- **Scheduler:** systemd system units in `scripts/systemd/`, installed by
+  `scripts/install-systemd-units.sh` (run on the host, as the app user). They
+  run as that user, start at boot with nobody logged in, and replace the
+  four LaunchAgents one for one: `assetmgt-app.service`, and the
+  `assetmgt-backup`, `assetmgt-logrotate` and `assetmgt-certrenew` timers.
+  `Persistent=true` on the calendar timers replaces the plists' daytime
+  catch-up ticks. `redeploy.sh` restarts the app with `systemctl` when the
+  host has no `launchctl`; like the plists, it does not install unit files
+  -- a unit change means re-running the install script on the host.
+- **Docker:** native `docker.io` + `docker-compose-v2` from apt; no Colima,
+  no VM, no boot-order race. The app user is in the `docker` group.
+- **TLS:** Caddy from apt runs as its own `caddy` user, so it cannot read
+  `~/.certbot`. `scripts/certbot-deploy-hook.sh` (certbot's `--deploy-hook`
+  on both OSes) copies the renewed pair to `/etc/caddy/certs/<name>/` as
+  `root:caddy 0640` and reloads Caddy; `/etc/caddy/Caddyfile` points there.
+  The certbot account and certificate were moved from the Mini as files
+  (`~/.certbot`, with the old `/Users/<user>` paths in its renewal config rewritten to the new home), so no
+  re-issuance was paid for.
+- **Hardware discovery:** `discovery/local_host.py` reads DMI under
+  `/sys/class/dmi/id` (model identifier and serial; Apple hardware exposes
+  both) and physical NICs under `/sys/class/net` -- only interfaces with a
+  `device` link, so Docker's bridge and container veths never become a host
+  identity. The serial is root-only there; the module falls back to
+  `sudo -n dmidecode`, which the app user on the host is allowed.
+- **Tools:** `aws` comes from `pipx install awscli` (in `~/.local/bin`, on
+  the units' PATH); `nmap`, `certbot`, `caddy` from apt. `rotate-logs.sh`
+  uses whichever `stat` it finds.
+- **Power:** the laptop battery is the UPS. There is no `ups-shutdown.sh`
+  equivalent in this repo; the host's own `battery-guard.timer` (outside the
+  repo, see the machine's notes) shuts down cleanly on a long outage. The
+  disk is LUKS-encrypted and unlocked over SSH after a reboot
+  (`ssh mint-unlock` from the dev Mac); the app comes up on its own once
+  the root filesystem is open.
+
+Fresh install, in order (the same shape as the Mac runbook):
+
+```bash
+sudo apt install docker.io docker-compose-v2 nmap python3-venv caddy certbot rsync
+sudo usermod -aG docker "$USER"        # re-login afterwards
+pipx install awscli
+git clone https://github.com/rohitafish/home-asset-manager.git ~/claudecode/assetmgt
+cd ~/claudecode/assetmgt
+python3 -m venv .venv && . .venv/bin/activate && pip install --require-hashes -r requirements.txt
+cp scripts/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# .env: recreate by hand from .env.example and your password manager (see the
+# Mac runbook's notes -- same rules), chmod 600
+docker compose up -d
+# restore the latest S3 dump exactly as in "3. Restore the database from S3"
+# below (aws is in ~/.local/bin), THEN alembic upgrade head -- never before
+./scripts/install-systemd-units.sh
+./scripts/preflight.sh
+```
+
+Then TLS: put the certbot state under `~/.certbot` (moved from the old
+host, or issued fresh per AGENTS.md's TLS section), run
+`RENEWED_LINEAGE=$HOME/.certbot/config/live/assets.rohita.com scripts/certbot-deploy-hook.sh`
+once by hand to seed `/etc/caddy/certs`, write `/etc/caddy/Caddyfile` (two
+lines: `tls` pointing at that pair, `reverse_proxy 127.0.0.1:8000`),
+`sudo systemctl reload caddy`, `sudo ufw allow 443/tcp`, and add the name
+to `APP_ALLOWED_HOSTS`.
+
 ## Installing on a new Mac
 
 This is the runbook for the actual disaster the backup exists for: the host

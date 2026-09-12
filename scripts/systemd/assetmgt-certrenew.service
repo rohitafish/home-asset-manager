@@ -1,0 +1,15 @@
+# systemd equivalent of scripts/com.assetmgt.certrenew.plist: a daily
+# `certbot renew` that makes no ACME call unless a certificate is inside its
+# renewal window (see AGENTS.md's TLS section for why that window is 10 days
+# and why --dry-run must never be used against this endpoint).
+[Unit]
+Description=Renew the assets.rohita.com certificate if due
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=__ASSETMGT_USER__
+WorkingDirectory=__ASSETMGT_DIR__
+ExecStart=/bin/bash __ASSETMGT_DIR__/scripts/certbot-renew.sh
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+StandardError=append:__ASSETMGT_DIR__/logs/certrenew.error.log

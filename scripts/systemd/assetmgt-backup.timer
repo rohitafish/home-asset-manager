@@ -1,0 +1,12 @@
+[Unit]
+Description=Nightly database backup at 03:15
+
+[Timer]
+# One tick. The plist's 12:15 and 19:15 catch-up ticks existed because launchd
+# cannot re-run a job missed while the machine was off; Persistent= does that
+# natively (a missed run fires at the next boot). backup-db.sh is idempotent.
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

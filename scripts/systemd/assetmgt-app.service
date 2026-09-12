@@ -1,0 +1,28 @@
+# systemd equivalent of scripts/com.assetmgt.app.plist, for a Linux host.
+# Installed by scripts/install-systemd-units.sh, which fills in the
+# __ASSETMGT_*__ placeholders. A *system* unit running as the app user, not
+# a user unit: it must come up at boot with nobody logged in.
+[Unit]
+Description=Home asset manager (uvicorn, loopback only)
+# Postgres runs under Docker; without this ordering the first start can
+# race the container and crash. Restart= below covers the race anyway.
+After=network-online.target docker.service
+Wants=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+User=__ASSETMGT_USER__
+WorkingDirectory=__ASSETMGT_DIR__
+# Loopback only, same reasoning as the plist: HTTP Basic sends the password
+# on every request, so the app sits behind a TLS terminator on this host
+# (Caddy) and trusts X-Forwarded-* from 127.0.0.1 alone.
+ExecStart=__ASSETMGT_DIR__/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Environment=PATH=__ASSETMGT_HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
+# The plist's ThrottleInterval=60 equivalent: never a tight crash loop.
+Restart=always
+RestartSec=10
+StandardOutput=append:__ASSETMGT_DIR__/logs/app.log
+StandardError=append:__ASSETMGT_DIR__/logs/app.error.log
+
+[Install]
+WantedBy=multi-user.target

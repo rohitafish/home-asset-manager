@@ -4,7 +4,7 @@
 # Override HOST/REMOTE_DIR via DEPLOY_HOST / DEPLOY_REMOTE_DIR env vars.
 set -euo pipefail
 
-HOST="${DEPLOY_HOST:-mini}"
+HOST="${DEPLOY_HOST:-mint}"   # the always-on host; was `mini` until 2026-09-12
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-~/claudecode/assetmgt}"
 # $REMOTE_DIR is interpolated into remote command strings below on purpose
 # (so `~` expands on the Mini), which means it must never carry anything a
@@ -16,6 +16,10 @@ case "$REMOTE_DIR" in
     exit 2 ;;
 esac
 LOCAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The deploy host may be a Mac (Homebrew, launchd) or a Linux box (apt +
+# pipx, systemd). This prefix loads Homebrew's environment where it exists
+# and is a no-op elsewhere; ~/.local/bin is where pipx puts aws on Linux.
+REMOTE_ENV='[ -x /opt/homebrew/bin/brew ] && eval "$(/opt/homebrew/bin/brew shellenv)"; export PATH="$HOME/.local/bin:$PATH";'
 
 echo "==> Pre-flight checks"
 # Everything below assumes LOCAL_DIR and REMOTE_DIR live on *different* machines:
@@ -154,7 +158,7 @@ echo "==> Checking for an in-progress discovery run"
 # other preflight failure prints -- AFTER rsync had already replaced the
 # remote tree, but BEFORE pip install/alembic upgrade/restart ran, leaving
 # the live service running stale bytecode against a tree that had moved.
-if ! RUNNING=$(ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && python -c \"
+if ! RUNNING=$(ssh "$HOST" "$REMOTE_ENV cd $REMOTE_DIR && source .venv/bin/activate && python -c \"
 from sqlmodel import Session, select
 from app.db import engine
 from app.models import DiscoveryRun
@@ -183,13 +187,16 @@ if [ -n "$RUNNING" ]; then
 fi
 
 echo "==> Installing any new/updated dependencies"
-ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && pip install -q --require-hashes -r requirements.txt"
+ssh "$HOST" "$REMOTE_ENV cd $REMOTE_DIR && source .venv/bin/activate && pip install -q --require-hashes -r requirements.txt"
 
 echo "==> Running any new migrations"
-ssh "$HOST" "eval \"\$(/opt/homebrew/bin/brew shellenv)\" && cd $REMOTE_DIR && source .venv/bin/activate && alembic upgrade head"
+ssh "$HOST" "$REMOTE_ENV cd $REMOTE_DIR && source .venv/bin/activate && alembic upgrade head"
 
 echo "==> Restarting the app service"
-ssh "$HOST" "launchctl kickstart -k gui/\$(id -u)/com.assetmgt.app"
+# launchd agent on a Mac; the systemd unit (scripts/systemd/, installed by
+# install-systemd-units.sh) on Linux, where the app user has passwordless
+# sudo for exactly this kind of step.
+ssh "$HOST" 'if command -v launchctl >/dev/null 2>&1; then launchctl kickstart -k "gui/$(id -u)/com.assetmgt.app"; else sudo -n systemctl restart assetmgt-app.service; fi'
 
 sleep 2
 echo "==> Health check"

@@ -1,0 +1,16 @@
+# systemd equivalent of scripts/com.assetmgt.backup.plist. Fired by
+# assetmgt-backup.timer; run it by hand with `systemctl start assetmgt-backup`.
+[Unit]
+Description=Nightly off-site database backup to S3
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+User=__ASSETMGT_USER__
+WorkingDirectory=__ASSETMGT_DIR__
+ExecStart=/bin/bash __ASSETMGT_DIR__/scripts/backup-db.sh
+# docker (apt) and aws (pipx, in ~/.local/bin) must both resolve here.
+Environment=PATH=__ASSETMGT_HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Only real failures land here -- backup-db.sh is silent on success.
+StandardError=append:__ASSETMGT_DIR__/logs/backup.error.log

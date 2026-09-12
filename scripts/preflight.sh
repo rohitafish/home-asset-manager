@@ -38,11 +38,19 @@ _env_var() {
   grep -m1 "^${1}=" "$REPO_DIR/.env" | cut -d= -f2-
 }
 
+OS="$(uname -s)"   # Darwin (Homebrew, Colima, launchd) or Linux (apt, dockerd, systemd)
+# pipx puts aws in ~/.local/bin on Linux; a non-login shell (ssh host cmd)
+# does not have it on PATH, and the systemd units add it explicitly.
+[ "$OS" = Linux ] && export PATH="$HOME/.local/bin:$PATH"
+
 echo "== Toolchain =="
-for bin in colima docker nmap aws python3; do
+if [ "$OS" = Linux ]; then TOOLS="docker nmap aws python3"; else TOOLS="colima docker nmap aws python3"; fi
+for bin in $TOOLS; do
   path="$(command -v "$bin" 2>/dev/null || true)"
   if [ -n "$path" ]; then
     ok "$bin -> $path"
+  elif [ "$OS" = Linux ]; then
+    fail "$bin not found on PATH -- see README's \"Installing on Linux\" (apt install docker.io docker-compose-v2 nmap; pipx install awscli)"
   else
     fail "$bin not found on PATH -- see README's \"One-time setup\" (brew install colima docker docker-compose nmap awscli)"
   fi
@@ -53,11 +61,15 @@ echo "== Docker / Colima =="
 if command -v docker >/dev/null 2>&1; then
   if docker compose version >/dev/null 2>&1; then
     ok "docker compose plugin resolves"
+  elif [ "$OS" = Linux ]; then
+    fail "docker compose plugin not found -- apt install docker-compose-v2"
   else
     fail "docker compose plugin not found -- see README's Docker CLI plugin config step (cliPluginsExtraDirs in ~/.docker/config.json)"
   fi
   if docker info >/dev/null 2>&1; then
-    ok "Docker daemon reachable (Colima running)"
+    ok "Docker daemon reachable ($([ "$OS" = Linux ] && echo dockerd || echo Colima) running)"
+  elif [ "$OS" = Linux ]; then
+    fail "Docker daemon not reachable -- systemctl status docker; is $(id -un) in the docker group?"
   else
     fail "Docker daemon not reachable -- is Colima running? (brew services start colima)"
   fi
@@ -308,6 +320,26 @@ else
 fi
 
 echo
+if [ "$OS" = Linux ]; then
+echo "== systemd units =="
+for unit in assetmgt-app.service assetmgt-backup.timer assetmgt-logrotate.timer assetmgt-certrenew.timer; do
+  f="/etc/systemd/system/$unit"
+  if [ -f "$f" ]; then
+    if grep -qE '__ASSETMGT_(DIR|USER|HOME)__' "$f"; then
+      fail "$f still has an unsubstituted placeholder -- re-run scripts/install-systemd-units.sh"
+    elif [ "$(systemctl is-enabled "$unit" 2>/dev/null)" = enabled ]; then
+      ok "$unit is installed and enabled ($(systemctl is-active "$unit"))"
+    else
+      warn "$unit is installed but not enabled -- re-run scripts/install-systemd-units.sh"
+    fi
+    if [ "$unit" = assetmgt-app.service ] && grep -q '0\.0\.0\.0' "$f"; then
+      fail "$f binds uvicorn to 0.0.0.0 -- HTTP Basic credentials and the whole inventory cross the LAN in the clear. Re-install from scripts/systemd/ (loopback) and front it with TLS: README's \"Reaching it over HTTPS\""
+    fi
+  else
+    warn "$unit is not installed -- run scripts/install-systemd-units.sh"
+  fi
+done
+else
 echo "== LaunchAgents =="
 for label in app logrotate backup; do
   plist="$HOME/Library/LaunchAgents/com.assetmgt.$label.plist"
@@ -324,6 +356,7 @@ for label in app logrotate backup; do
     warn "com.assetmgt.$label is not installed (~/Library/LaunchAgents/com.assetmgt.$label.plist not found)"
   fi
 done
+fi
 
 echo
 echo "== Privilege boundaries =="
@@ -378,6 +411,26 @@ if [ -f "$UPSMONITOR_PLIST" ]; then
 fi
 
 echo
+if [ "$OS" = Linux ]; then
+echo "== Headless posture (Linux) =="
+# The laptop battery is the UPS. What must not silently regress: the guard
+# that shuts down cleanly before it drains, and the lid staying ignored.
+if systemctl is-active --quiet battery-guard.timer 2>/dev/null; then
+  ok "battery-guard.timer is active (clean shutdown on a long outage)"
+else
+  warn "battery-guard.timer is not active -- on a laptop-as-UPS host, a long outage ends in a hard power-off"
+fi
+if grep -qs '^HandleLidSwitch=ignore' /etc/systemd/logind.conf /etc/systemd/logind.conf.d/*.conf 2>/dev/null; then
+  ok "lid close is ignored (logind)"
+else
+  warn "HandleLidSwitch is not set to ignore -- closing the lid would suspend the host"
+fi
+if [ "$(systemctl is-enabled sleep.target 2>/dev/null)" = masked ]; then
+  ok "sleep.target is masked"
+else
+  warn "sleep.target is not masked -- something could still suspend the host"
+fi
+else
 echo "== Headless / UPS posture =="
 # These settings have no other visible symptom when they silently regress --
 # unlike a crashed process, a dead UPS battery or a disabled Screen Sharing
@@ -445,6 +498,8 @@ else
 fi
 
 echo
+fi
+
 echo "== Summary =="
 echo "  $FAILS FAIL(s), $WARNS WARN(s)"
 if [ "$FAILS" -gt 0 ]; then
