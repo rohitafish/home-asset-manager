@@ -86,3 +86,9 @@ exception on a Mac, pinned specifically because of the risk above.
 
 `scripts/redeploy.sh` only installs `requirements.txt`, so neither of these
 ships on the deployed instance — see `AGENTS.md`'s "Tests" section.
+
+Repository-hygiene tooling, not Python packages and not on the deployed
+instance either: **gitleaks** (`brew install gitleaks`; the pre-commit and
+pre-push hooks fail closed without it, and the `secrets` CI job runs it over
+the full history via a SHA-pinned action) and **TruffleHog** (a monthly CI
+workflow, `--only-verified`, SHA-pinned). Configuration in `.gitleaks.toml`.

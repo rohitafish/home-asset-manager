@@ -7,7 +7,7 @@ documents live in the repo itself so they stay versioned with the code:
   — setup, running tests/lint, and (read this one first) the privacy workflow
   every contributor needs to know before their first commit: how the
   PII/secret guard works, why real device details must never be used as
-  examples, and how to install the pre-push hook.
+  examples, and how to install the pre-commit and pre-push hooks.
 - **[SECURITY.md](https://github.com/rohitafish/home-asset-manager/blob/main/SECURITY.md)**
   — how to report a vulnerability privately. **Please don't open a public
   issue for one.**
@@ -35,7 +35,13 @@ Open an issue to discuss before sending a large PR for:
 
 ## Every PR runs the same gate you do locally
 
-CI runs `ruff`, the full test suite, and the PII/secret scanner
-(`scripts/check-pii.sh`) on every push and pull request — the same checks the
-pre-push hook runs on your own machine, as a server-side backstop. See
-[Security Model](Security-Model#supply-chain--repo-hygiene).
+CI runs `ruff`, the full test suite, the PII/secret scanner
+(`scripts/check-pii.sh`) and a gitleaks history scan on every push and pull
+request — the same checks the pre-commit and pre-push hooks run on your own
+machine, as a server-side backstop — plus a monthly TruffleHog sweep that
+verifies any credential-shaped string against its provider. Two layers, on
+purpose: gitleaks knows what an API key looks like; only `check-pii.sh`, with
+its gitignored list of this household's real identifiers, can tell a real MAC
+address or serial from a fabricated one. Use fabricated values in tests and
+examples (`00:1a:2b:3c:4d:xx` MACs, `C02FAKE...` serials), never real ones.
+See [Security Model](Security-Model#supply-chain--repo-hygiene).
