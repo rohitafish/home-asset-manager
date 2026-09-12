@@ -853,6 +853,26 @@ assistant or human contributor.
   `.env` for secrets. Add a line any time you learn another real personal
   detail (a name, a hostname, an address) — the check picks it up
   automatically, no code change needed.
+- **`.pii-baseline`** (repo root, **tracked**) lists commits where a
+  denylisted value is known to sit in already-public history, as exact
+  `<sha> <path>` pairs; `check-pii.sh` reports those as WARN rather than
+  FAIL. It holds locations, never values, which is why it is committed --
+  CI and every clone then agree on the same exemptions. It exists because
+  `--full` reported 130 FAILs on four device identifiers (a MAC and
+  serials, none of them at HEAD) in commits public since 2026-08-18, and a
+  check that always fails is one people stop reading. A rewrite was
+  attempted on 2026-09-12 and abandoned: `filter-repo` produced a correct
+  result, but this repo requires signed commits and rewriting strips every
+  signature -- the choice was re-signing 118 commits (including 19
+  `dependabot[bot]` ones and 3 PR merges) or leaving them unsigned, and
+  neither was worth it for identifiers that cannot be used to authenticate.
+  A force-push would not have removed the old commits from GitHub anyway;
+  they stay reachable by SHA until GitHub Support garbage-collects them.
+  **Never add an entry to silence a new finding** -- a new finding means
+  the value has not been published yet, which is the case actually worth
+  blocking on. Because a commit's sha derives from its content, the same
+  value in any later commit still FAILs: the file can exempt the past, not
+  the future. `--full` flags entries that match nothing; prune those.
 - **`devices/`** (repo root, gitignored) holds vendor-account exports used by
   `discovery/account_import.py` (see README's "Vendor account import") —
   screenshots/PDFs from Amazon/Sonos and the transcribed `accounts.json`,

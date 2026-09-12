@@ -556,3 +556,153 @@ def test_staged_mode_skips_the_commit_message_pass(repo):
     r = _run_staged(repo)
     assert r.returncode == 0, r.stdout
     assert "commit message" not in r.stdout
+
+
+# --- .pii-baseline: known, already-public locations ------------------------
+
+# The baseline exists because a value that has reached a public repo cannot
+# be un-published by a scanner. Without it, --full fails on that value
+# forever, and a check that always fails is a check people stop reading.
+# These tests pin the two properties that make it safe to have at all: it
+# exempts an exact (sha, path) pair and nothing else, and it cannot exempt
+# anything that doesn't exist yet -- a future commit carrying the same value
+# has a different sha, so it still FAILs.
+
+
+def _write_baseline(repo: Path, *entries: str) -> None:
+    """Writes a TRACKED .pii-baseline (unlike the denylist, it holds
+    locations rather than values, so it is meant to be committed)."""
+    (repo / ".pii-baseline").write_text(
+        "# fixture baseline\n" + "\n".join(entries) + "\n"
+    )
+
+
+def _sha(repo: Path, rev: str = "HEAD") -> str:
+    return subprocess.run(
+        ["git", "rev-parse", rev], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def _run_full(repo: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", "scripts/check-pii.sh", "--full"],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+
+def test_a_baselined_location_warns_instead_of_failing(repo):
+    _write_denylist(repo, "Fabname Fakesurname")
+    _commit_file(repo, "tests/fixture.py", 'owner = "Fabname Fakesurname"\n')
+    _write_baseline(repo, f"{_sha(repo)} tests/fixture.py")
+
+    result = _run_full(repo)
+
+    assert result.returncode == 0, result.stdout
+    assert "BASELINED" in result.stdout
+    assert "0 FAIL(s)" in result.stdout
+
+
+def test_a_baselined_location_is_still_reported_not_silenced(repo):
+    """A silent exemption is an exemption nobody revisits. The finding has
+    to stay visible -- it just stops blocking."""
+    _write_denylist(repo, "Fabname Fakesurname")
+    _commit_file(repo, "tests/fixture.py", 'owner = "Fabname Fakesurname"\n')
+    _write_baseline(repo, f"{_sha(repo)} tests/fixture.py")
+
+    result = _run_full(repo)
+
+    assert "WARN" in result.stdout
+    assert "Fabname Fakesurname" in result.stdout
+    assert ".pii-baseline" in result.stdout
+
+
+def test_the_same_value_in_a_different_file_still_fails(repo):
+    """The exemption is scoped to a path, not to a value."""
+    _write_denylist(repo, "Fabname Fakesurname")
+    _commit_file(repo, "tests/fixture.py", 'owner = "Fabname Fakesurname"\n')
+    _write_baseline(repo, f"{_sha(repo)} tests/fixture.py")
+    _commit_file(repo, "probes/elsewhere.py", 'owner = "Fabname Fakesurname"\n')
+
+    result = _run_full(repo)
+
+    assert result.returncode == 1
+    assert "probes/elsewhere.py" in result.stdout
+
+
+def test_a_later_commit_reintroducing_the_value_still_fails(repo):
+    """The property the whole mechanism rests on: a commit's sha comes from
+    its content, so baselining the past cannot exempt the future. Here the
+    file is baselined at one sha and the value is then re-added in a new
+    commit -- which must fail, or the baseline would be a permanent hole."""
+    _write_denylist(repo, "Fabname Fakesurname")
+    _commit_file(repo, "tests/fixture.py", 'owner = "Fabname Fakesurname"\n')
+    _write_baseline(repo, f"{_sha(repo)} tests/fixture.py")
+    _commit_file(repo, "tests/fixture.py", 'owner = "Fabname Fakesurname"  # again\n')
+
+    result = _run_full(repo)
+
+    assert result.returncode == 1, result.stdout
+    assert "FAIL" in result.stdout
+
+
+def test_an_unknown_sha_in_the_baseline_exempts_nothing(repo):
+    _write_denylist(repo, "Fabname Fakesurname")
+    _commit_file(repo, "tests/fixture.py", 'owner = "Fabname Fakesurname"\n')
+    _write_baseline(repo, "0" * 40 + " tests/fixture.py")
+
+    result = _run_full(repo)
+
+    assert result.returncode == 1
+    assert "FAIL" in result.stdout
+
+
+def test_a_stale_baseline_entry_is_reported(repo):
+    """An entry matching nothing is either a typo -- so it is exempting
+    nothing while some real finding is reported elsewhere -- or the residue
+    of a history rewrite. Either way it should be pruned, not accumulated."""
+    _write_denylist(repo, "Fabname Fakesurname")
+    _commit_file(repo, "tests/fixture.py", "nothing here\n")
+    _write_baseline(repo, "0" * 40 + " tests/gone.py")
+
+    result = _run_full(repo)
+
+    assert result.returncode == 0, result.stdout
+    assert "stale .pii-baseline entry" in result.stdout
+
+
+def test_comments_and_blank_lines_in_the_baseline_are_ignored(repo):
+    _write_denylist(repo, "Fabname Fakesurname")
+    _commit_file(repo, "tests/fixture.py", 'owner = "Fabname Fakesurname"\n')
+    (repo / ".pii-baseline").write_text(
+        f"# a comment\n\n   \n{_sha(repo)} tests/fixture.py\n"
+    )
+
+    result = _run_full(repo)
+
+    assert result.returncode == 0, result.stdout
+    assert "0 FAIL(s)" in result.stdout
+
+
+def test_no_baseline_file_changes_nothing(repo):
+    """A fresh clone without the file (or a repo that never needed one)
+    behaves exactly as before."""
+    _write_denylist(repo, "Fabname Fakesurname")
+    _commit_file(repo, "tests/fixture.py", 'owner = "Fabname Fakesurname"\n')
+
+    result = _run_full(repo)
+
+    assert result.returncode == 1
+    assert "BASELINED" not in result.stdout
+
+
+def test_no_stale_warnings_when_there_is_no_denylist_to_match_against(repo):
+    """CI has no .pii-denylist (it's gitignored and dev-machine-only), so
+    nothing can match any baseline entry there. Reporting all of them as
+    stale would be 100+ warnings that say nothing about the repo."""
+    _commit_file(repo, "tests/fixture.py", "nothing here\n")
+    _write_baseline(repo, f"{_sha(repo)} tests/fixture.py")
+
+    result = _run_full(repo)
+
+    assert result.returncode == 0, result.stdout
+    assert "stale .pii-baseline" not in result.stdout

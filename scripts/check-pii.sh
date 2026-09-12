@@ -110,6 +110,50 @@ else
   warn ".pii-denylist not found -- skipping known-value checks; generic pattern checks still run. See AGENTS.md's \"PII / privacy\" section to populate it."
 fi
 
+# .pii-baseline: <commit sha> <path> pairs naming places in the EXISTING
+# history where a denylisted value is known to sit and has already been
+# public. Unlike .pii-denylist this file is TRACKED -- it holds no values,
+# only locations, so it is safe to publish and it means CI and every clone
+# agree on the same exemptions.
+#
+# Why it exists: a value that reached a public repo cannot be un-published
+# by a scanner. Once it is in history, --full fails on it forever, and a
+# check that always fails is a check people stop reading -- which is
+# strictly worse than one that fails only on something new. The baseline
+# converts those known FAILs into visible WARNs, so the signal survives.
+#
+# Why it is safe: entries are exact (sha, path) pairs. A commit's sha is
+# derived from its content, so the same value appearing anywhere else --
+# including in any commit made after the baseline was written -- has a
+# different sha and still FAILs. It can exempt the past; it cannot exempt
+# the future. Stale entries are reported in --full (see the end of this
+# script) so the file cannot quietly rot into a blanket exemption.
+BASELINE_FILE="$REPO_DIR/.pii-baseline"
+BASELINE=""
+BASELINE_USED=""
+if [ -f "$BASELINE_FILE" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue ;; esac
+    b_sha="${line%%[[:space:]]*}"
+    b_path="${line#*[[:space:]]}"
+    b_path="$(printf '%s' "$b_path" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [ -n "$b_sha" ] && [ -n "$b_path" ] && [ "$b_sha" != "$b_path" ] \
+      && BASELINE="${BASELINE}|${b_sha}:${b_path}|"
+  done < "$BASELINE_FILE"
+fi
+
+# is_baselined <tree:path> -- true when that exact location is listed.
+is_baselined() {
+  [ -n "$BASELINE" ] || return 1
+  case "$BASELINE" in
+    *"|$1|"*)
+      case "$BASELINE_USED" in *"|$1|"*) : ;; *) BASELINE_USED="${BASELINE_USED}|$1|" ;; esac
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 if [ "$MODE" = "full" ]; then
   COMMITS="$(git rev-list --all 2>&1)"
   REV_LIST_STATUS=$?
@@ -160,9 +204,13 @@ if [ "${#DENYLIST_TERMS[@]}" -gt 0 ]; then
   for term in "${DENYLIST_TERMS[@]}"; do
     matches="$(echo "$COMMITS" | xargs -I{} git --no-pager grep --no-color -i -F -l -e "$term" {} -- 2>/dev/null)"
     if [ -n "$matches" ]; then
-      HIT=1
       while IFS= read -r m; do
-        fail "denylist term '$term' found in $m"
+        if is_baselined "$m"; then
+          warn "denylist term '$term' in $m -- BASELINED: already-public history, see .pii-baseline"
+        else
+          HIT=1
+          fail "denylist term '$term' found in $m"
+        fi
       done <<< "$matches"
     fi
   done
@@ -491,8 +539,12 @@ if [ "${#HEX_NEEDLES[@]}" -gt 0 ]; then
           *"$needle"*)
             # De-dup: one FAIL per (location, needle), not one per occurrence.
             case "$HEX_REPORTED" in *"|$loc@$needle|"*) : ;; *)
-              HIT=1
-              fail "denylisted MAC/hex value (normalised match) found in $loc -- value withheld"
+              if is_baselined "$loc"; then
+                warn "denylisted MAC/hex value (normalised match) in $loc -- BASELINED: already-public history, see .pii-baseline"
+              else
+                HIT=1
+                fail "denylisted MAC/hex value (normalised match) found in $loc -- value withheld"
+              fi
               HEX_REPORTED="${HEX_REPORTED}|$loc@$needle|"
             ;; esac
             break
@@ -549,6 +601,33 @@ done <<< "$([ "$MODE" = "staged" ] || printf '%s' "$COMMITS")"
 
 if [ "$HIT" -eq 0 ]; then
   ok "$LABEL: clean"
+fi
+
+# A baseline entry that no longer matches anything is either a typo (so it
+# is exempting nothing and some real FAIL is being reported elsewhere) or
+# the leftover of a history rewrite. Either way it should be deleted rather
+# than left to accumulate -- an exemption list nobody prunes is how a
+# targeted exemption becomes a blanket one. Only in --full: a --range or
+# --staged run legitimately never visits most baselined commits, so every
+# entry would look stale.
+# ...and only when the denylist was actually loaded. In CI there is no
+# .pii-denylist (it is gitignored and dev-machine-only), so no entry can
+# match anything and every single one would be reported stale -- 115 false
+# warnings that say nothing about the repo.
+if [ "$MODE" = "full" ] && [ -n "$BASELINE" ] && [ "${#DENYLIST_TERMS[@]}" -gt 0 ]; then
+  STALE=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue ;; esac
+    b_sha="${line%%[[:space:]]*}"
+    b_path="${line#*[[:space:]]}"
+    b_path="$(printf '%s' "$b_path" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [ -n "$b_sha" ] && [ -n "$b_path" ] && [ "$b_sha" != "$b_path" ] || continue
+    case "$BASELINE_USED" in
+      *"|${b_sha}:${b_path}|"*) : ;;
+      *) STALE=$((STALE + 1)); warn "stale .pii-baseline entry (matched nothing): ${b_sha} ${b_path}" ;;
+    esac
+  done < "$BASELINE_FILE"
+  [ "$STALE" -eq 0 ] || warn "$STALE stale baseline entr(y/ies) above -- remove them from .pii-baseline"
 fi
 
 echo
