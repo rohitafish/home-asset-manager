@@ -832,7 +832,11 @@ assistant or human contributor.
   Postgres, plus the household-name keys from the host's `.env`, into a
   marked block at the end of the file; your own lines above the marker are
   never touched, the block is replaced whole, and nothing is ever printed
-  but counts. Before it existed (2026-09-12) the file knew 1 of 56 MACs,
+  but counts -- including how many pulled values already sit in git
+  history (still added, unlike gmail_labels' sync, which refuses those:
+  an identifier already in history is a leak that has happened, and a
+  future commit carrying it must still FAIL; the script header has the
+  reasoning). Before it existed (2026-09-12) the file knew 1 of 56 MACs,
   and real MACs reached GitHub in a test file that same morning. Hostnames,
   model numbers and private IPs are deliberately not pulled -- too many
   are generic and would collide with the docs' illustrative values.
@@ -856,7 +860,10 @@ assistant or human contributor.
 - **`.pii-baseline`** (repo root, **tracked**) lists commits where a
   denylisted value is known to sit in already-public history, as exact
   `<sha> <path>` pairs; `check-pii.sh` reports those as WARN rather than
-  FAIL. It holds locations, never values, which is why it is committed --
+  FAIL -- one counted line by default (`130 known already-public
+  location(s) BASELINED`), every location on its own line under
+  `--verbose`, and stale entries (matching nothing) always listed.
+  It holds locations, never values, which is why it is committed --
   CI and every clone then agree on the same exemptions. It exists because
   `--full` reported 130 FAILs on four device identifiers (a MAC and
   serials, none of them at HEAD) in commits public since 2026-08-18, and a
@@ -909,8 +916,12 @@ assistant or human contributor.
   modes: default (commits about to be pushed) and `--full` (the entire
   tracked tree and every commit reachable from any ref — rerun this after
   adding to the denylist, or any time you want a full audit, not just at
-  push time; note it runs a git grep per commit, so full history takes a
-  minute).
+  push time). Every rule is one batched `git grep` (or `git log --grep`)
+  over all the trees in range at once, so `--full` takes about 20 s on
+  this history; until 2026-09-12 it ran one git process per commit per
+  term, and `--full` ran for minutes, which is the kind of slow that gets
+  bypassed with `--no-verify`. Keep it that way: never reintroduce a
+  per-commit loop.
   All of these — a denylist hit, email, GPS, SSN, and the secret rules
   below — are a **FAIL** and block the push; a non-private IP is only a
   **WARN** and does not. It echoes the matched text for the PII rules (the
@@ -977,9 +988,12 @@ assistant or human contributor.
   for h in pre-commit pre-push; do cp scripts/hooks/$h .git/hooks/$h; done
   chmod +x .git/hooks/pre-commit .git/hooks/pre-push
   ```
-  It blocks any push whose commits trip `check-pii.sh`. `git push
-  --no-verify` bypasses it deliberately if you're certain something's a
-  false positive — don't reach for that reflexively.
+  It blocks any push whose commits trip `check-pii.sh`. For a branch the
+  remote has never seen it scans only the commits the remote lacks
+  (`<sha> --not --remotes=<remote>`), not every ancestor -- the bare-sha
+  form it once passed made a one-commit PR branch cost a full-history
+  scan. `git push --no-verify` bypasses it deliberately if you're certain
+  something's a false positive — don't reach for that reflexively.
 - **There is deliberately no machine-wide PII check anymore.** A global
   version (`~/.pii-guardrail/`, wired in via `core.hooksPath` in
   `~/.gitconfig`, taking precedence over every repo's own hook) existed

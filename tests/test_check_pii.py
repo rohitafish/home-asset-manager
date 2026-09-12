@@ -381,6 +381,34 @@ def test_unresolvable_range_fails_loudly_instead_of_reading_as_clean(repo):
     assert "nothing to check" not in proc.stdout
 
 
+def test_rev_list_exclusion_range_scans_only_what_the_remote_lacks(repo, tmp_path):
+    """The pre-push hook passes `<sha> --not --remotes=origin` for a branch
+    the remote has never seen, so --range must accept rev-list's own syntax,
+    not only A..B. A denylisted value in a commit the remote already has
+    must not be reported (it is not being pushed); the bare sha form, which
+    the hook used to pass, would scan every ancestor and FAIL on it.
+
+    The value sits in that commit's MESSAGE, not a file: the tree rules
+    scan each in-range commit's whole tree, so a file pushed earlier would
+    still be seen in the new commit's tree (and rightly so -- that is what
+    .pii-baseline exists for). Only the message pass is decided purely by
+    which commits are in range."""
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    _git(repo, "remote", "add", "origin", str(origin))
+    _write_denylist(repo, "Fabname Fakesurname")
+    _commit_with_message(repo, "pushed.py", "x = 1\n", "Fix the sync bug for Fabname Fakesurname")
+    _git(repo, "push", "-q", "origin", "main")
+    _git(repo, "checkout", "-qb", "feature")
+    _commit_file(repo, "clean.py", "y = 2\n")
+
+    only_new = _run_proc(repo, "HEAD --not --remotes=origin")
+    everything = _run_proc(repo, "HEAD")
+
+    assert only_new.returncode == 0, f"the pushed commit is not in range:\n{only_new.stdout}"
+    assert everything.returncode == 1, "the bare-sha form scans every ancestor"
+
+
 def test_range_flag_missing_operand_fails_instead_of_hanging(repo):
     """Regression test: --range as the last argument used to make `shift 2`
     silently fail and return non-zero -- with no `set -e`, $# never reached
@@ -604,7 +632,9 @@ def test_a_baselined_location_warns_instead_of_failing(repo):
 
 def test_a_baselined_location_is_still_reported_not_silenced(repo):
     """A silent exemption is an exemption nobody revisits. The finding has
-    to stay visible -- it just stops blocking."""
+    to stay visible -- it just stops blocking. Visible as ONE counted WARN
+    line by default: 130 per-location lines on every --full run were the
+    always-on noise the baseline was created to end."""
     _write_denylist(repo, "Fabname Fakesurname")
     _commit_file(repo, "tests/fixture.py", 'owner = "Fabname Fakesurname"\n')
     _write_baseline(repo, f"{_sha(repo)} tests/fixture.py")
@@ -612,8 +642,29 @@ def test_a_baselined_location_is_still_reported_not_silenced(repo):
     result = _run_full(repo)
 
     assert "WARN" in result.stdout
-    assert "Fabname Fakesurname" in result.stdout
+    assert "1 known already-public location(s) BASELINED" in result.stdout
     assert ".pii-baseline" in result.stdout
+    assert "tests/fixture.py" not in result.stdout, (
+        f"per-location lines are --verbose only:\n{result.stdout}"
+    )
+
+
+def test_verbose_lists_each_baselined_location(repo):
+    """--verbose is the audit view: every baselined location on its own
+    line, naming the term and the sha:path, plus the count."""
+    _write_denylist(repo, "Fabname Fakesurname")
+    _commit_file(repo, "tests/fixture.py", 'owner = "Fabname Fakesurname"\n')
+    sha = _sha(repo)
+    _write_baseline(repo, f"{sha} tests/fixture.py")
+
+    result = subprocess.run(
+        ["bash", "scripts/check-pii.sh", "--full", "--verbose"],
+        cwd=repo, capture_output=True, text=True,
+    )
+
+    assert result.returncode == 0, result.stdout
+    assert f"Fabname Fakesurname' in {sha}:tests/fixture.py -- BASELINED" in result.stdout
+    assert "1 known already-public location(s) BASELINED" in result.stdout
 
 
 def test_the_same_value_in_a_different_file_still_fails(repo):

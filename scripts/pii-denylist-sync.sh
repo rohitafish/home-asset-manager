@@ -27,6 +27,19 @@
 # The block is rewritten whole each run, so a device removed from the
 # inventory drops out of it (keep it by moving it above the marker).
 #
+# It also counts how many of the pulled values already sit somewhere in this
+# repo's git history (every commit, not just HEAD -- check-pii.sh --full
+# scans it all). gmail_labels' copy of this script REFUSES to add such a
+# value, because there a candidate is a label segment that may be an
+# ordinary word already used legitimately in prose. Here every pulled value
+# is a device identifier or a household name, so one that is already in
+# history is a leak that has already happened, not a collision: it is still
+# added (a future commit carrying it must FAIL) and the count is reported,
+# so whoever runs this knows the next `check-pii.sh --full` will name those
+# locations for .pii-baseline (or a rewrite). Literal match only, as in
+# gmail's copy: a MAC that reached history in another separator form is
+# caught by check-pii.sh's own normalised pass, not here.
+#
 # Never prints a value: only counts. Same invariant as env-structure.sh.
 set -euo pipefail
 
@@ -74,6 +87,21 @@ NEW_BLOCK="$(printf '%s\n' "$PULLED" | sed 's/[[:space:]]*$//' | awk 'length($0)
 NEW_COUNT="$(printf '%s\n' "$NEW_BLOCK" | grep -c . || true)"
 [ "$NEW_COUNT" -gt 0 ] || { echo "!!! the inventory returned no identifiers -- refusing to write an empty block." >&2; exit 1; }
 
+# One git grep over every tree at once (the same shape as check-pii.sh --
+# never one process per commit), terms read from a process substitution so
+# no value touches the disk; -o prints the matched text, which lowercased
+# and intersected with the lowercased block is the count of block values
+# already in history. Skipped silently when there is no git history here.
+IN_HISTORY=""
+if REVS="$(git -C "$REPO_DIR" rev-list --all 2>/dev/null)" && [ -n "$REVS" ]; then
+  # shellcheck disable=SC2086
+  IN_HISTORY="$(comm -12 \
+    <(printf '%s\n' "$NEW_BLOCK" | tr 'A-Z' 'a-z' | sort -u) \
+    <(git -C "$REPO_DIR" --no-pager grep --no-color -h -iF -o -f <(printf '%s\n' "$NEW_BLOCK") $REVS -- 2>/dev/null \
+        | tr 'A-Z' 'a-z' | sort -u) \
+    | grep -c . || true)"
+fi
+
 # Split the existing file into the hand-written part and the old block.
 if [ -f "$DENYLIST" ]; then
   HAND="$(awk -v b="$BEGIN_MARK" '$0 == b {exit} {print}' "$DENYLIST")"
@@ -91,6 +119,7 @@ HAND_COUNT="$(printf '%s\n' "$HAND" | grep -vE '^\s*(#|$)' | grep -c . || true)"
 echo "== .pii-denylist sync from $HOST =="
 echo "  hand-written entries : $HAND_COUNT (untouched)"
 echo "  auto block           : $OLD_COUNT -> $NEW_COUNT entries (+$ADDED / -$REMOVED)"
+[ -z "$IN_HISTORY" ] || echo "  already in git history : $IN_HISTORY (still added -- scripts/check-pii.sh --full names the locations; baseline or rewrite them)"
 if [ "$DRY_RUN" -eq 1 ]; then echo "  (dry run -- nothing written)"; exit 0; fi
 
 TMP="$(mktemp "$REPO_DIR/.pii-denylist.XXXXXX")"

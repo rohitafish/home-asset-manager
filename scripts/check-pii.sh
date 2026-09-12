@@ -20,6 +20,13 @@
 #                                          # (upstream..HEAD, or origin/main..HEAD)
 #   scripts/check-pii.sh --range A..B     # a specific range (the pre-push
 #                                          # hook passes what git gives it)
+#   scripts/check-pii.sh --range 'SHA --not --remotes=origin'
+#                                          # any git rev-list expression, not
+#                                          # only A..B -- the pre-push hook
+#                                          # uses this form for a branch the
+#                                          # remote has never seen, so only
+#                                          # the commits the remote lacks are
+#                                          # scanned, not every ancestor
 #   scripts/check-pii.sh --full           # every commit reachable from any
 #                                          # ref -- the whole history, not
 #                                          # just what's about to move
@@ -27,6 +34,9 @@
 #                                          # is about to record (the pre-commit
 #                                          # hook) -- a leak stopped here never
 #                                          # exists in any commit at all
+#   scripts/check-pii.sh --full --verbose # list every BASELINED location on
+#                                          # its own line instead of the
+#                                          # one-line count (see .pii-baseline)
 #
 # What this can't catch: a *new* real name used for the first time as an
 # example. It isn't in the denylist yet (nothing is, until someone notices
@@ -56,10 +66,12 @@ fail() { printf '  FAIL  %s\n' "$1"; FAILS=$((FAILS + 1)); }
 
 MODE="range"
 RANGE=""
+VERBOSE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --full) MODE="full"; shift ;;
     --staged) MODE="staged"; shift ;;
+    --verbose) VERBOSE=1; shift ;;
     --range)
       # Without this check, --range as the LAST argument makes `shift 2`
       # silently fail (only one argument left to shift) and return non-zero
@@ -167,7 +179,14 @@ elif [ "$MODE" = "staged" ]; then
   REV_LIST_STATUS=$?
   LABEL="staged changes"
 else
-  COMMITS="$(git rev-list "$RANGE" 2>&1)"
+  # $RANGE is DELIBERATELY unquoted: it is handed to git rev-list as-is, so a
+  # caller can pass rev-list's own exclusion syntax and not only A..B. The
+  # pre-push hook relies on this for a branch the remote has never seen:
+  # `<sha> --not --remotes=origin` scans only the commits the remote lacks,
+  # where the bare `<sha>` it used to pass expanded to every ancestor -- the
+  # whole history, the same cost as --full, for a one-commit branch.
+  # shellcheck disable=SC2086
+  COMMITS="$(git rev-list $RANGE 2>&1)"
   REV_LIST_STATUS=$?
   LABEL="range $RANGE"
 fi
@@ -199,27 +218,85 @@ fi
 
 HIT=0
 
+# Every rule below asks git ONE question over ALL the trees in $COMMITS at
+# once (git grep takes any number of tree arguments and prints tree:path),
+# rather than one git process per commit per term. That per-commit shape --
+# `echo "$COMMITS" | xargs -I{} git grep ... {}` inside a loop over the
+# denylist -- cost ~17,000 processes for a --full run of this repo (110
+# terms x 159 commits), and the hex pass then forked twice more per matched
+# line: measured 2026-09-12, --full ran for over seven minutes before it
+# printed a summary, while one batched grep found the same 115 locations in
+# 2.6 s. A scan that slow is one people bypass with --no-verify, which is a
+# privacy failure, not just a slow one -- speed is what keeps the hooks in
+# the path. $COMMITS is unquoted on purpose (newline-separated shas, one
+# argument each); the argument list stays far below ARG_MAX until the
+# history is tens of thousands of commits long.
+# shellcheck disable=SC2086
+_grep_trees() { git --no-pager grep --no-color "$@" $COMMITS -- 2>/dev/null; }
+# Same idea for commit MESSAGES: git log's own --grep over exactly the
+# commits in $COMMITS (--stdin --no-walk: those commits, no ancestry walk),
+# one process per pattern instead of one `git log -1` plus one `grep` per
+# term per commit. Prints matching shas, one per line.
+# shellcheck disable=SC2086
+_log_grep() { printf '%s\n' $COMMITS | git --no-pager log --stdin --no-walk --format=%H "$@" 2>/dev/null; }
+
+# A location listed in .pii-baseline is counted, and printed only under
+# --verbose: 130 individual WARN lines on every --full run are exactly the
+# always-on noise that the baseline was created to end, and a summary line
+# with the count says the same thing in one line that is actually read. The
+# count is reported before the verdict below; --verbose restores the
+# per-location lines for when someone wants to audit them.
+BASELINED_COUNT=0
+_baselined() {
+  BASELINED_COUNT=$((BASELINED_COUNT + 1))
+  if [ "$VERBOSE" -eq 1 ]; then
+    warn "$1 -- BASELINED: already-public history, see .pii-baseline"
+  fi
+}
+
 # Known-value denylist terms -- exact real strings, always a FAIL.
+#
+# One git grep for every term at once (-f reads the terms from a process
+# substitution, so no value touches the disk), with -o so each output line
+# is tree:path:MATCHED-TEXT -- the matched text is what lets a single
+# invocation still say WHICH term hit, so the report keeps naming the term.
+# The awk maps the (case-insensitive) match back to the term as written in
+# the denylist; a match that is longer than any one term (two terms
+# overlapping in the same span) falls back to the first term contained in
+# it. Paths in this repo are colon-free, so the first two colon-delimited
+# fields are tree and path and the remainder is the match, whose own colons
+# (a MAC) must survive.
 if [ "${#DENYLIST_TERMS[@]}" -gt 0 ]; then
-  for term in "${DENYLIST_TERMS[@]}"; do
-    matches="$(echo "$COMMITS" | xargs -I{} git --no-pager grep --no-color -i -F -l -e "$term" {} -- 2>/dev/null)"
-    if [ -n "$matches" ]; then
-      while IFS= read -r m; do
-        if is_baselined "$m"; then
-          warn "denylist term '$term' in $m -- BASELINED: already-public history, see .pii-baseline"
-        else
-          HIT=1
-          fail "denylist term '$term' found in $m"
-        fi
-      done <<< "$matches"
-    fi
-  done
+  DENY_HITS="$(_grep_trees -i -F -o -f <(printf '%s\n' "${DENYLIST_TERMS[@]}") \
+    | awk 'FILENAME == ARGV[1] { if (length($0)) terms[tolower($0)] = $0; next }
+      {
+        i = index($0, ":"); rest = substr($0, i + 1)
+        j = index(rest, ":")
+        loc = substr($0, 1, i) substr(rest, 1, j - 1)
+        m = tolower(substr(rest, j + 1))
+        term = (m in terms) ? terms[m] : ""
+        if (term == "") for (t in terms) if (index(m, t)) { term = terms[t]; break }
+        if (term == "") next
+        key = term "\t" loc
+        if (!(key in seen)) { seen[key] = 1; print key }
+      }' <(printf '%s\n' "${DENYLIST_TERMS[@]}") - | sort)"
+  if [ -n "$DENY_HITS" ]; then
+    while IFS=$'\t' read -r term m; do
+      [ -n "$m" ] || continue
+      if is_baselined "$m"; then
+        _baselined "denylist term '$term' in $m"
+      else
+        HIT=1
+        fail "denylist term '$term' found in $m"
+      fi
+    done <<< "$DENY_HITS"
+  fi
 fi
 
 # Generic structural patterns -- defense in depth for things not yet known
 # to the denylist. Email addresses exclude this repo's own intentionally
 # public pseudonym/service addresses.
-EMAIL_HITS="$(echo "$COMMITS" | xargs -I{} git --no-pager grep --no-color -noE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' {} -- 2>/dev/null \
+EMAIL_HITS="$(_grep_trees -noE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
   | grep -v -E 'noreply@anthropic\.com|users\.noreply\.github\.com|@anthropic\.com|console\.anthropic\.com|example\.com')"
 if [ -n "$EMAIL_HITS" ]; then
   HIT=1
@@ -228,7 +305,7 @@ if [ -n "$EMAIL_HITS" ]; then
   done <<< "$EMAIL_HITS"
 fi
 
-GPS_HITS="$(echo "$COMMITS" | xargs -I{} git --no-pager grep --no-color -noE '[0-9]{1,3}\.[0-9]{4,},[[:space:]]*-?[0-9]{1,3}\.[0-9]{4,}' {} -- 2>/dev/null)"
+GPS_HITS="$(_grep_trees -noE '[0-9]{1,3}\.[0-9]{4,},[[:space:]]*-?[0-9]{1,3}\.[0-9]{4,}')"
 if [ -n "$GPS_HITS" ]; then
   HIT=1
   while IFS= read -r m; do
@@ -239,7 +316,7 @@ fi
 # No \b here -- git grep -E is POSIX ERE, which doesn't support \b (it
 # silently matches nothing, rather than erroring, so this is easy to get
 # wrong without testing). The pattern is specific enough without it.
-SSN_HITS="$(echo "$COMMITS" | xargs -I{} git --no-pager grep --no-color -noE '[0-9]{3}-[0-9]{2}-[0-9]{4}' {} -- 2>/dev/null)"
+SSN_HITS="$(_grep_trees -noE '[0-9]{3}-[0-9]{2}-[0-9]{4}')"
 if [ -n "$SSN_HITS" ]; then
   HIT=1
   while IFS= read -r m; do
@@ -266,7 +343,7 @@ fi
 # AWS keys this app uses. `-e` guards the leading dash of the PRIVATE KEY
 # alternative from being read as an option.
 SECRET_RE='sk-ant-[A-Za-z0-9_-]{20,}|sk-or-v1-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
-SECRET_HITS="$(echo "$COMMITS" | xargs -I{} git --no-pager grep --no-color -lE -e "$SECRET_RE" {} -- 2>/dev/null)"
+SECRET_HITS="$(_grep_trees -lE -e "$SECRET_RE")"
 if [ -n "$SECRET_HITS" ]; then
   HIT=1
   while IFS= read -r m; do
@@ -350,7 +427,7 @@ if [ -f "$ENV_FILE" ]; then
     # Case-sensitive (no -i, unlike the denylist name match): a case-variant
     # of a credential is not that credential, and -i is what turns a word-ish
     # password into a repo-wide false FAIL.
-    matches="$(echo "$COMMITS" | xargs -I{} git --no-pager grep --no-color -F -l -e "$val" {} -- 2>/dev/null)"
+    matches="$(_grep_trees -F -l -e "$val")"
     if [ -n "$matches" ]; then
       HIT=1
       while IFS= read -r m; do
@@ -367,7 +444,10 @@ fi
 # tracked secret-config file in the range. .env.example is the tracked template
 # and must stay allowed, so match the bare/base names only, not the .example
 # suffix.
-ENV_TRACKED="$(echo "$COMMITS" | xargs -I{} git --no-pager ls-tree -r --name-only {} 2>/dev/null \
+# git ls-tree takes one tree at a time, so this stays a loop -- a plain
+# for over the shas, ~3 ms each, not an xargs per commit per rule.
+# shellcheck disable=SC2086
+ENV_TRACKED="$(for c in $COMMITS; do git --no-pager ls-tree -r --name-only "$c" 2>/dev/null; done \
   | grep -E '(^|/)\.env$|(^|/)\.env\.(local|production|prod)$' | sort -u)"
 if [ -n "$ENV_TRACKED" ]; then
   HIT=1
@@ -455,45 +535,34 @@ scripts/check-pii.sh|203.0.113.0'
 # eight characters of 999.1.1.1 are a perfectly well-formed address), so it
 # would report the same false positive with a truncated value -- worse, not
 # better. Base 10 is forced with 10# so a zero-padded octet isn't read as octal.
-_is_possible_ipv4() {
-  local o
-  local -a octets
-  IFS=. read -r -a octets <<< "$1"
-  [ "${#octets[@]}" -eq 4 ] || return 1
-  for o in "${octets[@]}"; do
-    case "$o" in
-      ''|*[!0-9]*) return 1 ;;
-    esac
-    [ "${#o}" -le 3 ] && [ "$((10#$o))" -le 255 ] || return 1
-  done
-  return 0
-}
-
-IP_RAW="$(echo "$COMMITS" | xargs -I{} git --no-pager grep --no-color -noE '([0-9]{1,3}\.){3}[0-9]{1,3}' {} -- 2>/dev/null)"
-IP_HITS=""
-if [ -n "$IP_RAW" ]; then
-  while IFS= read -r line; do
-    ip="${line##*:}"
-    # Not a possible address at all -- nothing here can be a leaked one.
-    _is_possible_ipv4 "$ip" || continue
-    case "$ip" in
-      10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.2[0-9].*|172.30.*|172.31.*|192.168.*|127.*|169.254.*|0.0.0.0|22[4-9].*|23[0-9].*)
-        continue
-        ;;
-    esac
-    # File-scoped allowlist. Match the path between git grep's commit: and
-    # :line: separators so a bare value can't be waved through elsewhere.
-    allowed=""
-    while IFS= read -r entry; do
-      [ -n "$entry" ] || continue
-      case "$line" in
-        *":${entry%%|*}:"*) [ "$ip" = "${entry##*|}" ] && allowed=1 ;;
-      esac
-    done <<< "$IP_ALLOWLIST"
-    [ -n "$allowed" ] && continue
-    IP_HITS="${IP_HITS}${IP_HITS:+$'\n'}${line}"
-  done <<< "$IP_RAW"
-fi
+# One awk pass over every dotted-quad hit, not a bash loop: a --full run of
+# this repo yields ~29,000 such lines, and the bash version re-read the
+# allowlist through a here-string (a temp file each) for every one of them.
+# The same three questions in the same order -- is it a possible address at
+# all, is it a private/loopback/link-local/multicast one, is this exact
+# (path, value) pair allowlisted -- with the path taken from the second
+# colon field of git grep's tree:path:line:match, so a bare value can't be
+# waved through elsewhere. The octet test is numeric (awk converts "08" as
+# decimal, the same as the shell's 10# did).
+# The allowlist is read as a file (a process substitution) rather than an
+# awk -v value: macOS's awk refuses a newline inside -v ("newline in
+# string"), and the list is one entry per line.
+IP_HITS="$(_grep_trees -noE '([0-9]{1,3}\.){3}[0-9]{1,3}' | awk '
+  FILENAME == ARGV[1] { if (length($0)) ok[$0] = 1; next }
+  {
+    ip = $0; sub(/.*:/, "", ip)
+    if (split(ip, o, ".") != 4) next
+    bad = 0
+    for (k = 1; k <= 4; k++) if (o[k] !~ /^[0-9]+$/ || length(o[k]) > 3 || o[k] + 0 > 255) bad = 1
+    if (bad) next
+    a = o[1] + 0; b = o[2] + 0
+    if (a == 10 || a == 127 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) \
+        || (a == 169 && b == 254) || (a >= 224 && a <= 239) || ip == "0.0.0.0") next
+    i = index($0, ":"); rest = substr($0, i + 1); j = index(rest, ":")
+    path = substr(rest, 1, j - 1)
+    if ((path "|" ip) in ok) next
+    print
+  }' <(printf '%s\n' "$IP_ALLOWLIST") -)"
 if [ -n "$IP_HITS" ]; then
   while IFS= read -r m; do
     warn "non-private-looking IP address in $m -- confirm it's a legitimate public endpoint, not a real home IP"
@@ -522,36 +591,34 @@ if [ "${#DENYLIST_TERMS[@]}" -gt 0 ]; then
   done
 fi
 if [ "${#HEX_NEEDLES[@]}" -gt 0 ]; then
-  MAC_RAW="$(echo "$COMMITS" | xargs -I{} git --no-pager grep --no-color -oE '[0-9A-Fa-f]{2}([:.-]?[0-9A-Fa-f]{2}){5,}' {} -- 2>/dev/null)"
-  if [ -n "$MAC_RAW" ]; then
-    HEX_REPORTED=""
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      # git grep -oE (no -n) prints tree:file:match. File paths are colon-free in
-      # this repo, so peel off the first two colon-delimited fields; the rest is
-      # the MAC, whose own colons must stay intact until normalisation.
-      loc_rest="${line#*:}"
-      loc="${line%%:*}:${loc_rest%%:*}"     # tree:file
-      match="${loc_rest#*:}"
-      norm="$(printf '%s' "$match" | tr -cd '0-9A-Fa-f' | tr 'A-F' 'a-f')"
-      for needle in "${HEX_NEEDLES[@]}"; do
-        case "$norm" in
-          *"$needle"*)
-            # De-dup: one FAIL per (location, needle), not one per occurrence.
-            case "$HEX_REPORTED" in *"|$loc@$needle|"*) : ;; *)
-              if is_baselined "$loc"; then
-                warn "denylisted MAC/hex value (normalised match) in $loc -- BASELINED: already-public history, see .pii-baseline"
-              else
-                HIT=1
-                fail "denylisted MAC/hex value (normalised match) found in $loc -- value withheld"
-              fi
-              HEX_REPORTED="${HEX_REPORTED}|$loc@$needle|"
-            ;; esac
-            break
-            ;;
-        esac
-      done
-    done <<< "$MAC_RAW"
+  # One git grep for every MAC-shaped token in every tree, then one awk pass
+  # to normalise each token and test it against every needle: the earlier
+  # bash loop forked `tr` twice per token, and a --full run of this repo
+  # has ~95,000 tokens. De-duplicated to one report per (location, needle);
+  # only the location is ever printed, never the needle or the token.
+  MAC_HITS="$(_grep_trees -oE '[0-9A-Fa-f]{2}([:.-]?[0-9A-Fa-f]{2}){5,}' \
+    | awk -v needles="$(IFS=,; printf '%s' "${HEX_NEEDLES[*]}")" '
+      BEGIN { n = split(needles, N, ",") }
+      {
+        i = index($0, ":"); rest = substr($0, i + 1); j = index(rest, ":")
+        loc = substr($0, 1, i) substr(rest, 1, j - 1)
+        norm = tolower(substr(rest, j + 1)); gsub(/[^0-9a-f]/, "", norm)
+        for (k = 1; k <= n; k++) if (N[k] != "" && index(norm, N[k])) {
+          key = loc "@" k
+          if (!(key in seen)) { seen[key] = 1; print loc }
+          break
+        }
+      }')"
+  if [ -n "$MAC_HITS" ]; then
+    while IFS= read -r loc; do
+      [ -n "$loc" ] || continue
+      if is_baselined "$loc"; then
+        _baselined "denylisted MAC/hex value (normalised match) in $loc"
+      else
+        HIT=1
+        fail "denylisted MAC/hex value (normalised match) found in $loc -- value withheld"
+      fi
+    done <<< "$MAC_HITS"
   fi
 fi
 
@@ -564,40 +631,43 @@ fi
 # metadata present on every commit by design, so flagging them would fire
 # forever -- the cry-wolf failure the notes above warn against. Names go through
 # the human-curated denylist. Secret matches withhold the value, as elsewhere.
-while IFS= read -r sha; do
-  [ -n "$sha" ] || continue
-  body="$(git --no-pager log -1 --format='%B' "$sha" 2>/dev/null)"
-  [ -n "$body" ] || continue
+# Each rule is one `git log --grep` over exactly the commits in range (see
+# _log_grep above); --staged has no commits, so the whole pass is skipped.
+if [ "$MODE" != "staged" ]; then
   if [ "${#DENYLIST_TERMS[@]}" -gt 0 ]; then
     for term in "${DENYLIST_TERMS[@]}"; do
-      if printf '%s' "$body" | grep -qiF -- "$term"; then
+      for sha in $(_log_grep -i -F --grep="$term"); do
         HIT=1
         fail "denylist term '$term' in commit message of $sha"
-      fi
+      done
     done
   fi
   # Same rule (b) .env values the tree scan above already checks against
   # file content -- a real secret pasted into a commit MESSAGE rather than
   # a file was invisible here until now. Value withheld, as elsewhere.
   for i in "${!ENV_SECRET_KEYS[@]}"; do
-    if printf '%s' "$body" | grep -qF -- "${ENV_SECRET_VALS[$i]}"; then
+    for sha in $(_log_grep -F --grep="${ENV_SECRET_VALS[$i]}"); do
       HIT=1
       fail "the value of ${ENV_SECRET_KEYS[$i]} (from .env) appears in the commit message of $sha -- value withheld; rotate it and rewrite the message"
-    fi
+    done
   done
-  if printf '%s' "$body" | grep -qE '[0-9]{3}-[0-9]{2}-[0-9]{4}'; then
+  for sha in $(_log_grep -E --grep='[0-9]{3}-[0-9]{2}-[0-9]{4}'); do
     HIT=1
     fail "SSN-like number in commit message of $sha"
-  fi
-  if printf '%s' "$body" | grep -qE '[0-9]{1,3}\.[0-9]{4,},[[:space:]]*-?[0-9]{1,3}\.[0-9]{4,}'; then
+  done
+  for sha in $(_log_grep -E --grep='[0-9]{1,3}\.[0-9]{4,},[[:space:]]*-?[0-9]{1,3}\.[0-9]{4,}'); do
     HIT=1
     fail "possible GPS coordinate pair in commit message of $sha"
-  fi
-  if printf '%s' "$body" | grep -qE -e "$SECRET_RE"; then
+  done
+  for sha in $(_log_grep -E --grep="$SECRET_RE"); do
     HIT=1
     fail "credential matching a known key format in commit message of $sha -- value withheld; rotate it and rewrite the message"
-  fi
-done <<< "$([ "$MODE" = "staged" ] || printf '%s' "$COMMITS")"
+  done
+fi
+
+if [ "$BASELINED_COUNT" -gt 0 ]; then
+  warn "$BASELINED_COUNT known already-public location(s) BASELINED -- see .pii-baseline (--verbose lists them)"
+fi
 
 if [ "$HIT" -eq 0 ]; then
   ok "$LABEL: clean"

@@ -71,6 +71,43 @@ def test_never_prints_a_value(tmp_path):
         assert secret not in r.stdout + r.stderr
 
 
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+        cwd=repo, check=True, capture_output=True,
+    )
+
+
+def test_a_value_already_in_git_history_is_counted_but_still_added(tmp_path):
+    """Unlike gmail_labels' sync (which refuses such a candidate because it
+    may be an ordinary word), an inventory value found in history is a leak
+    that has already happened: it must stay denylisted so a future commit
+    carrying it FAILs, and the count tells the operator that the next
+    `check-pii.sh --full` will need a .pii-baseline entry (or a rewrite).
+    Every commit is searched, not just HEAD."""
+    _git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / "README.md").write_text("fixture serial c02fakeserial here\n")
+    _git(tmp_path, "add", "README.md")
+    _git(tmp_path, "commit", "-qm", "mention it")
+    (tmp_path / "README.md").write_text("gone from the tip\n")
+    _git(tmp_path, "commit", "-qam", "take it out again")
+
+    r = _run(tmp_path, INVENTORY, denylist=HAND)
+
+    assert r.returncode == 0, r.stderr
+    assert "already in git history : 1" in r.stdout
+    block = (tmp_path / ".pii-denylist").read_text().split(BEGIN, 1)[1]
+    assert "C02FAKESERIAL" in block, "still added: an identifier is an identifier"
+    for secret in ("aa:bb:cc:dd:ee:01", "C02FAKESERIAL", "Matilda", "Some Real Name"):
+        assert secret not in r.stdout + r.stderr
+
+
+def test_no_history_line_outside_a_git_repo(tmp_path):
+    r = _run(tmp_path, INVENTORY, denylist=HAND)
+    assert r.returncode == 0, r.stderr
+    assert "already in git history" not in r.stdout
+
+
 def test_dry_run_writes_nothing(tmp_path):
     r = _run(tmp_path, INVENTORY, "--dry-run", denylist=HAND)
     assert r.returncode == 0

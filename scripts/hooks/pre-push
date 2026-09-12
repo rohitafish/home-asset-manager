@@ -26,6 +26,7 @@
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ZERO="0000000000000000000000000000000000000000"
+REMOTE_NAME="${1:-origin}"   # git passes the remote's name as $1 (its URL as $2)
 FAILED=0
 
 # Not ref-specific, so run once up front rather than once per ref in the loop
@@ -95,11 +96,17 @@ while read -r local_ref local_sha remote_ref remote_sha <&3; do
   [ "$local_sha" = "$ZERO" ] && continue  # a branch/tag deletion -- nothing to check
 
   if [ "$remote_sha" = "$ZERO" ]; then
-    # Remote ref doesn't exist yet (new branch) -- nothing to diff against,
-    # so check everything reachable from the local commit. git rev-list
-    # accepts a single revision the same way it accepts a two-dot range, so
-    # scripts/check-pii.sh's --range argument works unchanged either way.
-    RANGE="$local_sha"
+    # Remote ref doesn't exist yet (a new branch). Only the commits the
+    # remote has never seen are new, so exclude everything already on it
+    # (`--not --remotes=<remote>`, which check-pii.sh hands straight to git
+    # rev-list and gitleaks to git log). This used to pass the bare local
+    # sha, which rev-list expands to EVERY ancestor -- the whole history,
+    # the same cost as --full (minutes, measured 2026-09-12) for a
+    # one-commit branch -- so the PR path AGENTS.md asks for on migration,
+    # auth and deploy changes was the slowest push of all. If the remote
+    # has no refs at all, nothing is excluded and everything is scanned,
+    # which is right: it is all new to that remote.
+    RANGE="$local_sha --not --remotes=$REMOTE_NAME"
   else
     RANGE="$remote_sha..$local_sha"
   fi
