@@ -519,3 +519,40 @@ def test_ordinary_commit_message_does_not_fail(repo):
 
     assert proc.returncode == 0, f"a benign message must not FAIL:\n{proc.stdout}"
     assert "0 FAIL(s)" in proc.stdout
+
+
+# --- --staged: the index, for the pre-commit hook --------------------------
+
+
+def _run_staged(repo: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", "scripts/check-pii.sh", "--staged"], cwd=repo, capture_output=True, text=True
+    )
+
+
+def test_staged_mode_catches_a_denylisted_value_before_any_commit_exists(repo):
+    _write_denylist(repo, "Fabname Fakesurname")
+    (repo / "probes" / "thing.py").parent.mkdir(exist_ok=True)
+    (repo / "probes" / "thing.py").write_text('owner = "Fabname Fakesurname"\n')
+    _git(repo, "add", "probes/thing.py")
+    r = _run_staged(repo)
+    assert r.returncode == 1
+    assert "staged changes" in r.stdout and "FAIL" in r.stdout
+    assert "Fabname Fakesurname" not in r.stdout.replace("denylist term 'Fabname Fakesurname'", "")
+
+
+def test_staged_mode_ignores_unstaged_work(repo):
+    _write_denylist(repo, "Fabname Fakesurname")
+    (repo / "probes" / "thing.py").parent.mkdir(exist_ok=True)
+    (repo / "probes" / "thing.py").write_text('owner = "Fabname Fakesurname"\n')  # written, NOT added
+    r = _run_staged(repo)
+    assert r.returncode == 0, r.stdout
+    assert "staged changes: clean" in r.stdout
+
+
+def test_staged_mode_skips_the_commit_message_pass(repo):
+    """A tree has no message; the message loop must not run against it."""
+    _write_denylist(repo, "Fabname Fakesurname")
+    r = _run_staged(repo)
+    assert r.returncode == 0, r.stdout
+    assert "commit message" not in r.stdout

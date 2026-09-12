@@ -107,13 +107,29 @@ while read -r local_ref local_sha remote_ref remote_sha <&3; do
   if ! "$REPO_DIR/scripts/check-pii.sh" --range "$RANGE"; then
     FAILED=1
   fi
+
+  # Credential shapes over the same outgoing range, with gitleaks (config:
+  # .gitleaks.toml). Fails closed when gitleaks is missing -- a scanner that
+  # is not there reports nothing, which is the false comfort this hook exists
+  # to remove; `brew install gitleaks`. color.ui is forced off for the child
+  # git: with `color.ui=always` gitleaks silently scans zero commits.
+  if command -v gitleaks >/dev/null 2>&1; then
+    if ! (cd "$REPO_DIR" && GIT_CONFIG_PARAMETERS="'color.ui=false'" gitleaks git --no-banner --redact --config .gitleaks.toml --log-opts="$RANGE" .); then
+      echo "" >&2
+      echo "pre-push: gitleaks found a credential in $RANGE -- push blocked." >&2
+      FAILED=1
+    fi
+  else
+    echo "pre-push: gitleaks is not installed -- push blocked. Install it (brew install gitleaks)." >&2
+    FAILED=1
+  fi
 done
 exec 3<&-
 
 if [ "$FAILED" -ne 0 ]; then
   {
     echo ""
-    echo "pre-push: a check above failed (pytest, ruff, and/or check-pii.sh) -- push blocked."
+    echo "pre-push: a check above failed (pytest, ruff, check-pii.sh and/or gitleaks) -- push blocked."
     echo "Fix it, or if you're certain it's a false positive:"
     echo "  git push --no-verify"
     echo "(only do that deliberately -- see AGENTS.md's \"PII / privacy\" section)"

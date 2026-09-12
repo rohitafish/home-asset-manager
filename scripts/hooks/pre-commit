@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Template for .git/hooks/pre-commit -- git hooks are never cloned or synced,
+# so this has to be copied into place by hand on each dev machine (same as
+# scripts/hooks/pre-push; AGENTS.md's "PII / privacy" has the install step):
+#
+#   cp scripts/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#
+# Two scans of the INDEX -- what this commit is about to record -- so a
+# real value is stopped before it exists in any commit at all, not caught
+# at push time after it has been sitting in local history:
+#
+#   1. scripts/check-pii.sh --staged: the known real values in the
+#      gitignored .pii-denylist (synced from the live inventory) plus the
+#      structural PII patterns. This is the layer that catches MAC
+#      addresses, serials and names -- see AGENTS.md for why no generic
+#      secrets scanner can.
+#   2. gitleaks on the staged changes: credential shapes (API keys, tokens,
+#      private keys). Fails closed if gitleaks is not installed -- a missing
+#      scanner reporting nothing is exactly the false comfort this hook
+#      exists to remove. `brew install gitleaks` (Mac) / apt (Linux).
+#
+# color.ui is forced off for the child git processes: with `color.ui=always`
+# in a gitconfig, gitleaks silently scans ZERO commits and prints "no leaks
+# found" (confirmed 2026-09-12); check-pii.sh passes --no-color itself.
+set -u
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+export GIT_CONFIG_PARAMETERS="'color.ui=false'"
+FAILED=0
+
+if ! (cd "$REPO_DIR" && bash scripts/check-pii.sh --staged); then
+  echo "" >&2
+  echo "pre-commit: scripts/check-pii.sh found PII or a secret in the staged changes -- commit blocked." >&2
+  FAILED=1
+fi
+
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! (cd "$REPO_DIR" && gitleaks git --no-banner --redact --pre-commit --staged --config .gitleaks.toml .); then
+    echo "" >&2
+    echo "pre-commit: gitleaks found a credential in the staged changes -- commit blocked." >&2
+    FAILED=1
+  fi
+else
+  echo "pre-commit: gitleaks is not installed -- commit blocked. Install it (brew install gitleaks) or, for this one commit only, git commit --no-verify." >&2
+  FAILED=1
+fi
+
+exit "$FAILED"

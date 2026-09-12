@@ -795,6 +795,30 @@ assistant or human contributor.
   repo onto itself.
 
 ## PII / privacy
+- **Three scanners, two layers, and why both are needed.** Credential
+  *shapes* (API keys, tokens, private keys) are caught by gitleaks
+  (`.gitleaks.toml`; the pre-commit and pre-push hooks, and the `secrets`
+  CI job) and by GitHub's own secret scanning with push protection; a
+  monthly TruffleHog workflow verifies any candidate against its provider.
+  This household's *identifiers* -- MAC addresses, device serials, names --
+  are caught only by `scripts/check-pii.sh` with the gitignored
+  `.pii-denylist`, because a real MAC and a fabricated one are the same
+  shape: measured 2026-09-12, gitleaks with default rules found nothing in
+  126 commits that contained a real serial and three real MACs, and with
+  MAC/serial patterns added it found 154 hits of which about five were
+  real. Both layers run at commit time (`pre-commit`, on the index via
+  `check-pii.sh --staged`) and at push time (`pre-push`, on the outgoing
+  range). Install both hooks on every dev machine:
+  `for h in pre-commit pre-push; do cp scripts/hooks/$h .git/hooks/$h && chmod +x .git/hooks/$h; done`,
+  and `brew install gitleaks` -- the hooks fail closed without it.
+- **`color.ui = always` in a gitconfig breaks scanners silently.** gitleaks
+  parses `git log -p`; with colour forced on it scans zero commits and
+  prints "no leaks found" (confirmed 2026-09-12 on the dev Mac, which had
+  it set). The hooks force `color.ui=false` for their child git, and the
+  dev Mac's global setting is now `auto`; keep it that way, and treat "0
+  commits scanned" from a history scan as a failure, not a pass (the
+  pre-commit hook's staged scan legitimately reports 0 commits and a byte
+  count instead -- it is scanning the index, not commits).
 - **`.pii-denylist` is kept in step with the live inventory by
   `scripts/pii-denylist-sync.sh`**, which `redeploy.sh` runs on every deploy
   (and which you can run by hand, `--dry-run` to preview). It pulls every
@@ -924,8 +948,8 @@ assistant or human contributor.
 - **Install the pre-push hook once per dev-machine clone** (hooks aren't
   cloned/synced by git):
   ```bash
-  cp scripts/hooks/pre-push .git/hooks/pre-push
-  chmod +x .git/hooks/pre-push
+  for h in pre-commit pre-push; do cp scripts/hooks/$h .git/hooks/$h; done
+  chmod +x .git/hooks/pre-commit .git/hooks/pre-push
   ```
   It blocks any push whose commits trip `check-pii.sh`. `git push
   --no-verify` bypasses it deliberately if you're certain something's a

@@ -1,0 +1,18 @@
+# gitleaks configuration for this repo (credential shapes: keys, tokens,
+# private keys, connection strings). It runs in the pre-commit hook on the
+# index, in the pre-push hook on the outgoing commits, and in CI on every
+# push and PR. Identifiers that are PII in this household (MAC addresses,
+# device serials, names) are NOT a job for pattern rules -- a real one and a
+# fabricated one look identical -- and are covered by scripts/check-pii.sh
+# with the gitignored, inventory-synced .pii-denylist instead. See
+# AGENTS.md's "PII / privacy".
+title = "home-asset-manager"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Template and fixture files that hold deliberately fake placeholders"
+paths = [
+  '''^\.env\.example$''',
+]

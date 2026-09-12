@@ -1063,7 +1063,7 @@ pipx install awscli
 git clone https://github.com/rohitafish/home-asset-manager.git ~/claudecode/assetmgt
 cd ~/claudecode/assetmgt
 python3 -m venv .venv && . .venv/bin/activate && pip install --require-hashes -r requirements.txt
-cp scripts/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+for h in pre-commit pre-push; do cp scripts/hooks/$h .git/hooks/$h && chmod +x .git/hooks/$h; done
 # .env: recreate by hand from .env.example and your password manager (see the
 # Mac runbook's notes -- same rules), chmod 600
 docker compose up -d
@@ -1132,7 +1132,7 @@ source .venv/bin/activate
 pip install --require-hashes -r requirements.txt
 cp .env.example .env
 chmod 600 .env
-cp scripts/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+for h in pre-commit pre-push; do cp scripts/hooks/$h .git/hooks/$h && chmod +x .git/hooks/$h; done
 ```
 
 A couple of things a fresh clone doesn't give you that "One-time setup" glosses over:
@@ -1856,7 +1856,7 @@ leak PII/secrets is stopped before it leaves your machine. Hooks aren't
 cloned by git, so install it once per clone:
 
 ```bash
-cp scripts/hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+for h in pre-commit pre-push; do cp scripts/hooks/$h .git/hooks/$h && chmod +x .git/hooks/$h; done
 ```
 
 `scripts/preflight.sh` warns if it's missing or has drifted from the tracked

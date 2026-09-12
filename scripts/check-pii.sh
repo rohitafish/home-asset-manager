@@ -23,6 +23,10 @@
 #   scripts/check-pii.sh --full           # every commit reachable from any
 #                                          # ref -- the whole history, not
 #                                          # just what's about to move
+#   scripts/check-pii.sh --staged         # the index, i.e. what `git commit`
+#                                          # is about to record (the pre-commit
+#                                          # hook) -- a leak stopped here never
+#                                          # exists in any commit at all
 #
 # What this can't catch: a *new* real name used for the first time as an
 # example. It isn't in the denylist yet (nothing is, until someone notices
@@ -55,6 +59,7 @@ RANGE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --full) MODE="full"; shift ;;
+    --staged) MODE="staged"; shift ;;
     --range)
       # Without this check, --range as the LAST argument makes `shift 2`
       # silently fail (only one argument left to shift) and return non-zero
@@ -109,6 +114,14 @@ if [ "$MODE" = "full" ]; then
   COMMITS="$(git rev-list --all 2>&1)"
   REV_LIST_STATUS=$?
   LABEL="full history"
+elif [ "$MODE" = "staged" ]; then
+  # The index as a tree object: every `git grep <tree>` / `git ls-tree <tree>`
+  # below then works on the staged content unchanged, with no temporary
+  # commit and nothing written to refs. (write-tree only creates an object;
+  # it is garbage-collected like any other unreferenced blob.)
+  COMMITS="$(git write-tree 2>&1)"
+  REV_LIST_STATUS=$?
+  LABEL="staged changes"
 else
   COMMITS="$(git rev-list "$RANGE" 2>&1)"
   REV_LIST_STATUS=$?
@@ -532,7 +545,7 @@ while IFS= read -r sha; do
     HIT=1
     fail "credential matching a known key format in commit message of $sha -- value withheld; rotate it and rewrite the message"
   fi
-done <<< "$COMMITS"
+done <<< "$([ "$MODE" = "staged" ] || printf '%s' "$COMMITS")"
 
 if [ "$HIT" -eq 0 ]; then
   ok "$LABEL: clean"

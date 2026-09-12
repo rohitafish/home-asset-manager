@@ -97,11 +97,11 @@ automated:
   real values live — one literal string per line. It is the *only* sanctioned
   place for them, same as `.env` for secrets. It is never committed. A fresh
   clone starts without it; the structural and secret checks still run.
-- **Install the pre-push hook once per clone** (git does not clone hooks):
+- **Install the pre-commit and pre-push hooks once per clone** (git does not clone hooks; `brew install gitleaks` too, the hooks fail closed without it):
 
   ```bash
-  cp scripts/hooks/pre-push .git/hooks/pre-push
-  chmod +x .git/hooks/pre-push
+  for h in pre-commit pre-push; do cp scripts/hooks/$h .git/hooks/$h; done
+  chmod +x .git/hooks/pre-commit .git/hooks/pre-push
   ```
 
   It blocks any push that trips `check-pii.sh` (and runs the tests + linter).
