@@ -87,7 +87,13 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$MODE" = "range" ] && [ -z "$RANGE" ]; then
-  UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  # --verify -q, not a bare --abbrev-ref with `|| true`: when the upstream
+  # cannot be resolved (configured but its remote-tracking ref is missing,
+  # e.g. right after a remote was recreated), git prints the literal "@{u}"
+  # on stdout AND exits 128, so the old form captured "@{u}" as a real
+  # upstream and every default-mode run then FAILed on the range
+  # "@{u}..HEAD" instead of falling back. Seen 2026-09-12.
+  UPSTREAM="$(git rev-parse --verify -q --abbrev-ref '@{u}' 2>/dev/null)" || UPSTREAM=""
   if [ -n "$UPSTREAM" ]; then
     RANGE="$UPSTREAM..HEAD"
   elif git rev-parse --verify origin/main >/dev/null 2>&1; then

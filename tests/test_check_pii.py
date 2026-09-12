@@ -409,6 +409,24 @@ def test_rev_list_exclusion_range_scans_only_what_the_remote_lacks(repo, tmp_pat
     assert everything.returncode == 1, "the bare-sha form scans every ancestor"
 
 
+def test_default_mode_with_an_unresolvable_upstream_falls_back(repo):
+    """Regression test: with an upstream configured but its remote-tracking
+    ref missing (a recreated remote, before the first fetch), `git rev-parse
+    --abbrev-ref @{u}` prints the literal "@{u}" and exits non-zero. The
+    script used to keep that text as the upstream and FAIL on the range
+    "@{u}..HEAD"; it must fall back (here: to the full history) instead."""
+    _git(repo, "config", "branch.main.remote", "origin")
+    _git(repo, "config", "branch.main.merge", "refs/heads/main")
+
+    proc = subprocess.run(
+        ["bash", "scripts/check-pii.sh"], cwd=repo, capture_output=True, text=True,
+    )
+
+    assert proc.returncode == 0, proc.stdout
+    assert "@{u}" not in proc.stdout
+    assert "full history" in proc.stdout
+
+
 def test_range_flag_missing_operand_fails_instead_of_hanging(repo):
     """Regression test: --range as the last argument used to make `shift 2`
     silently fail and return non-zero -- with no `set -e`, $# never reached
