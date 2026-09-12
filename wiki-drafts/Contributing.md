@@ -45,3 +45,16 @@ its gitignored list of this household's real identifiers, can tell a real MAC
 address or serial from a fabricated one. Use fabricated values in tests and
 examples (`00:1a:2b:3c:4d:xx` MACs, `C02FAKE...` serials), never real ones.
 See [Security Model](Security-Model#supply-chain--repo-hygiene).
+
+The hooks are meant to be cheap enough that nobody reaches for
+`--no-verify`: the pre-commit scan of the index takes under a second, a
+typical push a few seconds, and a full-history audit
+(`scripts/check-pii.sh --full`) about twenty seconds. Pushing a new branch
+scans only the commits the remote doesn't have yet, not the whole history.
+A full audit also prints one line like `130 known already-public
+location(s) BASELINED` — that is the tracked `.pii-baseline`, a list of
+exact commit-and-path locations where a known value already sits in public
+history (see the note in [Security Model](Security-Model#a-note-on-this-repos-own-history)).
+It is a count, not a failure: those locations are exempt, and the same
+value anywhere else, including in any new commit, still fails.
+`--verbose` lists them individually.
