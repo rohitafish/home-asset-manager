@@ -21,7 +21,7 @@
 # after later commits scrubbed the *current* files (never rewrote history), and
 # real names reused as "illustrative examples" in a later, unrelated commit. The
 # hex-normalisation and message passes each close a specific later miss: a real
-# Sonos MAC that the literal denylist entry didn't match, and real names that
+# device MAC that the literal denylist entry didn't match, and real names that
 # only ever lived in commit messages (which the tree-only rules never saw).
 #
 # Deliberately no `set -e`, same reasoning as preflight.sh: report every
@@ -478,15 +478,15 @@ fi
 # it is how you find it. For a secret the location is enough to act on.)
 #
 # Patterns validated against this repo's full history: zero matches on all
-# tracked content, and confirmed to match the real Anthropic / OpenRouter /
-# AWS keys this app uses. `-e` guards the leading dash of the PRIVATE KEY
+# tracked content, and confirmed to match the real vendor API keys these
+# projects actually use. `-e` guards the leading dash of the PRIVATE KEY
 # alternative from being read as an option.
 # The union of both repos' formats, deliberately: a credential shape is not
 # repo-specific knowledge, and either project could grow the other's keys. The
 # Google OAuth entries (GOCSPX- client secrets, ya29. access tokens, and the
 # refresh_token / client_secret JSON fields as they appear in a downloaded
-# credentials.json) came from the mailbox tooling; the Anthropic/OpenRouter/
-# AWS/GitHub/Slack ones from the asset manager. Validated against both
+# credentials.json) came from the mailbox tooling; the LLM-vendor, AWS,
+# GitHub and Slack ones from the asset manager. Validated against both
 # histories: zero matches on all tracked content in either.
 SECRET_RE='sk-ant-[A-Za-z0-9_-]{20,}|sk-or-v1-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|GOCSPX-[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9_-]{30,}|"refresh_token": *"[A-Za-z0-9_/-]{20,}|"client_secret": *"[A-Za-z0-9_-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
 SECRET_HITS="$(_grep_trees -lE -e "$SECRET_RE")"
@@ -550,7 +550,7 @@ if [ -f "$ENV_FILE" ]; then
     #    which are private-range and so excluded from the IP check above.
     # DEFAULT_OWNER / SECONDARY_OWNER_NAME are DELIBERATELY not here: a
     # household first name is short and literal-grepping it across the repo
-    # reproduces the "chase" verb-vs-name collision that got the old
+    # reproduces the surname-that-is-also-a-verb collision that got the old
     # machine-wide guardrail removed. Names go in
     # .pii-denylist, where a human vets them, not into an automatic scan.
     case "$key" in
@@ -636,7 +636,7 @@ fi
 # this file too, so the allowlist has to cover its own source or the check
 # reports itself. That's honest rather than circular -- the entry is still
 # file-scoped, so these digits anywhere else are still flagged. The third
-# entry is the same Sonos version string again, quoted as a Python constant
+# entry is that same version string again, quoted as a Python constant
 # in test_check_pii.py's own fixture data (see that file's ALLOWLISTED_VALUE)
 # -- same value, same reasoning, just a third file it happens to appear in.
 #
