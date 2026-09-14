@@ -109,9 +109,34 @@ _diagnose() {
 # reply. These keys are under COMPLIANCE Object Lock, so a blind same-key retry
 # would then be *rejected* -- turning a succeeded upload into a hard failure.
 # Checking first turns that case into the success it actually was.
+# Relative dates are the one thing BSD and GNU `date` genuinely disagree about,
+# and this script has now run under both: macOS on the Mini, GNU coreutils on
+# mint. GNU form first because that is where it runs today; the BSD form is the
+# fallback so the Mini stays a usable rollback host.
+#
+# Not a theoretical portability nicety. This was `date -u -v+30d`, correct on
+# macOS and correct when written -- the comment beside it even said "this only
+# ever runs on the Mini". After the 2026-09-12 cutover GNU date rejected `-v`,
+# the retain-until date came out EMPTY, and S3 refused the upload with a 403
+# that read like a credentials problem. Two nights of off-site backups were lost
+# before anyone looked at the line above the 403 in backup.error.log.
+_iso_utc_plus_days() {
+  local days="$1"
+  date -u -d "+${days} days" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -v+"${days}"d +%Y-%m-%dT%H:%M:%SZ
+}
+
 _put_object_with_retries() {
   local key="$1" retain_until="$2"
   local attempt=1 delay=30
+
+  # An empty retain-until is the signature of a failed date calculation, and S3
+  # answers it with a 403 -- indistinguishable from a permissions problem, which
+  # is exactly how it wasted two nights. Fail here instead, naming the real cause.
+  if [ -z "$retain_until" ]; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] backup-db.sh: refusing to upload $key with an empty Object Lock retain-until date. The date calculation failed -- this is NOT an AWS permissions problem, check \`date\` portability." >&2
+    return 1
+  fi
   local max="${BACKUP_UPLOAD_ATTEMPTS:-3}"
   while : ; do
     if aws s3api put-object \
@@ -229,9 +254,7 @@ mv "$TMP" "$DEST"
 # Retention windows match the S3 Lifecycle rules on the bucket (30d/186d):
 # Lifecycle is what eventually cleans an object up once Object Lock's
 # retention has lapsed, so the two are complementary, not redundant.
-# `date -v` is BSD/macOS syntax (this only ever runs on the Mini) --
-# GNU `date -d "+30 days"` would silently fail here on Linux.
-RETAIN_UNTIL_DAILY="$(date -u -v+30d +%Y-%m-%dT%H:%M:%SZ)"
+RETAIN_UNTIL_DAILY="$(_iso_utc_plus_days 30)"
 
 _put_object_with_retries "daily/$NAME" "$RETAIN_UNTIL_DAILY"
 
@@ -272,7 +295,7 @@ if ! MONTHLY_EXISTING="$(aws s3api list-objects-v2 \
   exit 1
 fi
 if [ "$MONTHLY_EXISTING" = "None" ]; then
-  RETAIN_UNTIL_MONTHLY="$(date -u -v+186d +%Y-%m-%dT%H:%M:%SZ)"
+  RETAIN_UNTIL_MONTHLY="$(_iso_utc_plus_days 186)"
   _put_object_with_retries "monthly/$NAME" "$RETAIN_UNTIL_MONTHLY"
 fi
 
