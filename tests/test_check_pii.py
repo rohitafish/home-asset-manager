@@ -36,8 +36,16 @@ ALLOWLISTED_PATH = "tests/test_sonos_api.py"
 UNLISTED_PATH = "probes/somewhere_else.py"
 
 
+# core.hooksPath=/dev/null: these fixtures are throwaway repos whose commits
+# never leave the machine, but a developer's *global* hooks still fire in them.
+# This machine has a global commit-msg hook that rejects any author email that
+# is not the GitHub noreply address -- so the fixture identity below made every
+# fixture commit fail, erroring 58 tests and blocking pushes, while CI (which
+# has no such hook) stayed green. A test repo should not depend on how the
+# person running it configures git.
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *args],
+                   cwd=repo, check=True, capture_output=True)
 
 
 @pytest.fixture

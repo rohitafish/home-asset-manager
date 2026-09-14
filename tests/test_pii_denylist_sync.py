@@ -73,7 +73,11 @@ def test_never_prints_a_value(tmp_path):
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
-        ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+        # core.hooksPath=/dev/null -- see the note in tests/test_check_pii.py:
+        # a global commit-msg hook on the dev machine rejects this fixture
+        # identity and made every fixture commit fail.
+        ["git", "-c", "core.hooksPath=/dev/null",
+         "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
         cwd=repo, check=True, capture_output=True,
     )
 

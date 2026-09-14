@@ -23,9 +23,17 @@ HOOK = Path(__file__).resolve().parent.parent / "scripts" / "hooks" / "pre-push"
 ZERO = "0" * 40
 
 
+# core.hooksPath=/dev/null: these fixtures are throwaway repos whose commits
+# never leave the machine, but a developer's *global* hooks still fire in them.
+# This machine has a global commit-msg hook that rejects any author email that
+# is not the GitHub noreply address -- so the fixture identity below made every
+# fixture commit fail, erroring 58 tests and blocking pushes, while CI (which
+# has no such hook) stayed green. A test repo should not depend on how the
+# person running it configures git.
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+        ["git", "-c", "core.hooksPath=/dev/null",
+         "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
         cwd=repo, check=True, capture_output=True, text=True,
     ).stdout.strip()
 
