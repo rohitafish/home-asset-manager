@@ -27,6 +27,13 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check-pii.sh"
+# check-pii.sh is a shared engine: byte-identical in this repo and in
+# gmail_labels, with everything repo-specific in the conf beside it. The
+# fixture repos below need both, or they would exercise the engine under its
+# conservative defaults (no IP allowlist, no secret-file rule) rather than
+# under this repo's actual configuration -- which is what these tests are
+# about.
+CONF = Path(__file__).resolve().parent.parent / "scripts" / "check-pii.conf"
 
 # Value and path from the script's own IP_ALLOWLIST. The Sonos fixture's
 # <hardwareVersion>1.9.1.10-2.2</hardwareVersion> is a version string, not
@@ -57,6 +64,7 @@ def repo(tmp_path: Path) -> Path:
 
     (tmp_path / "scripts").mkdir()
     shutil.copy(SCRIPT, tmp_path / "scripts" / "check-pii.sh")
+    shutil.copy(CONF, tmp_path / "scripts" / "check-pii.conf")
     # Ignore .env so a fixture .env (rule (b)'s value source) isn't swept into
     # a commit by _commit_file's `git add -A` -- which would otherwise trip
     # rule (c) in every unrelated test.

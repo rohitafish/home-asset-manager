@@ -292,7 +292,7 @@ _build_example() {
 _verify_candidate() {
   local f="$1" line
   # secret formats (kept in sync with check-pii.sh; a test asserts they match)
-  local secret_re='sk-ant-[A-Za-z0-9_-]{20,}|sk-or-v1-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+  local secret_re='sk-ant-[A-Za-z0-9_-]{20,}|sk-or-v1-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|GOCSPX-[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9_-]{30,}|"refresh_token": *"[A-Za-z0-9_/-]{20,}|"client_secret": *"[A-Za-z0-9_-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
   if grep -nE "$secret_re" "$f" >/dev/null 2>&1; then
     warn "candidate contains a secret-shaped string"; return 1
   fi
