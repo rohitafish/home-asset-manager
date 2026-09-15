@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
+# SHARED ENGINE -- this file is byte-identical in assetmgt and gmail_labels.
+# Everything that differs between the two lives in scripts/check-pii.conf,
+# which this sources; there is no per-repo edit to make in here. Two
+# hand-synced copies is what this arrangement replaces, after a fix landing
+# in one and not the other produced a silent false-clean (a range git could
+# not resolve reported "nothing to check", exit 0) that sat for two days --
+# see the "PII / privacy" docs in either repo. To change behaviour for one
+# repo, change its .conf; to change the engine, change it here and run
+# scripts/sync-check-pii.sh, which copies it to the sibling and is what
+# tests/test_check_pii_shared.py checks you did.
+#
 # Scans commits for PII before they reach GitHub: known real values from
 # .pii-denylist (case-insensitive, literal, plus a hex-normalised pass so a MAC
 # matches regardless of separators/length), across both the file *trees* and the
 # commit *messages*; plus generic structural patterns (emails, GPS coordinates,
-# non-private IPs, SSN-like numbers) as defense in depth. See AGENTS.md's
-# "PII / privacy" section -- this exists because two real leaks already happened
+# non-private IPs, SSN-like numbers) as defense in depth. See the "PII /
+# privacy" documentation named by PII_DOC_HINT in scripts/check-pii.conf --
+# this exists because two real leaks already happened
 # before it did: real household names/hostname/IP sitting in old commits even
 # after later commits scrubbed the *current* files (never rewrote history), and
 # real names reused as "illustrative examples" in a later, unrelated commit. The
 # hex-normalisation and message passes each close a specific later miss: a real
-# Sonos MAC that the literal denylist entry didn't match, and real names that
+# device MAC that the literal denylist entry didn't match, and real names that
 # only ever lived in commit messages (which the tree-only rules never saw).
 #
 # Deliberately no `set -e`, same reasoning as preflight.sh: report every
@@ -43,8 +55,7 @@
 # and adds it), and a name is syntactically indistinguishable from any other
 # word, so no pattern can flag it. The denylist and the patterns below are a
 # backstop for *known* values and *structural* PII, not a substitute for
-# never inventing illustrative examples from real household details in the
-# first place -- see AGENTS.md.
+# never inventing illustrative examples from real details in the first place.
 
 # Every `git grep` below passes --no-color explicitly, regardless of the
 # caller's gitconfig -- `color.ui=always` (as opposed to the default `auto`)
@@ -57,6 +68,32 @@
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
+
+# ---------------------------------------------------------------------------
+# Per-repo configuration. Defaults here are the conservative ones (a rule that
+# needs local knowledge is OFF, so a repo that never configured it cannot be
+# surprised by a new FAIL); scripts/check-pii.conf overrides them. Every
+# setting exists because the two repos genuinely differ -- what counts as a
+# secrets FILE, which structural rules make sense for the data at hand -- not
+# because the engine needed a switch.
+#
+#   PII_DOC_HINT          where a human should read about this check
+#   PII_SECRET_FILE_RE    ERE of paths that must never be tracked ('' = skip)
+#   PII_IP_ALLOWLIST      <path>|<dotted quad> per line, confirmed non-IPs
+#   PII_UK_RULES          1 = also scan for UK NI numbers, postcodes, sort
+#                         codes and mobile numbers (a mailbox full of personal
+#                         correspondence; a device inventory is not)
+#   PII_OFFICE_FILE_WARN  1 = WARN when a commit ADDS a file git cannot grep
+#   PII_SIBLING           path to the other repo, for the drift test
+# ---------------------------------------------------------------------------
+PII_DOC_HINT="your project's PII / privacy documentation"
+PII_SECRET_FILE_RE=""
+PII_IP_ALLOWLIST=""
+PII_UK_RULES=0
+PII_OFFICE_FILE_WARN=0
+PII_SIBLING=""
+# shellcheck source=/dev/null
+[ -f "$REPO_DIR/scripts/check-pii.conf" ] && . "$REPO_DIR/scripts/check-pii.conf"
 
 FAILS=0
 
@@ -92,7 +129,7 @@ if [ "$MODE" = "range" ] && [ -z "$RANGE" ]; then
   # e.g. right after a remote was recreated), git prints the literal "@{u}"
   # on stdout AND exits 128, so the old form captured "@{u}" as a real
   # upstream and every default-mode run then FAILed on the range
-  # "@{u}..HEAD" instead of falling back. Seen 2026-09-12.
+  # "@{u}..HEAD" instead of falling back. Seen in September 2026.
   UPSTREAM="$(git rev-parse --verify -q --abbrev-ref '@{u}' 2>/dev/null)" || UPSTREAM=""
   if [ -n "$UPSTREAM" ]; then
     RANGE="$UPSTREAM..HEAD"
@@ -109,7 +146,10 @@ fi
 # secrets. Its absence is a WARN, not a FAIL: a fresh clone hasn't
 # populated it yet, and the generic pattern checks below still run.
 DENYLIST_FILE="$REPO_DIR/.pii-denylist"
-DENYLIST_TERMS=()
+DENYLIST_TERMS=()   # bare entries: case-insensitive substring
+DENY_WORD=()        # w: entries:   case-insensitive whole word
+DENY_WORD_CS=()     # W: entries:   case-sensitive whole word
+ALL_DENY_COUNT=0
 if [ -f "$DENYLIST_FILE" ]; then
   # `|| [ -n "$line" ]`: plain `read` returns non-zero on EOF without a
   # trailing newline, which would otherwise silently drop the file's last
@@ -119,13 +159,28 @@ if [ -f "$DENYLIST_FILE" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     [ -z "$line" ] && continue
     case "$line" in \#*) continue ;; esac
-    DENYLIST_TERMS+=("$line")
+    # Matching tiers. A bare entry is a case-insensitive SUBSTRING, which is
+    # right for a distinctive value (a MAC, a serial) and unusable for one
+    # that is also an ordinary word: some proper names are spelled like common
+    # words, or occur inside longer ones. `w:` matches as a whole word instead
+    # (still case-insensitive); `W:` matches as a whole word AND
+    # case-sensitively, for a term that collides even under `w:` -- it fires on
+    # the capitalised real name and not on the ordinary lowercase word. Reach
+    # for W: only once w: has actually produced a false positive: it is
+    # strictly narrower, so it stops catching a deliberately-miscapitalised
+    # occurrence too.
+    case "$line" in
+      W:*) DENY_WORD_CS+=("${line#W:}") ;;
+      w:*) DENY_WORD+=("${line#w:}") ;;
+      *)   DENYLIST_TERMS+=("$line") ;;
+    esac
   done < "$DENYLIST_FILE"
-  if [ "${#DENYLIST_TERMS[@]}" -eq 0 ]; then
+  ALL_DENY_COUNT=$(( ${#DENYLIST_TERMS[@]} + ${#DENY_WORD[@]} + ${#DENY_WORD_CS[@]} ))
+  if [ "$ALL_DENY_COUNT" -eq 0 ]; then
     warn ".pii-denylist exists but has no terms in it"
   fi
 else
-  warn ".pii-denylist not found -- skipping known-value checks; generic pattern checks still run. See AGENTS.md's \"PII / privacy\" section to populate it."
+  warn ".pii-denylist not found -- skipping known-value checks; generic pattern checks still run. See $PII_DOC_HINT to populate it."
 fi
 
 # .pii-baseline: <commit sha> <path> pairs naming places in the EXISTING
@@ -230,7 +285,7 @@ HIT=0
 # `echo "$COMMITS" | xargs -I{} git grep ... {}` inside a loop over the
 # denylist -- cost ~17,000 processes for a --full run of this repo (110
 # terms x 159 commits), and the hex pass then forked twice more per matched
-# line: measured 2026-09-12, --full ran for over seven minutes before it
+# line: measured in September 2026, --full ran for over seven minutes before it
 # printed a summary, while one batched grep found the same 115 locations in
 # 2.6 s. A scan that slow is one people bypass with --no-verify, which is a
 # privacy failure, not just a slow one -- speed is what keeps the hooks in
@@ -272,31 +327,66 @@ _baselined() {
 # it. Paths in this repo are colon-free, so the first two colon-delimited
 # fields are tree and path and the remainder is the match, whose own colons
 # (a MAC) must survive.
-if [ "${#DENYLIST_TERMS[@]}" -gt 0 ]; then
-  DENY_HITS="$(_grep_trees -i -F -o -f <(printf '%s\n' "${DENYLIST_TERMS[@]}") \
-    | awk 'FILENAME == ARGV[1] { if (length($0)) terms[tolower($0)] = $0; next }
+# _deny_scan <terms> <fold: 1|0> [extra git grep flags...]
+# <terms> is the newline-separated term list, passed as a STRING and expanded
+# into two separate process substitutions below -- git grep -f reads one, awk
+# reads the other. Not one substitution shared between them: a process
+# substitution is a pipe, readable exactly once, and passing the same
+# /dev/fd/N to both made awk fail with "can't open file" AFTER git grep had
+# drained it. The pass then found nothing and the script printed a clean
+# summary -- a silent false-clean introduced by refactoring the very check
+# that exists to prevent silent false-cleans. (Caught by the suite, not by a
+# --full run, which reported the same "0 findings" either way because this
+# history is genuinely clean.) And not a temp file: the terms are the real
+# values, and they must not touch the disk.
+# `fold` says whether the match is mapped back to its term case-insensitively
+# -- it has to track the -i passed (or not) to git grep, or the W: tier would
+# map a match to the wrong term's spelling.
+_deny_scan() {
+  local terms="$1" fold="$2"
+  shift 2
+  _grep_trees "$@" -o -f <(printf '%s\n' "$terms") \
+    | awk -v fold="$fold" 'FILENAME == ARGV[1] {
+        if (length($0)) { terms[fold == 1 ? tolower($0) : $0] = $0 }
+        next
+      }
       {
         i = index($0, ":"); rest = substr($0, i + 1)
         j = index(rest, ":")
         loc = substr($0, 1, i) substr(rest, 1, j - 1)
-        m = tolower(substr(rest, j + 1))
+        m = substr(rest, j + 1)
+        if (fold == 1) m = tolower(m)
         term = (m in terms) ? terms[m] : ""
         if (term == "") for (t in terms) if (index(m, t)) { term = terms[t]; break }
         if (term == "") next
         key = term "\t" loc
         if (!(key in seen)) { seen[key] = 1; print key }
-      }' <(printf '%s\n' "${DENYLIST_TERMS[@]}") - | sort)"
-  if [ -n "$DENY_HITS" ]; then
-    while IFS=$'\t' read -r term m; do
-      [ -n "$m" ] || continue
-      if is_baselined "$m"; then
-        _baselined "denylist term '$term' in $m"
-      else
-        HIT=1
-        fail "denylist term '$term' found in $m"
-      fi
-    done <<< "$DENY_HITS"
-  fi
+      }' <(printf '%s\n' "$terms") - | sort
+}
+
+# _deny_report <hits> <description used in the message>
+_deny_report() {
+  [ -n "$1" ] || return 0
+  local desc="$2"
+  while IFS=$'\t' read -r term m; do
+    [ -n "$m" ] || continue
+    if is_baselined "$m"; then
+      _baselined "denylist term $desc'$term' in $m"
+    else
+      HIT=1
+      fail "denylist term $desc'$term' found in $m"
+    fi
+  done <<< "$1"
+}
+
+if [ "${#DENYLIST_TERMS[@]}" -gt 0 ]; then
+  _deny_report "$(_deny_scan "$(printf '%s\n' "${DENYLIST_TERMS[@]}")" 1 -i -F)" ""
+fi
+if [ "${#DENY_WORD[@]}" -gt 0 ]; then
+  _deny_report "$(_deny_scan "$(printf '%s\n' "${DENY_WORD[@]}")" 1 -i -w -F)" "(whole word) "
+fi
+if [ "${#DENY_WORD_CS[@]}" -gt 0 ]; then
+  _deny_report "$(_deny_scan "$(printf '%s\n' "${DENY_WORD_CS[@]}")" 0 -w -F)" "(case-sensitive whole word) "
 fi
 
 # Generic structural patterns -- defense in depth for things not yet known
@@ -330,6 +420,49 @@ if [ -n "$SSN_HITS" ]; then
   done <<< "$SSN_HITS"
 fi
 
+# UK personal identifiers. Gated: these earn their place in a repo that
+# handles personal correspondence, and would be noise in one whose data is
+# devices -- a sort code is shaped exactly like a date, and a postcode like
+# plenty of identifiers. PII_UK_RULES=1 in scripts/check-pii.conf turns them
+# on. NI numbers are a FAIL (that shape is not something else); sort codes and
+# mobile numbers are WARNs precisely because they collide.
+if [ "$PII_UK_RULES" = "1" ]; then
+  # Two letters (excluding the prefixes the scheme never issues), six digits,
+  # one letter A-D.
+  NINO_HITS="$(_grep_trees -noE '[A-CEGHJ-PR-TW-Z]{2}[0-9]{6}[A-D]')"
+  if [ -n "$NINO_HITS" ]; then
+    HIT=1
+    while IFS= read -r m; do
+      fail "UK National Insurance-number-like value in $m"
+    done <<< "$NINO_HITS"
+  fi
+
+  # The space between outward and inward code is REQUIRED here, not optional
+  # -- an optional space matches hex colours and git-hash-derived filenames
+  # instead of postcodes.
+  POSTCODE_HITS="$(_grep_trees -noE '[A-Za-z]{1,2}[0-9][0-9A-Za-z]? [0-9][A-Za-z]{2}')"
+  if [ -n "$POSTCODE_HITS" ]; then
+    HIT=1
+    while IFS= read -r m; do
+      fail "UK-postcode-like value in $m"
+    done <<< "$POSTCODE_HITS"
+  fi
+
+  SORTCODE_HITS="$(_grep_trees -noE '[0-9]{2}-[0-9]{2}-[0-9]{2}')"
+  if [ -n "$SORTCODE_HITS" ]; then
+    while IFS= read -r m; do
+      warn "possible UK sort code (or just a date -- this shape collides) in $m"
+    done <<< "$SORTCODE_HITS"
+  fi
+
+  MOBILE_HITS="$(_grep_trees -noE '(\+44[ -]?7[0-9]{3}|\(?07[0-9]{3}\)?)[ -]?[0-9]{3}[ -]?[0-9]{3}')"
+  if [ -n "$MOBILE_HITS" ]; then
+    while IFS= read -r m; do
+      warn "possible UK mobile number in $m"
+    done <<< "$MOBILE_HITS"
+  fi
+fi
+
 # Secrets -- API keys, tokens, private keys. This is a different threat from
 # the PII above: not "a real household detail leaked", but "a live
 # credential leaked", so the whole class is a FAIL. Two rules cover it:
@@ -345,10 +478,17 @@ fi
 # it is how you find it. For a secret the location is enough to act on.)
 #
 # Patterns validated against this repo's full history: zero matches on all
-# tracked content, and confirmed to match the real Anthropic / OpenRouter /
-# AWS keys this app uses. `-e` guards the leading dash of the PRIVATE KEY
+# tracked content, and confirmed to match the real vendor API keys these
+# projects actually use. `-e` guards the leading dash of the PRIVATE KEY
 # alternative from being read as an option.
-SECRET_RE='sk-ant-[A-Za-z0-9_-]{20,}|sk-or-v1-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+# The union of both repos' formats, deliberately: a credential shape is not
+# repo-specific knowledge, and either project could grow the other's keys. The
+# Google OAuth entries (GOCSPX- client secrets, ya29. access tokens, and the
+# refresh_token / client_secret JSON fields as they appear in a downloaded
+# credentials.json) came from the mailbox tooling; the LLM-vendor, AWS,
+# GitHub and Slack ones from the asset manager. Validated against both
+# histories: zero matches on all tracked content in either.
+SECRET_RE='sk-ant-[A-Za-z0-9_-]{20,}|sk-or-v1-[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{32,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|GOCSPX-[A-Za-z0-9_-]{20,}|ya29\.[A-Za-z0-9_-]{30,}|"refresh_token": *"[A-Za-z0-9_/-]{20,}|"client_secret": *"[A-Za-z0-9_-]{16,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
 SECRET_HITS="$(_grep_trees -lE -e "$SECRET_RE")"
 if [ -n "$SECRET_HITS" ]; then
   HIT=1
@@ -410,8 +550,8 @@ if [ -f "$ENV_FILE" ]; then
     #    which are private-range and so excluded from the IP check above.
     # DEFAULT_OWNER / SECONDARY_OWNER_NAME are DELIBERATELY not here: a
     # household first name is short and literal-grepping it across the repo
-    # reproduces the "chase" verb-vs-name collision that got the old
-    # machine-wide guardrail removed (see AGENTS.md). Names go in
+    # reproduces the surname-that-is-also-a-verb collision that got the old
+    # machine-wide guardrail removed. Names go in
     # .pii-denylist, where a human vets them, not into an automatic scan.
     case "$key" in
       *API_KEY*|*APIKEY*|*PASSWORD*|*SECRET*|*TOKEN*|*ACCESS_KEY*|*SUBNET*|*BASE_URL*) ;;
@@ -453,8 +593,11 @@ fi
 # git ls-tree takes one tree at a time, so this stays a loop -- a plain
 # for over the shas, ~3 ms each, not an xargs per commit per rule.
 # shellcheck disable=SC2086
-ENV_TRACKED="$(for c in $COMMITS; do git --no-pager ls-tree -r --name-only "$c" 2>/dev/null; done \
-  | grep -E '(^|/)\.env$|(^|/)\.env\.(local|production|prod)$' | sort -u)"
+ENV_TRACKED=""
+if [ -n "$PII_SECRET_FILE_RE" ]; then
+  ENV_TRACKED="$(for c in $COMMITS; do git --no-pager ls-tree -r --name-only "$c" 2>/dev/null; done \
+    | grep -E "$PII_SECRET_FILE_RE" | sort -u)"
+fi
 if [ -n "$ENV_TRACKED" ]; then
   HIT=1
   while IFS= read -r m; do
@@ -473,16 +616,18 @@ fi
 # the real thing (a value that is actually a live credential) without the noise.
 # If you're tempted to add it back, add a targeted (a)-style prefix instead.
 
-# Dotted-quad strings that are confirmed NOT IP addresses, so the warning
-# below doesn't re-fire on them at every push. Format: <path>|<literal>, one
-# per line -- deliberately scoped to the file the string appears in, so the
-# same digits showing up anywhere else still warn.
+# Dotted-quad strings that are confirmed NOT IP addresses (or are reserved
+# documentation addresses), so the warning below doesn't re-fire on them at
+# every push. Format: <path>|<literal>, one per line -- deliberately scoped to
+# the file the string appears in, so the same digits showing up anywhere else
+# still warn. The entries themselves are repo knowledge and live in
+# scripts/check-pii.conf, with the reasoning for each recorded there.
 #
-# The bar for adding an entry is "confirmed not an IP", not "probably fine"
-# (see AGENTS.md's "PII / privacy" section). This lives in the script, not
-# the gitignored .pii-denylist, because -- unlike the denylist -- nothing
-# here is secret, and a fresh clone should inherit the same confirmations
-# rather than re-flagging them for someone else to re-investigate.
+# The bar for adding an entry is "confirmed not an IP", not "probably fine".
+# These live in the tracked conf, not the gitignored .pii-denylist, because --
+# unlike the denylist -- nothing here is secret, and a fresh clone should
+# inherit the same confirmations rather than re-flagging them for someone else
+# to re-investigate.
 #
 # Suppressing a confirmed false positive is the point: a WARN that fires
 # forever is one people learn to scroll past, which is how a real leak gets
@@ -491,32 +636,24 @@ fi
 # this file too, so the allowlist has to cover its own source or the check
 # reports itself. That's honest rather than circular -- the entry is still
 # file-scoped, so these digits anywhere else are still flagged. The third
-# entry is the same Sonos version string again, quoted as a Python constant
+# entry is that same version string again, quoted as a Python constant
 # in test_check_pii.py's own fixture data (see that file's ALLOWLISTED_VALUE)
 # -- same value, same reasoning, just a third file it happens to appear in.
 #
 # The next two entries are a different case: genuine IP addresses (not
-# lookalikes like 1.9.1.10 above), but standard, reserved, or well-known
-# public ones used deliberately as test fixtures -- 8.8.8.8 is Google Public
-# DNS, the canonical "obviously not on my LAN, reject it" fixture, and three
-# security tests use it as exactly that: test_sonos_api.py's and
-# test_sonos_household.py's SSRF guards (a device-supplied host pointing off
-# the LAN) and test_ping.py's argv guard (a non-literal that must never reach
-# ping's argv). 203.0.113.7 is inside 203.0.113.0/24, the IANA
-# TEST-NET-3 block reserved by RFC 5737 specifically for documentation/
-# examples and never assignable to a real host (test_check_pii.py's own
-# fixture data, confirming the "genuine public address" WARN path still
-# fires). Neither can be a real home IP.
-IP_ALLOWLIST='tests/test_sonos_api.py|1.9.1.10
-scripts/check-pii.sh|1.9.1.10
-tests/test_check_pii.py|1.9.1.10
-tests/test_sonos_api.py|8.8.8.8
-tests/test_ping.py|8.8.8.8
-tests/test_sonos_household.py|8.8.8.8
-tests/test_check_pii.py|203.0.113.7
-scripts/check-pii.sh|8.8.8.8
-scripts/check-pii.sh|203.0.113.7
-scripts/check-pii.sh|203.0.113.0'
+# A second kind of entry belongs there too: genuine addresses, rather than
+# lookalikes, that are standard, reserved or well-known and used deliberately
+# as test fixtures -- a public-DNS address as the canonical "obviously not on
+# my LAN, reject it" fixture for SSRF and argv guards, or an address from the
+# RFC 5737 documentation blocks, which are reserved for examples and never
+# assignable to a real host. Neither can be a real home IP. Each repo records
+# its own, with its reasoning, in scripts/check-pii.conf.
+#
+# No literal address appears in THIS file, deliberately: it is committed to
+# every repo that vendors the engine, so a dotted quad in a comment here would
+# show up as a finding in each of their histories -- which is exactly what
+# happened when these lines still carried them.
+IP_ALLOWLIST="$PII_IP_ALLOWLIST"
 
 # Non-private IPv4 addresses -- WARN not FAIL, since a legitimate public
 # endpoint (an API host, a documentation example) can trigger this
@@ -530,15 +667,15 @@ scripts/check-pii.sh|203.0.113.0'
 #
 # Validity gate: the extraction regex matches any three-dot run of digits, so
 # version strings and deliberately-unassignable test sentinels come through it
-# too -- 999.1.1.1 in tests/test_ping.py is not an address anyone could ever
-# hold, so it cannot be a leaked one. Those used to warn forever and had to be
-# bought off with an allowlist entry each, which is backwards: the allowlist is
-# for values that *look* like addresses and had to be investigated, not for
-# strings that arithmetic alone rules out.
+# too -- a sentinel whose first octet is far above 255 is not an address
+# anyone could ever hold, so it cannot be a leaked one. Those used to warn
+# forever and had to be bought off with an allowlist entry each, which is
+# backwards: the allowlist is for values that *look* like addresses and had to
+# be investigated, not for strings that arithmetic alone rules out.
 #
 # Done here rather than by tightening the regex, because a stricter pattern
-# still matches the valid-looking tail *inside* an impossible quad (the last
-# eight characters of 999.1.1.1 are a perfectly well-formed address), so it
+# still matches the valid-looking tail *inside* an impossible quad (the tail
+# of such a sentinel is itself a perfectly well-formed address), so it
 # would report the same false positive with a truncated value -- worse, not
 # better. Base 10 is forced with 10# so a zero-padded octet isn't read as octal.
 # One awk pass over every dotted-quad hit, not a bash loop: a --full run of
@@ -628,6 +765,35 @@ if [ "${#HEX_NEEDLES[@]}" -gt 0 ]; then
   fi
 fi
 
+# Files git cannot grep inside -- WARN, never FAIL. None of the rules above
+# can see the contents of a .xlsx/.docx/.pdf/.zip (they are zip containers or
+# binary), so a spreadsheet of real data passes every check silently. This
+# flags the moment one is ADDED, as a nudge to check it by hand -- which is
+# the only thing that can check it. Gated because it is only useful where such
+# a file could plausibly carry personal data.
+#
+# This asks what a commit ADDED, so unlike every rule above it cannot take a
+# bare tree: in --staged mode there is no commit to diff against a parent, and
+# `git diff-tree <tree>` would silently produce nothing at all -- the quiet-
+# pass failure mode this script exists to avoid. The index is asked directly
+# instead.
+if [ "$PII_OFFICE_FILE_WARN" = "1" ]; then
+  if [ "$MODE" = "staged" ]; then
+    BINARY_RAW="$(git diff --cached --name-status 2>/dev/null)"
+  else
+    # shellcheck disable=SC2086
+    BINARY_RAW="$(for c in $COMMITS; do git diff-tree --no-commit-id --name-status -r "$c" 2>/dev/null; done)"
+  fi
+  BINARY_HITS="$(printf '%s\n' "$BINARY_RAW" \
+    | awk '$1 == "A" {print $2}' \
+    | grep -iE '\.(xlsx|xls|docx|doc|pdf|zip|key|numbers|pages)$' | sort -u)"
+  if [ -n "$BINARY_HITS" ]; then
+    while IFS= read -r m; do
+      warn "office/archive file added: $m -- git can't see inside this, check it by hand"
+    done <<< "$BINARY_HITS"
+  fi
+fi
+
 # Commit MESSAGES -- every rule above greps commit *trees* (file content), so a
 # real name or a secret written into a commit *message* slipped through
 # untouched, and `--full` then reported "clean" while several messages carried
@@ -640,14 +806,55 @@ fi
 # Each rule is one `git log --grep` over exactly the commits in range (see
 # _log_grep above); --staged has no commits, so the whole pass is skipped.
 if [ "$MODE" != "staged" ]; then
-  if [ "${#DENYLIST_TERMS[@]}" -gt 0 ]; then
-    for term in "${DENYLIST_TERMS[@]}"; do
-      for sha in $(_log_grep -i -F --grep="$term"); do
+  # The tiers mean here exactly what they mean against file content: a w: or
+  # W: term is a WHOLE-WORD match. git log --grep has no -w and POSIX ERE has
+  # no \b to fake one with, so the whole-word test happens in the second phase
+  # below, against the message body, where plain grep -w is available.
+  #
+  # Getting this wrong is not a small thing: matching those tiers as substrings
+  # (the first version of this pass did) turned 9 ordinary commit messages in
+  # the sibling repo into FAILs -- denylisted company names sitting inside
+  # unrelated package names in Dependabot bump messages. That is the cry-wolf
+  # failure every note in this file warns about, manufactured by the check
+  # itself.
+  #
+  # ONE git log for all terms at once (--grep is OR by default), then the
+  # per-term loop runs only over the commits that already matched -- normally
+  # none. One process per term instead would be ~110 here and ~830 in the
+  # sibling repo, on every commit and every push: the kind of slow that gets a
+  # hook bypassed with --no-verify, which is a privacy failure and not merely
+  # a slow one.
+  _msg_scan() {  # $1 = fold (1 = case-insensitive), $2 = word (1 = whole word)
+    local fold="$1" word="$2"; shift 2
+    [ "$#" -gt 0 ] || return 0
+    local -a gargs=()
+    local term sha body
+    for term in "$@"; do [ -n "$term" ] && gargs+=(--grep="$term"); done
+    [ "${#gargs[@]}" -gt 0 ] || return 0
+    local hits
+    if [ "$fold" = "1" ]; then
+      hits="$(_log_grep -i -F "${gargs[@]}")"
+    else
+      hits="$(_log_grep -F "${gargs[@]}")"
+    fi
+    [ -n "$hits" ] || return 0
+    while IFS= read -r sha; do
+      [ -n "$sha" ] || continue
+      body="$(git --no-pager log -1 --format=%B "$sha" 2>/dev/null)"
+      for term in "$@"; do
+        [ -n "$term" ] || continue
+        local -a gopts=(-q -F)
+        [ "$fold" = "1" ] && gopts+=(-i)
+        [ "$word" = "1" ] && gopts+=(-w)
+        printf '%s' "$body" | grep "${gopts[@]}" -- "$term" || continue
         HIT=1
         fail "denylist term '$term' in commit message of $sha"
       done
-    done
-  fi
+    done <<< "$hits"
+  }
+  _msg_scan 1 0 "${DENYLIST_TERMS[@]}"
+  _msg_scan 1 1 "${DENY_WORD[@]}"
+  _msg_scan 0 1 "${DENY_WORD_CS[@]}"
   # Same rule (b) .env values the tree scan above already checks against
   # file content -- a real secret pasted into a commit MESSAGE rather than
   # a file was invisible here until now. Value withheld, as elsewhere.

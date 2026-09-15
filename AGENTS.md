@@ -906,8 +906,20 @@ assistant or human contributor.
   written before this existed; transcribe any new Sonos serial into
   `devices/accounts.json` in the canonical form so it doesn't need to rely on
   that normalization pass.
-- **`scripts/check-pii.sh`** checks denylist terms (case-insensitive,
-  literal, plus a hex-normalised pass so a MAC matches whatever its
+- **`scripts/check-pii.sh` is a shared engine**, byte-identical in this repo
+  and in `gmail_labels`; everything repo-specific lives in
+  `scripts/check-pii.conf` beside it (the doc pointer, which paths must never
+  be tracked, the IP allowlist, whether the UK-identifier and office-file
+  rules apply, and the sibling's path). Move it between the repos with
+  `scripts/sync-check-pii.sh` — never by hand — and run **both** suites after
+  an engine change. `tests/test_check_pii_shared.py` fails while the copies
+  differ, on a machine that has both. This replaced two hand-synced copies
+  after three fixes reached one repo and not the other, one of them a silent
+  false-clean (a range git could not resolve reported "nothing to check",
+  exit 0) that stood for two days.
+- **The engine** checks denylist terms (case-insensitive
+  literal by default, `w:` for whole-word and `W:` for case-sensitive
+  whole-word, plus a hex-normalised pass so a MAC matches whatever its
   separators or length — the literal pass alone once missed a real device
   MAC written a different way) across both file **trees** and commit
   **messages** (the tree-only rules once let real names in messages slip
@@ -960,7 +972,10 @@ assistant or human contributor.
   re-parse finds anything that isn't template-verbatim or a bare `KEY=`.
   This is the supported way to notice and close Mini-vs-template drift, since
   `redeploy.sh` never syncs `.env`.
-- **`IP_ALLOWLIST`** (inside `check-pii.sh`) suppresses dotted-quad strings
+- **`PII_IP_ALLOWLIST`** (in `scripts/check-pii.conf`, since the engine
+  itself must stay repo-neutral — and must carry no such literal of its own,
+  or it reports itself in every repo that vendors it) suppresses dotted-quad
+  strings
   confirmed *not* to be IP addresses — the Sonos test fixture's
   `<hardwareVersion>`, which the pattern can't tell from an address, plus a
   few reserved or well-known public addresses used deliberately as test
