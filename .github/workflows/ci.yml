@@ -17,8 +17,15 @@ on:
 # runs tests/lint/the PII scan -- it never needs to write anything. Currently
 # redundant with the repo's own default (Settings -> Actions -> read-only),
 # but stated here so it stays true even if that default is ever loosened.
+# pull-requests: read is NOT surplus to that. On a pull_request event the
+# gitleaks action in the `secrets` job below lists the PR's commits to work out
+# which range to scan; with contents: read alone that call returns 403
+# "Resource not accessible by integration" and the job fails before scanning
+# anything at all. Push events never take that path, which is why this went
+# unnoticed -- the workflow has only ever been green on pushes.
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   test:
