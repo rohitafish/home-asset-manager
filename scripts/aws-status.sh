@@ -5,9 +5,12 @@
 #
 # Run this from the DEV MAC, not the deploy host. It needs both sides: the
 # host's .env holds the S3 credentials, while Route 53 and IAM reads come
-# from this machine's `default` profile. The host deliberately holds no AWS
-# credential of its own (see AGENTS.md's "Database backups"), so it cannot
-# answer the DNS/IAM half by itself. The host may be the Linux laptop
+# from this machine's `admin-sso` profile -- the Identity Center role, not
+# the old static `default` key. `default` is s3-user, which deliberately
+# cannot read IAM at all, so it can never answer the key-age question; the
+# fix for that WARN is the right profile, not a wider s3-user. The host
+# deliberately holds no AWS credential of its own (see AGENTS.md's
+# "Database backups"), so it cannot answer the DNS/IAM half by itself. The host may be the Linux laptop
 # (systemd, apt Caddy) or the Mac mini (launchd, brew Caddy); the remote
 # side below answers the same questions on either.
 #
@@ -27,7 +30,15 @@ HOST="${DEPLOY_HOST:-mint}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-~/claudecode/assetmgt}"
 DOMAIN="${ASSETMGT_DOMAIN:-assets.rohita.com}"
 ZONE_ID="${ASSETMGT_ZONE_ID:-Z05906141QTVV2UUOL5D6}"
-PROFILE="${AWS_PROFILE:-default}"
+# Preferred first, fallback second. `admin-sso` is the Identity Center role
+# and the right answer when it has a session; `default` is the static
+# admin-equivalent key kept precisely so this check still works at hour 13,
+# when the 12-hour SSO token has gone. An explicit AWS_PROFILE overrides both
+# and disables the fallback -- if you named a profile, you meant that one.
+PROFILE_EXPLICIT=0
+[ -n "${AWS_PROFILE:-}" ] && PROFILE_EXPLICIT=1
+PROFILE="${AWS_PROFILE:-admin-sso}"
+FALLBACK_PROFILE="${ASSETMGT_FALLBACK_PROFILE:-default}"
 
 FAILS=0
 WARNS=0
@@ -101,6 +112,52 @@ if [ -z "$REMOTE_OUT" ]; then
   exit 1
 fi
 
+# Preflight the admin profile once. An expired SSO token makes every read
+# below return an empty string, and the checks that parse those strings then
+# report a missing A record and an unrestricted zone -- alarming, confident,
+# and wrong. Ask the one question whose answer distinguishes "the zone is
+# broken" from "you are not logged in", and say which it is.
+# Ask each candidate the one question that distinguishes "the zone is broken"
+# from "you are not logged in": can it name itself? An expired SSO token makes
+# every read below return an empty string, and the checks that parse those
+# strings then report a missing A record and an unrestricted zone -- alarming,
+# confident, and wrong.
+_whoami() { aws --profile "$1" sts get-caller-identity --query Arn --output text 2>&1 >/dev/null; }
+
+ADMIN_OK=0
+ADMIN_ERR="$(_whoami "$PROFILE")"
+if [ -z "$ADMIN_ERR" ]; then
+  ADMIN_OK=1
+elif [ "$PROFILE_EXPLICIT" = 0 ]; then
+  FALLBACK_ERR="$(_whoami "$FALLBACK_PROFILE")"
+  if [ -z "$FALLBACK_ERR" ]; then
+    PROFILE="$FALLBACK_PROFILE"
+    ADMIN_OK=1
+    USED_FALLBACK=1
+  fi
+fi
+
+echo "== Admin profile =="
+if [ "$ADMIN_OK" = 1 ] && [ "${USED_FALLBACK:-0}" = 1 ]; then
+  # Say which identity answered. Falling back is supported, but a long-lived
+  # static admin key quietly standing in for a 12-hour role is worth one line
+  # on screen rather than none.
+  ok "profile '$PROFILE' can read IAM and Route 53 (fell back from 'admin-sso', which has no session)"
+  echo "        to use the Identity Center role instead: aws sso login --profile admin-sso"
+elif [ "$ADMIN_OK" = 1 ]; then
+  ok "profile '$PROFILE' can read IAM and Route 53"
+else
+  case "$ADMIN_ERR" in
+    *"Token has expired"*|*"sso"*|*"SSO"*)
+      fail "profile '$PROFILE' has no valid session -- run: aws sso login --profile $PROFILE" ;;
+    *)
+      fail "profile '$PROFILE' is unusable: $(printf '%s' "$ADMIN_ERR" | tr '\n' ' ' | cut -c1-160)" ;;
+  esac
+  [ "$PROFILE_EXPLICIT" = 0 ] && echo "        fallback '$FALLBACK_PROFILE' could not authenticate either"
+  echo "        the IAM and Route 53 checks below are skipped, not passed"
+fi
+
+echo
 echo "== Backup identity =="
 IDENTITY="$(_val IDENTITY)"
 case "$IDENTITY" in
@@ -113,8 +170,12 @@ esac
 # Key age matters: this is the credential sitting in a .env on an always-on
 # host, so an old one is the thing worth noticing before it's the thing
 # worth regretting.
-KEY_CREATED="$(aws --profile "$PROFILE" iam list-access-keys --user-name assetmgt-backup \
-  --query 'AccessKeyMetadata[0].CreateDate' --output text 2>/dev/null)"
+if [ "$ADMIN_OK" = 1 ]; then
+  KEY_CREATED="$(aws --profile "$PROFILE" iam list-access-keys --user-name assetmgt-backup \
+    --query 'AccessKeyMetadata[0].CreateDate' --output text 2>/dev/null)"
+else
+  KEY_CREATED=""
+fi
 if [ -n "$KEY_CREATED" ] && [ "$KEY_CREATED" != "None" ]; then
   KEY_AGE=$(( ( $(date +%s) - $(date -j -f "%Y-%m-%dT%H:%M:%S" "${KEY_CREATED%%+*}" +%s 2>/dev/null || echo "$(date +%s)") ) / 86400 ))
   if [ "$KEY_AGE" -gt 365 ]; then
@@ -122,7 +183,7 @@ if [ -n "$KEY_CREATED" ] && [ "$KEY_CREATED" != "None" ]; then
   else
     ok "backup access key is $KEY_AGE days old"
   fi
-else
+elif [ "$ADMIN_OK" = 1 ]; then
   warn "could not read the backup key's age (needs iam:ListAccessKeys on profile '$PROFILE')"
 fi
 
@@ -200,19 +261,24 @@ fi
 
 echo
 echo "== DNS =="
-A_VALUE="$(aws --profile "$PROFILE" route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
-  --query "ResourceRecordSets[?Name=='$DOMAIN.'&&Type=='A'].ResourceRecords[0].Value" --output text 2>/dev/null)"
-[ -n "$A_VALUE" ] && [ "$A_VALUE" != "None" ] \
-  && ok "Route 53 has an A record for $DOMAIN" \
-  || fail "no A record for $DOMAIN in zone $ZONE_ID"
+A_VALUE=""
+if [ "$ADMIN_OK" = 1 ]; then
+  A_VALUE="$(aws --profile "$PROFILE" route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+    --query "ResourceRecordSets[?Name=='$DOMAIN.'&&Type=='A'].ResourceRecords[0].Value" --output text 2>/dev/null)"
+  [ -n "$A_VALUE" ] && [ "$A_VALUE" != "None" ] \
+    && ok "Route 53 has an A record for $DOMAIN" \
+    || fail "no A record for $DOMAIN in zone $ZONE_ID"
 
-CAA="$(aws --profile "$PROFILE" route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
-  --query "ResourceRecordSets[?Type=='CAA'].ResourceRecords[].Value" --output text 2>/dev/null)"
-case "$CAA" in
-  *amazon*) ok "CAA pins issuance to Amazon ($(printf '%s' "$CAA" | tr '\t' ' ' | grep -o 'issue "[^"]*"' | wc -l | tr -d ' ') value(s))" ;;
-  "")       warn "no CAA record on the zone -- issuance is unrestricted (works, but anyone who can prove control could use any CA)" ;;
-  *)        fail "a CAA record exists but names no Amazon CA -- ACM issuance will fail with CAA_ERROR at the next renewal" ;;
-esac
+  CAA="$(aws --profile "$PROFILE" route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
+    --query "ResourceRecordSets[?Type=='CAA'].ResourceRecords[].Value" --output text 2>/dev/null)"
+  case "$CAA" in
+    *amazon*) ok "CAA pins issuance to Amazon ($(printf '%s' "$CAA" | tr '\t' ' ' | grep -o 'issue "[^"]*"' | wc -l | tr -d ' ') value(s))" ;;
+    "")       warn "no CAA record on the zone -- issuance is unrestricted (works, but anyone who can prove control could use any CA)" ;;
+    *)        fail "a CAA record exists but names no Amazon CA -- ACM issuance will fail with CAA_ERROR at the next renewal" ;;
+  esac
+else
+  echo "  ----  Route 53 A and CAA not read (no admin session; see above)"
+fi
 
 # Both sides must be non-empty before comparing. Two empty strings compare
 # equal, so a missing A record paired with a name that resolves nowhere would
@@ -225,6 +291,8 @@ esac
 PUBLIC_IP="$(dig +short +time=3 +tries=1 @one.one.one.one "$DOMAIN" 2>/dev/null | tail -1)"
 if [ -z "$PUBLIC_IP" ]; then
   fail "public DNS returns nothing for $DOMAIN"
+elif [ "$ADMIN_OK" != 1 ]; then
+  ok "public DNS resolves $DOMAIN (not compared against Route 53 -- no admin session)"
 elif [ -z "$A_VALUE" ] || [ "$A_VALUE" = "None" ]; then
   warn "public DNS returns '$PUBLIC_IP' but Route 53 has no A record to compare it against"
 elif [ "$PUBLIC_IP" = "$A_VALUE" ]; then
