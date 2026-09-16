@@ -213,7 +213,24 @@ assistant or human contributor.
   UI-only. Don't widen this key to automate them: discovery only ever
   reads, and the key lives in the Mini's `.env`. If write automation is
   ever genuinely needed, create a separate full-admin key and keep it off
-  the Mini.
+  the app host.
+- **A stored fixed IP outlives its own toggle, and the console hides it.**
+  A UniFi client record keeps `fixed_ip` when "Use Fixed IP" is off, and the
+  value is not shown while the toggle is off -- so enabling the toggle
+  applies whatever is hidden there. After a network has been renumbered that
+  is usually an address on the *wrong* network, which is the mechanism behind
+  the trap in the bullet above. It is not confined to one client: most
+  records on this site carry a dormant value, a number disagree with where
+  the device now lives, and a few addresses are claimed by two records --
+  which surfaces only as "already being used by ..." at save time, naming a
+  device you never touched. `check-address.sh`, in the user's `unifi-dhcp`
+  scripts (outside this repo, same read-only key), reports whether an address
+  is claimed, by what, and whether that claim is in force; run it before
+  typing an address into the console. Order matters: set the network and the
+  address, save, and only then enable the toggle. Then prove the result by
+  forcing a DHCP re-acquire on the client and re-reading its interface -- a
+  lease that comes back on the same address is proof, and a console that
+  agrees with you has already been wrong once.
 - **TLS for `assets.rohita.com` comes from ACM's managed ACME endpoint, not
   Let's Encrypt.** `assets.rohita.com` is a public A record in Route 53
   (`Z05906141QTVV2UUOL5D6`) pointing at the Mini's private LAN address --
