@@ -20,7 +20,7 @@
 # in its PRs. See CONTRIBUTING.md's "Dependencies".
 fastapi==0.141.1
 uvicorn[standard]==0.53.0
-sqlmodel==0.0.42
+sqlmodel==0.0.47
 alembic==1.20.0
 psycopg[binary]==3.3.5
 python-dotenv==1.2.3
