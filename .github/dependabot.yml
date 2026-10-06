@@ -10,6 +10,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # sqlmodel 0.0.47 rejects naive datetimes and maps datetime fields to
+      # a tz-aware column type (drift on ~20 columns). Held back until the
+      # code moves off utcnow()/naive datetimes and a timestamptz migration
+      # lands -- remove this entry in that PR.
+      - dependency-name: sqlmodel
+        versions: [">=0.0.47"]
 
   # The GitHub Actions used by the CI workflow.
   - package-ecosystem: github-actions
