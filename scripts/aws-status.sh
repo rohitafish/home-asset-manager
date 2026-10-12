@@ -6,9 +6,9 @@
 # Run this from the DEV MAC, not the deploy host. It needs both sides: the
 # host's .env holds the S3 credentials, while Route 53 and IAM reads come
 # from this machine's `admin-sso` profile -- the Identity Center role, not
-# the old static `default` key. `default` is s3-user, which deliberately
-# cannot read IAM at all, so it can never answer the key-age question; the
-# fix for that WARN is the right profile, not a wider s3-user. The host
+# a static key. s3-user deliberately cannot read IAM at all, so it can never
+# answer the key-age question; the fix for that WARN is the right profile,
+# not a wider s3-user. The host
 # deliberately holds no AWS credential of its own (see AGENTS.md's
 # "Database backups"), so it cannot answer the DNS/IAM half by itself. The host may be the Linux laptop
 # (systemd, apt Caddy) or the Mac mini (launchd, brew Caddy); the remote
@@ -31,14 +31,16 @@ REMOTE_DIR="${DEPLOY_REMOTE_DIR:-~/claudecode/assetmgt}"
 DOMAIN="${ASSETMGT_DOMAIN:-assets.rohita.com}"
 ZONE_ID="${ASSETMGT_ZONE_ID:-Z05906141QTVV2UUOL5D6}"
 # Preferred first, fallback second. `admin-sso` is the Identity Center role
-# and the right answer when it has a session; `default` is the static
-# admin-equivalent key kept precisely so this check still works at hour 13,
-# when the 12-hour SSO token has gone. An explicit AWS_PROFILE overrides both
+# and the right answer when it has a session; `schengen-iac-test` is the
+# static admin-equivalent key kept precisely so this check still works at
+# hour 13, when the 12-hour SSO token has gone. It is named, not reached as
+# `default`, because ~/claudecode/AWS guardrails wants every use of that key
+# deliberate and visible (its tf.sh asks for --static-key). An explicit AWS_PROFILE overrides both
 # and disables the fallback -- if you named a profile, you meant that one.
 PROFILE_EXPLICIT=0
 [ -n "${AWS_PROFILE:-}" ] && PROFILE_EXPLICIT=1
 PROFILE="${AWS_PROFILE:-admin-sso}"
-FALLBACK_PROFILE="${ASSETMGT_FALLBACK_PROFILE:-default}"
+FALLBACK_PROFILE="${ASSETMGT_FALLBACK_PROFILE:-schengen-iac-test}"
 
 FAILS=0
 WARNS=0

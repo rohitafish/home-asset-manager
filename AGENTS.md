@@ -299,10 +299,10 @@ assistant or human contributor.
   is why this has to be a *role*; an IAM user has no trust policy and cannot
   be the target of `sts:AssumeRole`). Two things that cost time the first
   time round:
-  - **Use `--profile schengen-iac-test`, not `default`.** Creating the role
-    needs IAM write, and `create-acme-external-account-binding` needs
-    `iam:PassRole` on the role -- `default`/s3-user has neither and fails
-    with `AccessDeniedException`.
+  - **Use an admin profile, not s3-user.** Creating the role needs IAM
+    write, and `create-acme-external-account-binding` needs `iam:PassRole`
+    on the role -- s3-user has neither and fails with
+    `AccessDeniedException`. Name the profile; don't rely on `default`.
   - **Since 2026-09-12 the preferred admin profile is `admin-sso`** (IAM
     Identity Center: MFA, 12-hour credentials, no static key; `aws sso login
     --profile admin-sso` first). It can do everything `schengen-iac-test`
@@ -407,7 +407,7 @@ assistant or human contributor.
   deletes in S3, lifecycle does that server-side, so Object Lock is the
   backstop rather than the only thing standing between a leaked credential
   and the backup history. Creating the user needs IAM write, i.e. the
-  `schengen-iac-test` profile: `default`/s3-user has none (no
+  `admin-sso` (or `schengen-iac-test`) profile: s3-user has none (no
   `iam:CreateUser`/`CreateAccessKey`/`PassRole`), per the TLS section
   above.
 - **Switched over 2026-09-07.** The Mini's `.env` now authenticates as
@@ -422,8 +422,8 @@ assistant or human contributor.
   `None`, because S3 omits those headers unless the caller holds
   `s3:GetObjectRetention` -- which `assetmgt-backup-s3` deliberately does
   not grant, since the script never reads retention. The lock is applied
-  regardless. Debug retention from a broader profile (the dev Mac's
-  `default`), never from the Mini, or you will reasonably conclude Object
+  regardless. Debug retention from a broader profile (`admin-sso` on the
+  dev Mac), never from the Mini, or you will reasonably conclude Object
   Lock is broken when it is working fine.
 - **Testing a switchover the same day is largely a no-op.** If today's
   `daily/` object already exists, `backup-db.sh` hits the head-object
@@ -433,13 +433,13 @@ assistant or human contributor.
   same `--server-side-encryption`/`--object-lock-*` arguments the script
   uses. It is billed as an object nobody can delete for 30 days, so keep it
   small; the bucket's own lifecycle rule clears it.
-- **Still outstanding: rotate `s3-user`'s access key** (created 2021-11-23,
-  and sat in the Mini's `.env` for years). Two ordering constraints, both
-  easy to trip over. It is the `default` profile on the dev Mac *and* on
-  the Mini, so rotating breaks both until each is updated -- though the Mini
-  no longer needs `~/.aws` at all now that backups read `.env`. And it is
-  the only identity in the account with Route 53 write, so the rotation has
-  to come *after* the CAA record described in the TLS section above.
+- **`s3-user`'s access key was rotated on 2026-09-07** (the old one dated
+  from 2021-11-23 and sat in the Mini's `.env` for years; IAM shows one
+  active key, created that day). The Mini no longer needs `~/.aws` at all,
+  since backups read `.env`. On the dev Mac `default` is now the
+  admin-equivalent Schengen-IaC-Test key, not s3-user (see
+  `~/claudecode/AWS guardrails/default-profile-to-schengen.sh`), so scripts
+  name their profile instead of inheriting `default`.
 - `pg_dump`/`pg_restore` always run **inside** the `db` container
   (`docker compose exec -T db sh -c '...'`), never against `DATABASE_URL` —
   its `postgresql+psycopg://` prefix is a SQLAlchemy dialect string, not a
