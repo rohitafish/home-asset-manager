@@ -390,6 +390,14 @@ assistant or human contributor.
   `_env_var()` helper) rather than sourcing `.env`, specifically to avoid
   exporting every *other* secret in that file into the process for no
   reason.
+- **The AWS resources are Terraform, but not in this repo.** Since
+  2026-10-12 the backup bucket, `assetmgt-backup` and its policy, the
+  ACME role below and the `assets`/CAA/prevalidation DNS records live in
+  the private `aws-guardrails` repo (`terraform/assetmgt/`, run with
+  `./tf.sh assetmgt plan|apply`), because that config names the bucket and
+  the LAN address. Change them there, never by hand. Still manual: the
+  writer's access key (kept out of Terraform state) and the ACM ACME
+  endpoint and binding (no Terraform resources exist for them yet).
 - **The backup identity is `assetmgt-backup`**, a dedicated IAM user
   created 2026-09-06. Its inline policy (`assetmgt-backup-s3`) is tracked
   as `scripts/assetmgt-backup-policy.json` carrying a `__BUCKET__`
