@@ -248,10 +248,8 @@ assistant or human contributor.
   need: an external-account-binding (EAB) key ID + HMAC key, tied to an IAM
   role (`assetmgt-acme-eab-role`) scoped to `acm:RequestCertificate` for
   `*.rohita.com` subdomains through ACME, and `acm:RevokeCertificate` for
-  ACME-issued certificates only. These are two statements because ACM gives
-  revocation no domain key; until 2026-10-12 a single domain-conditioned
-  statement let revocation through for any certificate in the account. The
-  policy is Terraform (see "Database backups"). Treat the EAB HMAC key like
+  ACME-issued certificates only (two statements, because ACM supplies no
+  domain key on revocation). Treat the EAB HMAC key like
   `APP_ADMIN_PASSWORD` -- it authorizes issuance for the whole pre-approved
   scope, so it's generated and placed on the Mini directly, never through an
   AI coding session (see "PII / privacy" for the general secrets-handling
@@ -394,14 +392,9 @@ assistant or human contributor.
   `_env_var()` helper) rather than sourcing `.env`, specifically to avoid
   exporting every *other* secret in that file into the process for no
   reason.
-- **The AWS resources are Terraform, but not in this repo.** Since
-  2026-10-12 the backup bucket, `assetmgt-backup` and its policy, the
-  ACME role below and the `assets`/CAA/prevalidation DNS records live in
-  the private `aws-guardrails` repo (`terraform/assetmgt/`, run with
-  `./tf.sh assetmgt plan|apply`), because that config names the bucket and
-  the LAN address. Change them there, never by hand. Still manual: the
-  writer's access key (kept out of Terraform state) and the ACM ACME
-  endpoint and binding (no Terraform resources exist for them yet).
+- **These AWS resources are managed outside this repo:** the backup
+  bucket, `assetmgt-backup` and its policy, the ACME role and the
+  `assets`/CAA DNS records. Don't change them by hand or with the AWS CLI.
 - **The backup identity is `assetmgt-backup`**, a dedicated IAM user
   created 2026-09-06. Its inline policy (`assetmgt-backup-s3`) is tracked
   as `scripts/assetmgt-backup-policy.json` carrying a `__BUCKET__`
