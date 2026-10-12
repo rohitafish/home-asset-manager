@@ -246,8 +246,12 @@ assistant or human contributor.
   created for a Let's Encrypt dns-01 approach, is superseded by this and
   should be deleted once issuance is confirmed working). What the Mini does
   need: an external-account-binding (EAB) key ID + HMAC key, tied to an IAM
-  role (`assetmgt-acme-eab-role`) scoped to `acm:RequestCertificate`/
-  `acm:RevokeCertificate` for `*.rohita.com` only. Treat the EAB HMAC key like
+  role (`assetmgt-acme-eab-role`) scoped to `acm:RequestCertificate` for
+  `*.rohita.com` subdomains through ACME, and `acm:RevokeCertificate` for
+  ACME-issued certificates only. These are two statements because ACM gives
+  revocation no domain key; until 2026-10-12 a single domain-conditioned
+  statement let revocation through for any certificate in the account. The
+  policy is Terraform (see "Database backups"). Treat the EAB HMAC key like
   `APP_ADMIN_PASSWORD` -- it authorizes issuance for the whole pre-approved
   scope, so it's generated and placed on the Mini directly, never through an
   AI coding session (see "PII / privacy" for the general secrets-handling
