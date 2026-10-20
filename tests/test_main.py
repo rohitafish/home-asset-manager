@@ -104,7 +104,7 @@ def test_is_secure_from_scheme_or_forwarded_proto():
 
 
 def test_allowed_hosts_always_include_loopback(monkeypatch):
-    """scripts/redeploy.sh and mini-brew-upgrade.sh curl /health as
+    """scripts/redeploy.sh and brew-upgrade.sh curl /health as
     127.0.0.1; local development uses localhost. Neither should depend on
     someone remembering to list them."""
     monkeypatch.delenv("APP_ALLOWED_HOSTS", raising=False)

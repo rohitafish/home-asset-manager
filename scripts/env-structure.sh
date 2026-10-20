@@ -10,12 +10,12 @@
 #   A value from a real .env is never read into the template, never sent over
 #   ssh, and never printed. Comments flow OUT of .env.example only, never in.
 #
-# This is the supported way to reconcile the Mini's .env with the template --
-# redeploy.sh deliberately excludes .env from its rsync, so the Mini's .env is
+# This is the supported way to reconcile the host's .env with the template --
+# redeploy.sh deliberately excludes .env from its rsync, so the host's .env is
 # an island and drift there is otherwise invisible (see README's ".env").
 #
 # Usage:
-#   scripts/env-structure.sh                 # three-way report (remote = $DEPLOY_HOST, else "mini")
+#   scripts/env-structure.sh                 # three-way report (remote = $DEPLOY_HOST, else "mint")
 #   scripts/env-structure.sh --host HOST     # report against a specific host
 #   scripts/env-structure.sh --no-remote     # local .env vs .env.example only
 #   scripts/env-structure.sh --strict        # report mode, exit 1 on any key-set drift
@@ -36,7 +36,7 @@ ok()   { printf '  ok    %s\n' "$1"; }
 warn() { printf '  WARN  %s\n' "$1"; }
 fail() { printf '  FAIL  %s\n' "$1"; }
 
-HOST="${DEPLOY_HOST:-mini}"
+HOST="${DEPLOY_HOST:-mint}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-~/claudecode/assetmgt}"
 # Interpolated into the remote ssh command string (so `~` expands there):
 # same guard as redeploy.sh -- a path is [A-Za-z0-9_./~-], nothing else.

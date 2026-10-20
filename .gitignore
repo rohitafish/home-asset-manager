@@ -25,7 +25,7 @@ Vulnerability Management Standard (VULN) v1.0.docx
 # Vendor account exports used by discovery/account_import.py (screenshots/
 # PDFs of the Amazon and Sonos device lists, and the transcribed serials in
 # devices/accounts.json) -- real serials and room names, never committed.
-# redeploy.sh still rsyncs this directory to mini on purpose so the import
+# redeploy.sh still rsyncs this directory to the host on purpose so the import
 # has data to read there; it's just never tracked in git.
 devices/
 

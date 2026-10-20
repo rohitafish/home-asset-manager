@@ -26,8 +26,8 @@ flowchart LR
   access to the LAN, and on macOS *every* Docker runtime (Colima, Docker
   Desktop) puts containers behind a Linux VM's virtualised networking, which
   can't reliably provide that. The deployed host has been a Linux laptop
-  (systemd units, `scripts/systemd/`) since September 2026; the Mac mini it
-  replaced (launchd plists, `scripts/*.plist`) remains a supported host.
+  (systemd units, `scripts/systemd/`) since September 2026; macOS (launchd
+  plists, `scripts/*.plist`) remains a supported host.
 - **Postgres runs in Docker** — native `dockerd` on Linux, or
   [Colima](https://github.com/abiosoft/colima) (a lightweight, GUI-free Docker
   runtime) on macOS. It only ever needs a `localhost` TCP port, never the LAN

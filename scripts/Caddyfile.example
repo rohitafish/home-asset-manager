@@ -3,7 +3,7 @@
 # and `brew services start caddy`. Caddy runs as your user, not root.
 #
 # This serves a publicly trusted certificate for assets.rohita.com, issued by
-# ACM's managed ACME endpoint and renewed on the Mini by certbot (see
+# ACM's managed ACME endpoint and renewed on the host by certbot (see
 # AGENTS.md's "Deployment topology" for the full issuance/renewal setup and
 # scripts/com.assetmgt.certrenew.plist). Because the cert is publicly trusted,
 # there's no per-client CA to install, unlike the old `tls internal` setup.

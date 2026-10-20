@@ -11,7 +11,7 @@
 # not a wider s3-user. The host
 # deliberately holds no AWS credential of its own (see AGENTS.md's
 # "Database backups"), so it cannot answer the DNS/IAM half by itself. The host may be the Linux laptop
-# (systemd, apt Caddy) or the Mac mini (launchd, brew Caddy); the remote
+# (systemd, apt Caddy) or a Mac (launchd, brew Caddy); the remote
 # side below answers the same questions on either.
 #
 # Deliberately no `set -e`, same as scripts/preflight.sh: the job is to

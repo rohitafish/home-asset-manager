@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Watches for a sustained UPS discharge and shuts the Mini down gracefully
+# Watches for a sustained UPS discharge and shuts a Mac host down gracefully
 # before the UPS itself is exhausted -- avoiding the abrupt "emergency
 # shutdown" that `pmset -u haltlevel` would otherwise trigger on its own,
 # which can leave Colima's lima/vz guest half-torn-down and unable to
@@ -21,21 +21,18 @@
 #   The one Homebrew tool involved, colima, is run via `su` AS THE APP USER,
 #   which is exactly the privilege that user already has.
 #
-# Household power comes from a Tesla Powerwall, which already rides out real
-# outages for hours. This UPS exists purely to bridge the Powerwall
-# Gateway's own grid-to-battery cutover time (on the order of a few hundred
-# milliseconds), during which the Mini's internal PSU alone briefly browns
-# out -- that's what was actually causing unexplained reboots, not power
-# loss itself. So in the overwhelming common case this script sees the Mini
-# on UPS power for at most a few seconds before the Gateway finishes
-# switching over; the shutdown path below is the rare exception (a longer
-# outage than the Powerwall covers, or a dying UPS battery), not the normal
-# outcome of a cutover.
+# Behind a whole-house battery backup, a small UPS mostly bridges the
+# backup's own grid-to-battery cutover (a few hundred milliseconds), during
+# which a Mac mini's internal PSU alone can brown out. So in the common case
+# this script sees the host on UPS power for at most a few seconds before
+# the cutover finishes; the shutdown path below is the rare exception (a
+# longer outage than the backup covers, or a dying UPS battery), not the
+# normal outcome of a cutover.
 #
 # Deliberately a LaunchDaemon rather than a LaunchAgent like the other three
 # jobs in this repo (app/logrotate/backup): it must run whether or not
 # anyone is logged in -- in particular right after `fdesetup authrestart`,
-# when the Mini sits at the login window with none of the user's
+# when the host sits at the login window with none of the user's
 # LaunchAgents started yet -- and it needs to call `shutdown` directly,
 # which a user-level agent can't do without a sudoers grant.
 set -euo pipefail
@@ -47,7 +44,7 @@ export PATH
 # using a placeholder/absolute-path style value that's filled in per host
 # (see __ASSETMGT_DIR__ in the plists). Defaults to the one non-system
 # admin account (UniqueID >= 500, the standard macOS cutoff -- matches
-# `fdesetup list`/Secure Token behaviour on a single-user Mini), overridable
+# `fdesetup list`/Secure Token behaviour on a single-user Mac), overridable
 # via ASSETMGT_USER for a host with more than one real account. Split out of
 # the ${VAR:-...} default rather than nested inside it -- bash's parser and
 # an awk script's own `{`/`}` don't mix well when nested that way.

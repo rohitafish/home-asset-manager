@@ -125,13 +125,13 @@ alembic upgrade head
 ./scripts/preflight.sh
 ```
 
-### Keeping Homebrew packages current: `scripts/mini-brew-upgrade.sh`
+### Keeping Homebrew packages current: `scripts/brew-upgrade.sh`
 
-On the always-on host, don't run a bare `brew upgrade` -- Homebrew's own
+On a Mac host, don't run a bare `brew upgrade` -- Homebrew's own
 cleanup step can delete files still open in a running process's memory, and
 an interpreter or a lazily-compiled template hitting one of those deleted
 files mid-request will break the live app until it's restarted.
-`scripts/mini-brew-upgrade.sh` stops the app service first, upgrades with
+`scripts/brew-upgrade.sh` stops the app service first, upgrades with
 cleanup deferred, restarts, then runs `preflight.sh` to confirm nothing
 broke -- instead of relying on remembering to do all that by hand every
 time. `-y` skips the confirmation prompt, `--no-preflight` skips the doctor
@@ -323,25 +323,26 @@ The app answers only for `localhost`, `127.0.0.1`, and whatever you list in
 auth or routing run. So whichever option below you pick, add the name it
 serves to `APP_ALLOWED_HOSTS` and restart the app.
 
-**Recommended: Tailscale Serve.** Nothing listens on the LAN at all; the
+**Simplest: Tailscale Serve.** Nothing listens on the LAN at all; the
 dashboard is reachable only from devices on your tailnet, over a real
-certificate Tailscale issues for the Mini's tailnet name.
+certificate Tailscale issues for the host's tailnet name.
 
 ```bash
 brew install tailscale && sudo tailscale up      # once; sign in
 tailscale cert --help >/dev/null                 # HTTPS certs need MagicDNS + HTTPS enabled in the admin console, once
-tailscale serve --bg 8000                        # https://<mini>.<tailnet>.ts.net -> 127.0.0.1:8000
+tailscale serve --bg 8000                        # https://<host>.<tailnet>.ts.net -> 127.0.0.1:8000
 tailscale serve status
 ```
 
-Then `APP_ALLOWED_HOSTS=<mini>.<tailnet>.ts.net` in `.env`, and
-`launchctl kickstart -k gui/$(id -u)/com.assetmgt.app`. `tailscale serve`
+Then `APP_ALLOWED_HOSTS=<host>.<tailnet>.ts.net` in `.env`, and restart
+the app (`launchctl kickstart -k gui/$(id -u)/com.assetmgt.app` on a Mac,
+`sudo systemctl restart assetmgt-app` on Linux). `tailscale serve`
 persists across reboots on its own. Don't use `tailscale funnel` -- that is
 the public internet.
 
 **Alternative: Caddy on the LAN, with a real certificate.** For devices that
-can't run Tailscale. `brew install caddy`, copy `scripts/Caddyfile.example` to
-`/opt/homebrew/etc/Caddyfile`, and point a name you own at the Mini's LAN
+can't run Tailscale. On a Mac, `brew install caddy`, copy `scripts/Caddyfile.example` to
+`/opt/homebrew/etc/Caddyfile` (Linux: see "Installing on Linux"), and point a name you own at the host's LAN
 address (an A record in your own public DNS zone works fine even though the
 address itself is private -- nothing outside your LAN can actually reach it,
 since no port is forwarded). Get a publicly trusted certificate for that name
@@ -410,7 +411,7 @@ Postgres failure that log grows exactly as unbounded as the app's did.
 
 ### Power outages and unattended restart
 
-The host can restart itself automatically after a power failure (macOS's
+On a Mac host, the machine can restart itself automatically after a power failure (macOS's
 "restart after power failure" setting, `pmset -g` → `autorestart 1`), and
 sleep disabled, so the hardware side of unattended recovery is
 straightforward.
@@ -436,34 +437,23 @@ FileVault setting -- so what FileVault actually buys here isn't "encrypted at
 rest" (you have that either way), it's "can't be opened without
 authentication." Auto-login would also write the login password into
 `/etc/kcpassword` under trivially-reversible obfuscation, readable from
-recoveryOS the moment FileVault is off -- turning a stolen Mini from a brick
+recoveryOS the moment FileVault is off -- turning a stolen host from a brick
 into a fully-provisioned session, which is a bad trade for a private-home
 deployment holding more than just this app's data.
 
-**What was actually causing this host's outages turned out not to be power
-loss at all.** Household power here runs through a battery backup (a Tesla
-Powerwall) that already rides out real outages for hours -- but the backup
-gateway takes on the order of a few hundred milliseconds to detect grid loss
-and switch over, and a Mac Mini's internal PSU only holds up for a few
-milliseconds on its own. The host was browning out in that cutover gap, which
-also explains the "sometimes it stayed up" pattern: survival came down to how
-long that particular cutover happened to take. If your setup has a similar
-whole-house backup source, look for this before reaching for anything more
-drastic -- a battery big enough to run the house for hours does nothing for a
-sub-second transfer glitch.
+**Check whether "power outages" are really power loss.** A whole-house
+battery backup rides out real outages for hours, but its gateway can take a
+few hundred milliseconds to detect grid loss and switch over, and a Mac
+mini's internal PSU holds up for only a few milliseconds. A host browning
+out in that cutover gap explains a "sometimes it stayed up" pattern: survival
+comes down to how long each cutover takes.
 
-**The correct fix is a small UPS sized for that gap, not for extended
-runtime** -- see "Running the Mini headless" below for sizing and the
-graceful-shutdown daemon that backs it up if it ever does run low. In
-practice, though, pricing one on Amazon UK (Aug 2026) found every pure-sine,
-macOS-compatible model either out of stock or marked up 2-3x normal, which
-isn't worth paying for a sub-second glitch. **The accepted mitigation instead
-is a spare keyboard and monitor kept where the Mini physically lives** -- a
-cutover-induced reboot still lands at FileVault's pre-boot screen exactly as
-before, and it takes a walk over to unlock it. This is a real, ongoing cost,
-not a rare edge case; revisit the UPS if prices settle or the frequency
-becomes annoying. Either way this keeps FileVault on and doesn't trade it
-away for a failure mode that was never really about power at all.
+**The fix for that is a small UPS sized for the gap, not for extended
+runtime** -- see "Running a Mac host headless" below for sizing and the
+graceful-shutdown daemon that backs it up if it ever does run low. Without
+one, keep a spare keyboard and monitor near the machine: a cutover-induced
+reboot lands at FileVault's pre-boot screen, and someone has to unlock it
+there. Either way this keeps FileVault on rather than trading it away.
 
 If you find the dashboard unreachable after an outage, check `last` and
 `sysctl -n kern.boottime` for the actual boot and login times before
@@ -473,8 +463,9 @@ Colima's own startup) and isn't a separate bug.
 
 ### Shutting down or rebooting the host gracefully
 
-When you deliberately reboot or shut down the host -- a maintenance restart, a
-manual OS update, moving the machine -- stop Colima first. A normal macOS
+When you deliberately reboot or shut down a Mac host -- a maintenance restart, a
+manual OS update, moving the machine -- stop Colima first. (On Linux, Docker
+runs natively and a normal `sudo reboot` is enough.) A normal macOS
 shutdown ( → Shut Down, or `sudo shutdown -r now`) is already graceful in
 that it sends every process a `SIGTERM` and flushes disks; it is nothing like
 pulling power. But macOS only waits a few seconds after that `SIGTERM` before
@@ -491,31 +482,30 @@ So before an intentional reboot, from your dev machine:
 
 ```bash
 # Wait for a clean guest teardown (no time limit, unlike the shutdown window).
-ssh mini 'eval "$(/opt/homebrew/bin/brew shellenv)"; colima stop'
+ssh <host> 'eval "$(/opt/homebrew/bin/brew shellenv)"; colima stop'
 
 # Optional: stop the app so it isn't crash-looping against a vanishing DB
 # during the shutdown. It autostarts again on the next boot.
-ssh mini 'launchctl bootout gui/$(id -u)/com.assetmgt.app'
+ssh <host> 'launchctl bootout gui/$(id -u)/com.assetmgt.app'
 
 # Then reboot. Headless (no display attached), use an authenticated restart
 # so the reboot skips straight past FileVault's pre-boot screen -- see
-# "Running the Mini headless" below for why this doesn't weaken FileVault at
+# "Running a Mac host headless" below for why this doesn't weaken FileVault at
 # rest the way disabling it would:
-ssh mini 'sudo fdesetup authrestart'
+ssh <host> 'sudo fdesetup authrestart'
 
 # With a display still attached, a plain reboot is equally fine -- you'd
 # just be present to unlock the pre-boot screen anyway:
-ssh mini 'sudo shutdown -r now'
+ssh <host> 'sudo shutdown -r now'
 ```
 
 This only helps for reboots you initiate. A forced OS-upgrade restart or a
-power failure (including a Powerwall Gateway cutover, see above) gives you no
+power failure (including a battery-backup cutover, see above) gives you no
 chance to run `colima stop` first, so those still fall back to the manual
-recovery above (and to the FileVault login wait in the previous section) --
-this deployment has no UPS to absorb a cutover before it becomes a reboot,
-see below.
+recovery above (and to the FileVault login wait in the previous section),
+unless a UPS absorbs the cutover first -- see below.
 
-### Running the Mini headless
+### Running a Mac host headless
 
 Running with no display or keyboard permanently attached, administered
 entirely over SSH and Screen Sharing, while keeping FileVault on and
@@ -542,45 +532,33 @@ Sharing itself. Budget for an HDMI dummy plug on the way out: a Mac with no
 display attached still serves Screen Sharing, but at a degraded default
 resolution without one.
 
-**2. A spare keyboard and monitor, kept where the Mini physically lives.**
-This deployment doesn't run a UPS (see "Power outages and unattended
-restart" above -- pricing one on Amazon UK found every suitable model out of
-stock or marked up 2-3x, not worth it for a sub-second cutover glitch), so a
-Powerwall Gateway cutover still reboots the Mini and lands it at FileVault's
-pre-boot screen exactly as it always did. Screen Sharing can't reach that
-screen -- it runs before macOS, and before there's a network stack to reach
-it with -- so recovery is physically walking over, plugging the spare
-keyboard and monitor in, and unlocking it there. Once unlocked the Mini boots
-to the login window and Screen Sharing takes over from there (log in over
-VNC, the three LaunchAgents start as normal). **This is the expected, regular
-recovery path for this deployment, not a rare fallback** -- it happens on
-every cutover the Powerwall Gateway takes long enough to matter, which is
-also why it's worth revisiting the UPS if it becomes annoying or prices
-settle down.
-
-A forced OS-upgrade restart or a genuine unattended power-off land here too,
+**2. A spare keyboard and monitor, kept near the machine.** Without a UPS,
+a power blip or battery-backup cutover reboots the host and lands it at
+FileVault's pre-boot screen. Screen Sharing can't reach that screen -- it
+runs before macOS, and before there's a network stack to reach it with --
+so recovery is plugging the spare keyboard and monitor in and unlocking it
+there. Once unlocked the host boots to the login window and Screen Sharing
+takes over (log in over VNC, the three LaunchAgents start as normal). A
+forced OS-upgrade restart or a genuine unattended power-off land here too,
 same as any FileVault-on headless Mac.
 
-**3. Optional: a UPS + the graceful-shutdown daemon, `com.assetmgt.upsmonitor`,
-if one is added later.** Not currently installed -- there's no UPS on this
-deployment for it to monitor (see above). Left here, built and tested, for if
-that changes:
+**3. Optional: a UPS + the graceful-shutdown daemon, `com.assetmgt.upsmonitor`.**
 
 If your outages are actually a whole-house battery backup's grid-to-battery
 transfer time (see above) rather than extended power loss, the UPS only
-needs to bridge about a second, not ride out hours -- an M1 Mac Mini idles
+needs to bridge about a second, not ride out hours -- an M1 Mac mini idles
 around 7W and peaks under 40W, so even a small 600-650VA line-interactive
 unit gives many minutes of headroom against that. The specification actually
 worth paying for is **pure sine wave** output; a simulated-sine unit can
 cause odd behaviour with Apple power supplies for very little saved cost.
-Connect it to the Mini over USB so macOS can see its state natively:
+Connect it to the host over USB so macOS can see its state natively:
 
 ```bash
 pmset -g ps        # should list the UPS once connected, not just 'AC Power'
 ```
 
 If the UPS ever does run down -- a longer outage than the battery backup
-covers, or a dying UPS battery -- something needs to shut the Mini down
+covers, or a dying UPS battery -- something needs to shut the host down
 *before* it just dies, because an abrupt loss of power is indistinguishable
 from the abrupt `SIGKILL` shutdown that leaves Colima's lima/vz guest
 half-torn-down (see "Shutting down or rebooting the host gracefully" above).
@@ -591,7 +569,7 @@ reboot.
 
 This one is a **LaunchDaemon**, not a LaunchAgent like the other three jobs in
 this repo -- it has to run whether or not anyone is logged in (in particular,
-right after an `authrestart`, when the Mini sits at the login window with
+right after an `authrestart`, when the host sits at the login window with
 none of the user's LaunchAgents started yet), and it needs to call `shutdown`
 directly. That means it installs differently: to `/Library/LaunchDaemons`,
 with `sudo`, not `~/Library/LaunchAgents`.
@@ -640,11 +618,11 @@ sudo pmset -u haltlevel 25 haltremain 3
 above -- if a UPS is present, whether it's visible to the system, the daemon
 is installed and loaded, the `haltlevel` backstop is set -- alongside Screen
 Sharing, which always applies. Without a UPS these read as `warn`s, not
-`fail`s, by design: no UPS is currently expected on this deployment.)
+`fail`s, by design: a UPS is optional.)
 
 **What this doesn't cover, even with a UPS installed:** a kernel panic, a
 forced OS-upgrade restart that bypasses `authrestart`, or the UPS's own
-battery failing outright all still land the Mini at the FileVault pre-boot
+battery failing outright all still land the host at the FileVault pre-boot
 screen with no remote way past it -- keep the spare keyboard and monitor from
 step 2 regardless.
 
@@ -849,7 +827,7 @@ it first -- `load` on an already-loaded label is a no-op, so an edited
 plist needs the unload/reload round-trip to actually take effect.)
 
 Before installing, confirm `aws` and `docker` resolve where the plist
-expects them to (`ssh mini 'which -a aws docker'`) -- launchd agents don't
+expects them to (`ssh <host> 'which -a aws docker'`) -- launchd agents don't
 inherit a login shell's `PATH`.
 
 Then verify the *installed* job actually works, not just the script run by
@@ -896,9 +874,10 @@ the deployed instance runs the nightly job.
 **Onto the existing host** (e.g. after a bad bulk edit or merge):
 
 ```bash
-ssh mini && cd ~/claudecode/assetmgt
+ssh mint && cd ~/claudecode/assetmgt
 
 # Stop the app so nothing writes mid-restore.
+# (Linux: sudo systemctl stop assetmgt-app)
 launchctl unload ~/Library/LaunchAgents/com.assetmgt.app.plist
 
 # Snapshot the CURRENT (bad) state first -- a restore is destructive, and if
@@ -927,6 +906,7 @@ docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB
 # Run this AFTER the restore, never before.
 source .venv/bin/activate && alembic upgrade head
 
+# (Linux: sudo systemctl start assetmgt-app)
 launchctl load ~/Library/LaunchAgents/com.assetmgt.app.plist
 curl -s http://127.0.0.1:8000/health; echo
 ```
@@ -947,7 +927,7 @@ above, not this.)
 verified fact and not a hope:**
 
 ```bash
-ssh mini && cd ~/claudecode/assetmgt
+ssh mint && cd ~/claudecode/assetmgt
 
 export AWS_ACCESS_KEY_ID=$(grep -m1 '^BACKUP_AWS_ACCESS_KEY_ID=' .env | cut -d= -f2-)
 export AWS_SECRET_ACCESS_KEY=$(grep -m1 '^BACKUP_AWS_SECRET_ACCESS_KEY=' .env | cut -d= -f2-)
@@ -1013,9 +993,9 @@ tracked file.)
 ## Installing on Linux (the oldMacBook)
 
 Since 2026-09-12 the always-on host is `mint`, a 2014 MacBook Pro running
-Linux Mint 22 (called "oldMacBook" in conversation), not the Mac mini. The
-app is the same; what differs is the host plumbing, and this section is the
-Linux counterpart of "Installing on a new Mac" below. The runbook there
+Linux Mint 22 (called "oldMacBook" in conversation); it replaced a Mac host.
+The app is the same; what differs is the host plumbing, and this section is
+the Linux counterpart of "Installing on a new Mac" below. The runbook there
 still applies to a Mac.
 
 What is different on Linux, all of it already in the repo:
@@ -1035,7 +1015,7 @@ What is different on Linux, all of it already in the repo:
   `~/.certbot`. `scripts/certbot-deploy-hook.sh` (certbot's `--deploy-hook`
   on both OSes) copies the renewed pair to `/etc/caddy/certs/<name>/` as
   `root:caddy 0640` and reloads Caddy; `/etc/caddy/Caddyfile` points there.
-  The certbot account and certificate were moved from the Mini as files
+  The certbot account and certificate were moved from the previous Mac host as files
   (`~/.certbot`, with the old `/Users/<user>` paths in its renewal config rewritten to the new home), so no
   re-issuance was paid for.
 - **Hardware discovery:** `discovery/local_host.py` reads DMI under
@@ -1264,7 +1244,7 @@ cat backups/last-success     # should be a timestamp from moments ago
   nightly job will do tonight) writes a new version rather than colliding
   with the Object-Locked object already sitting at that key -- nothing to
   worry about there.
-- Last, re-point your dev machine's `mini` SSH alias at this new host (or set
+- Last, re-point your dev machine's deploy SSH alias at this new host (or set
   `DEPLOY_HOST`), then confirm `./scripts/redeploy.sh` runs clean end to end.
 
 **What this doesn't bring back:** `.env` (covered above), plus host-side state
@@ -1600,7 +1580,7 @@ Every API call the assistant makes logs its token usage at INFO, so cost is
 visible rather than guesswork:
 
 ```bash
-ssh mini "grep 'app.assistant' ~/claudecode/assetmgt/logs/app.log"
+ssh mint "grep 'app.assistant' ~/claudecode/assetmgt/logs/app.log"
 ```
 
 ```

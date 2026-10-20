@@ -43,7 +43,7 @@ dependency out of the lock entirely, and installing on CI's x86_64 Linux
 runner then failed `--require-hashes` outright. `uv`'s `--universal` mode
 keeps every platform's resolution branch and hashes it, so the same
 lockfile installs correctly on the dev Mac, CI's Linux runners, and the
-deployed Mini alike.
+deployed host alike.
 
 Commit the `.in` and the regenerated `.txt` together. Dependabot recognises
 a `uv`-generated lock and bumps it in its own PRs, producing a hash-locked
@@ -63,7 +63,7 @@ guarantee the lock exists to provide. It has happened on every pip PR so
 far -- #16-19, then #21 -- so treat it as certain, not occasional.
 
 **Restoring that coverage is automated; it needs nothing from you.** A
-scheduled job on the Mini merges Dependabot's PRs once their checks are
+scheduled job on the always-on host merges Dependabot's PRs once their checks are
 green and pushes the regeneration itself, as the
 `Restore --universal coverage ...` commits in the log. It re-runs exactly
 the command above, and refuses to push a result that moves a version pin,

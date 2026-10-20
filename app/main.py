@@ -108,7 +108,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # through a TLS proxy (see README's "Reaching it over HTTPS"), so the Host
 # header is whatever name that proxy serves -- list it in APP_ALLOWED_HOSTS.
 # localhost/127.0.0.1 are always allowed: scripts/redeploy.sh and
-# mini-brew-upgrade.sh curl /health that way, and so does local development.
+# brew-upgrade.sh curl /health that way, and so does local development.
 # Anything else gets a 400 before any route runs, which closes the usual
 # Host-header tricks (password-reset-style link poisoning doesn't apply here,
 # but DNS rebinding and cache-key confusion do). require_same_origin

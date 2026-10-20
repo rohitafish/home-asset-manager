@@ -110,13 +110,13 @@ _diagnose() {
 # would then be *rejected* -- turning a succeeded upload into a hard failure.
 # Checking first turns that case into the success it actually was.
 # Relative dates are the one thing BSD and GNU `date` genuinely disagree about,
-# and this script has now run under both: macOS on the Mini, GNU coreutils on
-# mint. GNU form first because that is where it runs today; the BSD form is the
-# fallback so the Mini stays a usable rollback host.
+# and this script has now run under both: macOS on a Mac host, GNU coreutils
+# on mint. GNU form first because that is where it runs today; the BSD form is
+# the fallback so a Mac stays a supported host.
 #
 # Not a theoretical portability nicety. This was `date -u -v+30d`, correct on
 # macOS and correct when written -- the comment beside it even said "this only
-# ever runs on the Mini". After the 2026-09-12 cutover GNU date rejected `-v`,
+# ever runs on the Mac". After the 2026-09-12 move to Linux GNU date rejected `-v`,
 # the retain-until date came out EMPTY, and S3 refused the upload with a 403
 # that read like a credentials problem. Two nights of off-site backups were lost
 # before anyone looked at the line above the 403 in backup.error.log.

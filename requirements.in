@@ -2,7 +2,7 @@
 # requirements.txt is GENERATED from it -- with `uv pip compile --universal`,
 # not bare pip-compile -- and carries every transitive dependency with sha256
 # hashes for every platform, so `pip install --require-hashes -r
-# requirements.txt` (what scripts/redeploy.sh runs on the Mini on every
+# requirements.txt` (what scripts/redeploy.sh runs on the host on every
 # deploy, and what CI runs) installs exactly the bytes that were tested --
 # not whatever a floor, an unpinned transitive, or a tampered release would
 # resolve to that day. --universal matters: a plain `pip-compile` (pip-tools)

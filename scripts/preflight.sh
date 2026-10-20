@@ -117,9 +117,9 @@ echo
 echo "== Tests =="
 # Dev-only tooling (requirements-dev.txt) -- scripts/redeploy.sh only
 # installs requirements.txt, so a *fresh* checkout anywhere can legitimately
-# lack pytest; a missing pytest is a WARN, not a FAIL, for that reason. The
-# Mini's venv has it installed by hand today, so this does run there -- and
-# a failing suite is a FAIL regardless of which host this runs on.
+# lack pytest; a missing pytest is a WARN, not a FAIL, for that reason. Where
+# it is installed, a failing suite is a FAIL regardless of which host this
+# runs on.
 #
 # Run under `coverage`, not a bare pytest, when coverage is installed --
 # same reasoning as scripts/hooks/pre-push: CI enforces .coveragerc's
@@ -216,7 +216,7 @@ if [ -f "$REPO_DIR/.env" ]; then
   # "missing" when OpenRouter is the configured provider is a false alarm.
   # LOG_LEVEL is likewise excluded: it has a code-level default (INFO, see
   # app/logging_config.py) and is genuinely optional, so an existing .env
-  # that predates it -- including the Mini's, which isn't rsynced -- shouldn't
+  # that predates it -- including the host's, which isn't rsynced -- shouldn't
   # be flagged. AI_DAILY_BUDGET_USD/AI_MONTHLY_BUDGET_USD/
   # CVE_ENRICH_MAX_KEYWORDS are the same shape (code-level defaults in
   # app/assistant.py / discovery/cve_enrich.py, added after this file's
@@ -362,7 +362,7 @@ echo
 echo "== Privilege boundaries =="
 # The app runs as an ordinary user and must stay that way. Anything that lets
 # a process running as that user become root turns "someone got into the
-# web app" into "someone owns the Mini", so the known ways are checked here
+# web app" into "someone owns the host", so the known ways are checked here
 # by name. A NOPASSWD sudoers rule for a Homebrew nmap is one: on Apple
 # silicon /opt/homebrew/bin and the binary itself are user-owned, so the rule
 # amounts to "run anything as root". See README's "Nmap privileges".
@@ -376,12 +376,12 @@ fi
 # The UPS LaunchDaemon runs as root every 60s. It must execute a root-owned
 # copy of scripts/ups-shutdown.sh (not the one in this user-writable
 # checkout) with a PATH that never searches a user-owned directory. See
-# README's "Running the Mini headless".
+# README's "Running a Mac host headless".
 UPSMONITOR_PLIST="/Library/LaunchDaemons/com.assetmgt.upsmonitor.plist"
 UPS_INSTALLED_SCRIPT="/usr/local/libexec/assetmgt/ups-shutdown.sh"
 if [ -f "$UPSMONITOR_PLIST" ]; then
   if grep -q '__ASSETMGT_DIR__' "$UPSMONITOR_PLIST" || grep -q "$REPO_DIR/scripts/ups-shutdown.sh" "$UPSMONITOR_PLIST"; then
-    fail "$UPSMONITOR_PLIST runs the script out of this checkout -- root executing a user-writable file. Re-install from the current template (README, \"Running the Mini headless\"): it must point at $UPS_INSTALLED_SCRIPT"
+    fail "$UPSMONITOR_PLIST runs the script out of this checkout -- root executing a user-writable file. Re-install from the current template (README, \"Running a Mac host headless\"): it must point at $UPS_INSTALLED_SCRIPT"
   elif ! grep -q "$UPS_INSTALLED_SCRIPT" "$UPSMONITOR_PLIST"; then
     warn "$UPSMONITOR_PLIST does not point at $UPS_INSTALLED_SCRIPT -- an unexpected ProgramArguments; compare it with scripts/com.assetmgt.upsmonitor.plist"
   else
@@ -434,8 +434,8 @@ else
 echo "== Headless / UPS posture =="
 # These settings have no other visible symptom when they silently regress --
 # unlike a crashed process, a dead UPS battery or a disabled Screen Sharing
-# daemon looks identical to a working one right up until the Mini reboots
-# and there's no way back in. See README's "Running the Mini headless" and
+# daemon looks identical to a working one right up until the host reboots
+# and there's no way back in. See README's "Running a Mac host headless" and
 # "Power outages and unattended restart".
 if [ -f "$UPSMONITOR_PLIST" ]; then
   ok "com.assetmgt.upsmonitor is installed (its privilege posture is checked under \"Privilege boundaries\" above)"
@@ -445,14 +445,14 @@ if [ -f "$UPSMONITOR_PLIST" ]; then
     warn "com.assetmgt.upsmonitor.plist is present but not loaded -- sudo launchctl load $UPSMONITOR_PLIST"
   fi
 else
-  warn "com.assetmgt.upsmonitor is not installed ($UPSMONITOR_PLIST not found) -- see README's \"Running the Mini headless\""
+  warn "com.assetmgt.upsmonitor is not installed ($UPSMONITOR_PLIST not found) -- see README's \"Running a Mac host headless\""
 fi
 
 if command -v system_profiler >/dev/null 2>&1; then
   if system_profiler SPPowerDataType 2>/dev/null | grep -q 'UPS Installed:[[:space:]]*Yes'; then
     ok "a UPS is visible to the system"
   else
-    warn "no UPS attached (system_profiler SPPowerDataType reports 'UPS Installed: No') -- expected on both a dev laptop and the deployed Mini: this deployment has no UPS (pricing one found every suitable model out of stock/marked up, see README's \"Power outages and unattended restart\"), so a Powerwall Gateway cutover still browns out the Mini and the spare keyboard/monitor kept on-site is the accepted recovery path"
+    warn "no UPS attached (system_profiler SPPowerDataType reports 'UPS Installed: No') -- a UPS is optional; without one, a power blip lands the host at the FileVault pre-boot screen and needs a keyboard/monitor to recover (see README's \"Power outages and unattended restart\")"
   fi
 fi
 
@@ -470,7 +470,7 @@ if command -v pmset >/dev/null 2>&1; then
     if echo "$PG_SETTINGS" | grep -qE 'autorestart[[:space:]]+1'; then
       ok "autorestart is enabled (pmset -g)"
     else
-      fail "autorestart is present but disabled -- sudo pmset -a autorestart 1, or the Mini won't power back on after a real outage at all"
+      fail "autorestart is present but disabled -- sudo pmset -a autorestart 1, or the host won't power back on after a real outage at all"
     fi
   else
     warn "autorestart is not a supported pmset setting on this machine (expected on a laptop) -- skipping"
@@ -479,20 +479,20 @@ if command -v pmset >/dev/null 2>&1; then
   if echo "$PG_SETTINGS" | grep -qE 'sleep[[:space:]]+0'; then
     ok "sleep is disabled"
   else
-    warn "sleep is not disabled (expected on a dev laptop) -- on the deployed instance: sudo pmset -a sleep 0, disksleep 0, or the Mini can go to sleep and stop answering health checks"
+    warn "sleep is not disabled (expected on a dev laptop) -- on the deployed instance: sudo pmset -a sleep 0, disksleep 0, or the host can go to sleep and stop answering health checks"
   fi
 
   if echo "$PG_SETTINGS" | grep -q 'haltlevel'; then
     ok "pmset -u haltlevel backstop is set"
   else
-    warn "no pmset -u haltlevel/haltremain backstop is set -- see README's \"Running the Mini headless\". com.assetmgt.upsmonitor is the primary graceful-shutdown path; this is only the OS-native fallback if that script fails outright"
+    warn "no pmset -u haltlevel/haltremain backstop is set -- see README's \"Running a Mac host headless\". com.assetmgt.upsmonitor is the primary graceful-shutdown path; this is only the OS-native fallback if that script fails outright"
   fi
 else
   warn "pmset not found -- skipping power settings checks (expected off-Mac)"
 fi
 
 if command -v launchctl >/dev/null 2>&1 && launchctl print system/com.apple.screensharing >/dev/null 2>&1; then
-  ok "Screen Sharing is loaded -- the Mini is administrable with no display attached"
+  ok "Screen Sharing is loaded -- the host is administrable with no display attached"
 else
   warn "Screen Sharing is not loaded -- with no display attached there is no way to reach the login window after a remote reboot (fdesetup authrestart). Enable it in System Settings > General > Sharing before removing the monitor"
 fi

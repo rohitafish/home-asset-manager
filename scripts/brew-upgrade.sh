@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Safe `brew upgrade` for the Mini -- the machine running the live app.
+# Safe `brew upgrade` for a Mac host -- the machine running the live app.
 #
 # Why this exists: a bare `brew upgrade` here once broke the app while it
 # kept running. `python@3.12` got upgraded (3.12.13_4 -> 3.12.14) and
@@ -44,11 +44,11 @@ APP_PLIST="$HOME/Library/LaunchAgents/$APP_LABEL.plist"
 echo "==> Pre-flight checks"
 # This script stops/restarts the live app service, so it only makes sense on
 # the machine that runs it. Mirror image of redeploy.sh's refusal to run ON
-# the Mini -- here the guard is the opposite direction.
+# the host -- here the guard is the opposite direction.
 if [ ! -f "$APP_PLIST" ]; then
   echo "!!! $APP_PLIST not found." >&2
   echo "!!! This upgrades the machine running the live service -- run it on" >&2
-  echo "!!! the Mini (ssh mini), not from a dev checkout." >&2
+  echo "!!! the Mac host itself (over ssh), not from a dev checkout." >&2
   exit 1
 fi
 
@@ -99,7 +99,7 @@ bootstrap_app() {
   local i err
   # mktemp, not a fixed /tmp name: a predictable path in a shared directory
   # is a symlink target for any other account on the machine.
-  err="$(mktemp -t mini-brew-upgrade-bootstrap)"
+  err="$(mktemp -t brew-upgrade-bootstrap)"
   for i in 1 2 3 4 5; do
     if launchctl bootstrap "gui/$(id -u)" "$APP_PLIST" 2>"$err"; then
       rm -f "$err"

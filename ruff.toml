@@ -6,7 +6,7 @@
 # committed to the repo -- the same class of problem as the machine-wide PII
 # guardrail (see AGENTS.md's "PII / privacy"): it'll silently change again on
 # the next ruff upgrade unless it's pinned here.
-target-version = "py312"  # floor across both hosts -- the Mini runs 3.12, dev runs 3.14
+target-version = "py312"  # floor across both hosts -- the host runs 3.12, dev runs 3.14
 
 # alembic-generated, not hand-maintained -- linting migrations for style
 # fights the tool that wrote them, not a human.

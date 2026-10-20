@@ -8,14 +8,13 @@ assistant or human contributor.
   runs on a separate always-on host on the same LAN. **Since 2026-09-12 that
   host is `mint`** (SSH alias; a 2014 MacBook Pro on Linux Mint 22, "the
   oldMacBook"), running the app under systemd -- see README's "Installing on
-  Linux". Before that it was the Mac mini (`mini`, launchd); the Mac path
-  is kept working and documented because the mini remains the rollback.
-  Much of the prose below still says "the Mini" for that history; read it
-  as "the always-on host" unless it is about launchd, Colima or FileVault,
-  which are Mac-only.
+  Linux". It replaced a Mac host on 2026-09-12. The macOS path (launchd,
+  Colima) stays supported and documented for anyone running this on a Mac;
+  bullets about launchd, Colima, FileVault or Homebrew apply only to a Mac
+  host.
 - Code is synced to that machine via `ssh mint` (an SSH config alias — set
   this up yourself pointing at your own always-on host; see README).
-  `DEPLOY_HOST=mini` targets the old host.
+  `DEPLOY_HOST=<alias>` targets a different host.
 - **A fix committed/tested locally is NOT live until it's deployed to `mint`.**
   Always deploy with `./scripts/redeploy.sh` from this repo's root — do not
   reinvent the deployment steps manually. It rsyncs the code (excluding
@@ -29,13 +28,13 @@ assistant or human contributor.
   on the host (Linux), or the cp/sed/launchctl-load step (Mac).
 - Standard workflow for any change: edit code locally → verify in the local
   preview server (`assetmgt-web` launch config) → run `./scripts/redeploy.sh`
-  → spot-check the change against real data on the Mini over `ssh mini`.
-- **Previewing on the Mini directly** (e.g. to reproduce something against the
+  → spot-check the change against real data on the host over `ssh mint`.
+- **Previewing on the host directly** (e.g. to reproduce something against the
   real data): the `assetmgt-web` launch config is dev-machine-only
   (`.claude/` is gitignored and never rsynced), and its port 8000 is already
   held by the live service there. Start a second copy by hand on another port:
   ```bash
-  ssh mini
+  ssh mint
   cd ~/claudecode/assetmgt && source .venv/bin/activate
   uvicorn app.main:app --host 127.0.0.1 --port 8001 --reload
   ```
@@ -43,29 +42,28 @@ assistant or human contributor.
   the live Postgres — and `--reload` re-executes on every save, including
   half-finished edits. Use it to spot-check read-only paths; anything that
   writes data belongs on the dev machine against its own DB. (A properly
-  isolated preview DB on the Mini would fix this at the root but doesn't exist
+  isolated preview DB on the host would fix this at the root but doesn't exist
   yet — it's a possible follow-up, not something in place today.)
 - `redeploy.sh` rsyncs code and reruns migrations, but it does **not**
   install/reload launchd plists (`scripts/*.plist`) -- a plist change (new
   agent, or edits to an existing one) needs a manual `cp`/`sed`/`launchctl
-  load` on the Mini, per the README's launchd setup section.
+  load` on a Mac host, per the README's launchd setup section.
   `com.assetmgt.upsmonitor.plist` is the one exception to "`~/Library/
   LaunchAgents`" in that sentence -- it's a LaunchDaemon and installs to
-  `/Library/LaunchDaemons` with `sudo`, see README's "Running the Mini
-  headless". It runs as root, so it executes a root-owned copy of
+  `/Library/LaunchDaemons` with `sudo`, see README's "Running a Mac
+  host headless". It runs as root, so it executes a root-owned copy of
   `scripts/ups-shutdown.sh` under `/usr/local/libexec/assetmgt/` (no
   `__ASSETMGT_DIR__` sed step for this one); an edit to that script needs
-  the `sudo install` line from the README re-run on the Mini, or the daemon
+  the `sudo install` line from the README re-run on the host, or the daemon
   keeps running the old copy.
-- The Mini runs headless (no display or keyboard attached) with FileVault
+- A headless Mac host (no display or keyboard attached) runs with FileVault
   **on** and auto-login **off** -- deliberately, and don't propose disabling
   either. `~/Library/LaunchAgents` (the app, Colima, backups) lives on the
   encrypted Data volume, so a cold boot needs a human at the pre-boot unlock
   screen before any of it starts -- there is no way to do that unlock over
-  the network, on macOS or otherwise. The machine also holds a signed-in
-  iCloud session, two GitHub deploy keys, `~/.aws/credentials`, and `.env`'s
-  `APP_ADMIN_PASSWORD`/backup AWS keys, so turning FileVault off to route
-  around this would trade a rare physical trip for a stolen Mini being a
+  the network on macOS. The machine also holds a GitHub deploy key and
+  `.env`'s `APP_ADMIN_PASSWORD`/backup AWS keys, so turning FileVault off to
+  route around this would trade a rare physical trip for a stolen host being a
   live, fully-provisioned session instead of a brick -- not a good trade for
   a private-home deployment. (Auto-login would also write the login password
   to `/etc/kcpassword` under trivially-reversible obfuscation, readable from
@@ -74,33 +72,18 @@ assistant or human contributor.
   app" is `com.assetmgt.upsmonitor` (below): it has to run with nobody logged
   in and needs `shutdown` directly, but it never touches the encrypted volume
   or FileVault state, so it doesn't reopen this trade-off.
-- **What actually caused the Mini's outages turned out not to be power loss
-  at all.** The house runs on a Tesla Powerwall 3, which already rides out
-  real outages for hours -- but the Powerwall Gateway takes on the order of a
-  few hundred milliseconds to detect grid loss and switch over, and the
-  Mini's internal PSU only holds up for a few milliseconds on its own. It was
-  browning out in that cutover gap, which also explains why it "sometimes
-  stayed up": survival came down to how long that particular cutover took.
-  The correct fix is a small UPS sized only to bridge that gap (not for
-  extended runtime, since the Powerwall already covers that) -- but pricing
-  it on Amazon UK in Aug 2026 found every pure-sine, macOS-compatible model
-  either out of stock or marked up 2-3x normal (~£300-500 for a unit that's
-  normally ~£150-180), which isn't worth it for a sub-second glitch. **The
-  accepted mitigation instead is a spare keyboard and monitor kept where the
-  Mini physically lives** (a cellar) -- a cutover-induced reboot still lands
-  at the FileVault pre-boot screen exactly as before, and someone has to walk
-  over and unlock it there. This is a real, ongoing cost of running headless
-  without a UPS, not a rare edge case -- revisit buying one if prices settle
-  or the frequency becomes annoying (see README's "Power outages and
+- **A Mac mini's internal PSU holds up for only milliseconds.** Even a home
+  battery's sub-second grid-loss cutover can brown it out and land it at the
+  FileVault pre-boot screen, where someone has to unlock it in person. A
+  small UPS sized only to bridge that gap fixes it; without one, keep a
+  keyboard and monitor near the machine (see README's "Power outages and
   unattended restart"). `com.assetmgt.upsmonitor.plist` +
-  `scripts/ups-shutdown.sh` are built, tested, and left in the repo for if
-  that happens, but **are not installed on the Mini** -- there's no UPS for
-  them to monitor. If one is ever added, the monitor shuts the Mini down
-  gracefully (including `colima stop`, see below) before it just dies,
-  rather than letting `pmset -u haltlevel`'s OS-native emergency halt do it
-  abruptly.
+  `scripts/ups-shutdown.sh` are built and tested for when a UPS is attached:
+  the monitor shuts the host down gracefully (including `colima stop`, see
+  below) before the battery dies, rather than letting `pmset -u haltlevel`'s
+  OS-native emergency halt do it abruptly.
 - For any reboot you *can* get ahead of remotely (OS upgrades,
-  `mini-brew-upgrade.sh`, general maintenance): `sudo fdesetup authrestart`
+  `brew-upgrade.sh`, general maintenance): `sudo fdesetup authrestart`
   over SSH prompts for the FileVault password once, stores the unlock key for
   exactly that one boot, and reboots straight past the pre-boot screen to the
   macOS login window -- reachable headless via Screen Sharing (see README).
@@ -117,20 +100,20 @@ assistant or human contributor.
   `vz driver is running but host agent is not` / `exit status 1` (see
   `/opt/homebrew/var/log/colima.log`), and `KeepAlive` just retries onto the
   same stale state forever. Symptom: the app is unreachable and
-  `ssh mini 'curl -s http://127.0.0.1:8000/health'` fails with curl exit 7,
+  `ssh <host> 'curl -s http://127.0.0.1:8000/health'` fails with curl exit 7,
   while `logs/app.error.log` shows psycopg `port 5432 ... Connection refused`.
-  Recovery is a manual clean restart on the Mini: `colima start`, confirm
+  Recovery is a manual clean restart on the host: `colima start`, confirm
   `docker ps` shows `assetmgt-db-1` up on `127.0.0.1:5432`, then
   `launchctl kickstart -k gui/$(id -u)/com.assetmgt.app` and re-check
   `/health`. This is left as a manual runbook, not automated -- a shutdown
   hook to `colima stop` gracefully is unreliable during OS upgrades, and
   auto-recovery here isn't worth the moving parts.
-- **When *you* initiate a Mini reboot/shutdown (not a forced OS upgrade), stop
+- **When *you* initiate a Mac host reboot/shutdown (not a forced OS upgrade), stop
   Colima yourself first so the VM tears down cleanly and can't leave the stale
   state above.** A normal macOS shutdown ( -> Shut Down, or `sudo shutdown
   -r now`) is already graceful, but it only gives each process a few seconds
   after `SIGTERM` before `SIGKILL`, and the lima/vz guest often needs longer.
-  So before rebooting: `ssh mini 'eval "$(/opt/homebrew/bin/brew shellenv)";
+  So before rebooting: `ssh <host> 'eval "$(/opt/homebrew/bin/brew shellenv)";
   colima stop'` (waits for a clean guest teardown, no time limit), optionally
   `launchctl bootout gui/$(id -u)/com.assetmgt.app` so the app isn't
   crash-looping against a vanishing DB (it autostarts on next boot), then
@@ -138,8 +121,8 @@ assistant or human contributor.
   rather than a plain `shutdown -r now`, so the pre-boot screen never comes
   up. This is the safe path; the manual recovery above is only for reboots
   you couldn't get ahead of.
-- **Never run a bare `brew upgrade` on the Mini -- use
-  `./scripts/mini-brew-upgrade.sh`.** A manual one briefly broke the live
+- **Never run a bare `brew upgrade` on a Mac host -- use
+  `./scripts/brew-upgrade.sh`.** A manual one briefly broke the live
   app: `python@3.12` was upgraded (3.12.13_4 -> 3.12.14) while `uvicorn` was
   still running, and Homebrew's cleanup deleted the old Cellar directory out
   from under it. Jinja2 compiles templates lazily, on first render, so the
@@ -150,16 +133,15 @@ assistant or human contributor.
   `logs/app.error.log`). It self-healed at the next restart -- exactly the
   "briefly broke" shape. The fix isn't "upgrade less" or "pin more
   formulae"; it's never leaving the app running across an upgrade.
-  `mini-brew-upgrade.sh` stops the app (`launchctl bootout`, with an `EXIT`
+  `brew-upgrade.sh` stops the app (`launchctl bootout`, with an `EXIT`
   trap so it always comes back even on failure), upgrades with
   `HOMEBREW_NO_INSTALL_CLEANUP=1` (so nothing gets deleted mid-upgrade),
   restarts, then runs `./scripts/preflight.sh` to verify -- not just a bare
   `/health` check, since preflight also re-imports the venv's dependencies,
   which is what would actually catch a broken interpreter. `colima` is the
-  only pinned formula (`brew pin colima`, on both the Mini and the dev
-  machine -- the dev machine also auto-upgrades everything else daily via a
-  local, untracked `domt4/autoupdate` launchd job; the Mini stays on
-  deliberate, manual upgrades through this script); `python@3.x` is
+  only pinned formula (`brew pin colima`; a dev machine may auto-upgrade
+  everything else, but the host stays on deliberate, manual upgrades
+  through this script); `python@3.x` is
   deliberately **not** pinned, since that would just forfeit interpreter
   security patches while postponing this same failure mode to whenever it's
   eventually unpinned -- the restart discipline above is the actual fix.
@@ -171,13 +153,13 @@ assistant or human contributor.
   costs you patches for nothing. `colima`'s and `python@3.x`'s upgrade path is
   a rare, manual `brew upgrade` -- for `python@3.x` specifically, the real
   failure mode (a running process losing files mid-upgrade) is what
-  `mini-brew-upgrade.sh` fixes directly, so pinning the version would be
+  `brew-upgrade.sh` fixes directly, so pinning the version would be
   treating a symptom. `requirements.txt`'s upgrade path is `pip install -r
   requirements.txt` on **every deploy**, far more frequent and with no test
   gate of its own -- pinning it forces every version change through a
   reviewed Dependabot PR + CI run first, and Dependabot still delivers the
   patches either way, just on a reviewed path instead of an unattended one.
-- Post-reboot sluggishness on the Mini is **not** this app: measured, the app
+- Post-reboot sluggishness on a Mac host is **not** this app: measured, the app
   process runs ~0.1% CPU/mem and Colima's VM support processes ~0% CPU. What
   actually spikes after an unclean shutdown is macOS's own housekeeping
   (Spotlight reindex, a deferred Time Machine run, Chrome's login-item
@@ -189,13 +171,13 @@ assistant or human contributor.
   Both are load-bearing, neither is discoverable from the code, and both
   had to be set by hand (see the read-only API key note below). No literal
   addresses here, per "PII / privacy" -- read them off the console.
-  - **The Mini's LAN address is a DHCP reservation**, not a lease that
+  - **The host's LAN address is a DHCP reservation**, not a lease that
     merely happens to be sticky. Three separate things pin that address:
-    the `mini` ssh alias's `HostName`, the Route 53 A record, and the
+    the deploy ssh alias's `HostName`, the Route 53 A record, and the
     local DNS record below -- so a lease move breaks deploys and the
-    dashboard together. One trap when setting it: the client record
-    carried a *disabled* fixed IP belonging to the Mini's **other**
-    network (it has a second interface on a different VLAN). Enabling
+    dashboard together. One trap when setting it: a client record can
+    carry a *disabled* fixed IP belonging to a **different** network
+    (e.g. a second interface on another VLAN). Enabling
     "Use Fixed IP" without also correcting the address moves the wired
     interface off the LAN entirely. Set the address first, enable second.
   - **A local DNS record on that same client answers `assets.rohita.com`
@@ -211,7 +193,7 @@ assistant or human contributor.
   problem and not an endpoint quirk -- confirm it with
   `GET /proxy/network/api/s/<site>/self`. Both changes above are therefore
   UI-only. Don't widen this key to automate them: discovery only ever
-  reads, and the key lives in the Mini's `.env`. If write automation is
+  reads, and the key lives in the host's `.env`. If write automation is
   ever genuinely needed, create a separate full-admin key and keep it off
   the app host.
 - **A stored fixed IP outlives its own toggle, and the console hides it.**
@@ -233,7 +215,7 @@ assistant or human contributor.
   agrees with you has already been wrong once.
 - **TLS for `assets.rohita.com` comes from ACM's managed ACME endpoint, not
   Let's Encrypt.** `assets.rohita.com` is a public A record in Route 53
-  (`Z05906141QTVV2UUOL5D6`) pointing at the Mini's private LAN address --
+  (`Z05906141QTVV2UUOL5D6`) pointing at the host's private LAN address --
   nothing outside the LAN can actually reach it, since no port is forwarded,
   but the name still needs a publicly trusted cert for LAN browsers to accept
   it without a per-device CA install (see README's "Reaching it over HTTPS").
@@ -242,27 +224,27 @@ assistant or human contributor.
   pre-approved via a domain validation ACM auto-provisioned as a CNAME in the
   zone, so issuance uses `PRE_APPROVED` authorizations -- **no DNS-01
   challenge runs per issuance/renewal**, and no Route 53 write credentials
-  need to live on the Mini at all (an earlier `assetmgt-acme` IAM user,
+  need to live on the host at all (an earlier `assetmgt-acme` IAM user,
   created for a Let's Encrypt dns-01 approach, is superseded by this and
-  should be deleted once issuance is confirmed working). What the Mini does
+  should be deleted once issuance is confirmed working). What the host does
   need: an external-account-binding (EAB) key ID + HMAC key, tied to an IAM
   role (`assetmgt-acme-eab-role`) scoped to `acm:RequestCertificate` for
   `*.rohita.com` subdomains through ACME, and `acm:RevokeCertificate` for
   ACME-issued certificates only (two statements, because ACM supplies no
   domain key on revocation). Treat the EAB HMAC key like
   `APP_ADMIN_PASSWORD` -- it authorizes issuance for the whole pre-approved
-  scope, so it's generated and placed on the Mini directly, never through an
+  scope, so it's generated and placed on the host directly, never through an
   AI coding session (see "PII / privacy" for the general secrets-handling
-  rule). Certbot on the Mini requests against the endpoint's directory URL
+  rule). Certbot on the host requests against the endpoint's directory URL
   with `--eab-kid`/`--eab-hmac-key`; Caddy then serves the resulting
   `fullchain.pem`/`privkey.pem` directly (`scripts/Caddyfile.example`).
   Certificates are 45-day, so **`--issuance-timeout 120`** is required
   (issuance can take up to two minutes and most clients' default timeout is
-  shorter) and renewal needs to run roughly monthly --
-  `scripts/com.assetmgt.certrenew.plist` is a user LaunchAgent (not installed
-  by `redeploy.sh`; install it the same manual way as the other agents, per
-  the plist note above) running `certbot renew` with a `--deploy-hook` that
-  reloads Caddy. `rohita.com` has no CAA record; add one pinning Amazon
+  shorter) and renewal needs to run roughly monthly -- the
+  `assetmgt-certrenew` timer (Linux) or `scripts/com.assetmgt.certrenew.plist`
+  (Mac), neither installed by `redeploy.sh` (see above), runs `certbot renew`
+  with a `--deploy-hook` (`scripts/certbot-deploy-hook.sh`) that reloads
+  Caddy. `rohita.com` has no CAA record; add one pinning Amazon
   issuance (`0 issue "amazon.com"`) only *after* the first certificate is
   issued -- adding it first risks a `CAA_ERROR` on the domain validation.
 - **What issuance costs, and how not to overpay.** ACME certificates are
@@ -275,8 +257,8 @@ assistant or human contributor.
   - certbot's default (30 days) renews every 15 days -- **$24.33/yr**.
   - `renew_before_expiry = 10 days`, which is what's configured, renews
     every 35 days -- **$10.43/yr**, still tolerating a 10-day outage. The
-    Mini is not always up (power cuts, FileVault blocking unattended
-    restart), so that buffer is not theoretical.
+    host is not always up (power cuts, an encrypted disk waiting to be
+    unlocked after a restart), so that buffer is not theoretical.
   - The floor is $8.30/yr at a 1-day buffer. Chasing the last $2 trades
     real availability for pennies; don't.
 - **Never run `certbot renew --dry-run` against this endpoint.** ACM's ACME
@@ -317,7 +299,7 @@ assistant or human contributor.
     --acme-external-account-binding-arn <EAB ARN>`, which is re-runnable --
     so the secret is retrievable later and losing the terminal output does
     not mean recreating the binding. Retrieve and place it directly on the
-    Mini; never through an AI coding session.
+    host; never through an AI coding session.
 
 ## Authentication
 - `app/auth.py`'s `require_admin` is the only thing between a LAN device and
@@ -368,20 +350,20 @@ assistant or human contributor.
 - `LOG_LEVEL` (default `INFO`, code-level in `app/logging_config.py`) sets the
   root level for both the app and the discovery CLI. It's optional and
   excluded from `preflight.sh`'s `.env`-completeness check, so an existing
-  `.env` -- including the Mini's, which `redeploy.sh` doesn't rsync -- won't
+  `.env` -- including the host's, which `redeploy.sh` doesn't rsync -- won't
   be flagged for lacking it.
 
 ## Database backups
-- `scripts/backup-db.sh` runs nightly via a **third** LaunchAgent,
-  `com.assetmgt.backup`, dumping Postgres to S3 (see README's "Off-site
-  database backups"). Like the other two, `redeploy.sh` does **not**
-  install/reload plists — a change to `scripts/com.assetmgt.backup.plist`
-  needs a manual `launchctl unload` → overwrite → `launchctl load` on the
-  Mini (unload first if a previous version is already loaded — `load` alone
-  on an already-loaded label is a no-op).
+- `scripts/backup-db.sh` runs nightly via the `assetmgt-backup` timer
+  (Linux) or the `com.assetmgt.backup` LaunchAgent (Mac), dumping Postgres
+  to S3 (see README's "Off-site database backups"). `redeploy.sh` installs
+  neither: re-run `scripts/install-systemd-units.sh` on Linux; on a Mac a
+  change to `scripts/com.assetmgt.backup.plist` needs a manual `launchctl
+  unload` → overwrite → `launchctl load` (unload first if a previous version
+  is already loaded — `load` alone on an already-loaded label is a no-op).
 - **`backups/` is gitignored and excluded from `redeploy.sh`'s rsync,
   exactly like `logs/`.** `redeploy.sh` uses `rsync --delete`; without the
-  exclude, every deploy would wipe the Mini's local dump history and its
+  exclude, every deploy would wipe the host's local dump history and its
   `last-success` freshness marker. If you ever add another host-side state
   directory, give it the same two-line treatment (`.gitignore` +
   `redeploy.sh`'s exclude list) in the same commit that introduces it.
@@ -415,8 +397,8 @@ assistant or human contributor.
   `admin-sso` (or `schengen-iac-test`) profile: s3-user has none (no
   `iam:CreateUser`/`CreateAccessKey`/`PassRole`), per the TLS section
   above.
-- **Switched over 2026-09-07.** The Mini's `.env` now authenticates as
-  `assetmgt-backup`, verified live from the Mini rather than by simulation:
+- **Switched over 2026-09-07.** The host's `.env` now authenticates as
+  `assetmgt-backup`, verified live from the host rather than by simulation:
   `sts get-caller-identity` resolves to the user, `ListBucket` (the monthly
   check) and `GetObject` (the idempotency guard) both succeed, a
   `put-object` carrying `--object-lock-mode COMPLIANCE` lands an object
@@ -428,7 +410,7 @@ assistant or human contributor.
   `s3:GetObjectRetention` -- which `assetmgt-backup-s3` deliberately does
   not grant, since the script never reads retention. The lock is applied
   regardless. Debug retention from a broader profile (`admin-sso` on the
-  dev Mac), never from the Mini, or you will reasonably conclude Object
+  dev Mac), never from the host, or you will reasonably conclude Object
   Lock is broken when it is working fine.
 - **Testing a switchover the same day is largely a no-op.** If today's
   `daily/` object already exists, `backup-db.sh` hits the head-object
@@ -439,8 +421,8 @@ assistant or human contributor.
   uses. It is billed as an object nobody can delete for 30 days, so keep it
   small; the bucket's own lifecycle rule clears it.
 - **`s3-user`'s access key was rotated on 2026-09-07** (the old one dated
-  from 2021-11-23 and sat in the Mini's `.env` for years; IAM shows one
-  active key, created that day). The Mini no longer needs `~/.aws` at all,
+  from 2021-11-23 and sat in the previous host's `.env` for years; IAM shows
+  one active key, created that day). The host doesn't need `~/.aws` at all,
   since backups read `.env`. On the dev Mac `default` is now the
   admin-equivalent Schengen-IaC-Test key, not s3-user (see
   `~/claudecode/AWS guardrails/default-profile-to-schengen.sh`), so scripts
@@ -458,7 +440,7 @@ assistant or human contributor.
   rather than by an IAM policy — S3 refuses to delete or overwrite a locked
   object before its retention date regardless of what permissions the caller
   has, which is what makes the history survive even a fully compromised
-  Mini. This is why uploads use `aws s3api put-object --object-lock-mode
+  host. This is why uploads use `aws s3api put-object --object-lock-mode
   COMPLIANCE --object-lock-retain-until-date ...` rather than `aws s3 cp`,
   which doesn't expose Object Lock at all. **Object Lock can only be enabled
   at bucket *creation*** — it cannot be retrofitted onto an existing bucket,
@@ -515,9 +497,9 @@ assistant or human contributor.
   backups, certificate, renewal wiring, DNS -- and shares preflight's
   contract (no `set -e`, ok/WARN/FAIL, exit 1 on FAIL, never prints a
   secret). Unlike preflight it is **not** host-local: it runs from the dev
-  Mac and reaches the Mini over ssh in a single round trip, because the two
-  halves need different credentials (the Mini's `.env` for S3, the dev
-  Mac's profile for Route 53/IAM -- the Mini has no AWS credential of its
+  Mac and reaches the host over ssh in a single round trip, because the two
+  halves need different credentials (the host's `.env` for S3, the dev
+  Mac's profile for Route 53/IAM -- the host has no AWS credential of its
   own). Its reason for existing is the last TLS check: comparing the
   certificate Caddy *serves* against the one on disk. A renewal that
   succeeds while the `--deploy-hook` fails to reload Caddy leaves every
@@ -622,7 +604,7 @@ assistant or human contributor.
   the SQLite/`Numeric` note above and the "Dates and timestamps" section for
   the two known consequences — not an oversight to "fix" by pointing
   `tests/` at Postgres. A migration only actually runs for the first time
-  when `scripts/redeploy.sh` applies it to the Mini's live database.
+  when `scripts/redeploy.sh` applies it to the host's live database.
 - **Coverage is measured and gated, via `.coveragerc`** (`branch = True`;
   `source = app, discovery, probes`; `fail_under` set as a ratchet just
   below the measured total, not a target — raise it when the total moves
@@ -642,7 +624,7 @@ assistant or human contributor.
   the drift risk, but they only pin the ~13 direct packages -- the ~35
   transitives behind them (uvicorn's `[standard]` extras, anthropic's
   `httpx2`, ...) still floated, and were being installed unverified on the
-  Mini on every deploy. The costs that decision cited are gone or automated:
+  host on every deploy. The costs that decision cited are gone or automated:
   Dependabot regenerates a lock itself when it sees the `.in` files, and
   `--require-hashes` is a one-word change in `redeploy.sh`. See
   CONTRIBUTING.md's "Dependencies" for the regenerate command, and the
@@ -651,10 +633,8 @@ assistant or human contributor.
   also runs `pip-audit` against the lock on every push and weekly.
 - Dependencies are in `requirements-dev.txt`, not `requirements.txt` —
   `scripts/redeploy.sh` only installs the latter, so a *fresh* checkout
-  anywhere (including a from-scratch Mini rebuild) starts without pytest.
-  The Mini's current venv has it anyway, installed by hand rather than by
-  `redeploy.sh` — the suite is runnable on both machines today. One-time
-  setup on a checkout that lacks it: `pip install -r requirements-dev.txt`
+  anywhere (including the host) starts without pytest. One-time setup on a
+  checkout that lacks it: `pip install -r requirements-dev.txt`
   inside `.venv`.
 - Both `scripts/hooks/pre-push` and `scripts/preflight.sh` run the suite if
   `.venv/bin/pytest` exists: pre-push blocks the push on a failing suite the
@@ -662,7 +642,7 @@ assistant or human contributor.
   alongside its other checks. In both, a *missing* pytest is a warning, not
   a failure — it's expected on any checkout that hasn't run the one-time
   setup above — but a suite that's installed and failing blocks the push,
-  including on the Mini, since it does have pytest installed.
+  on any checkout that has pytest installed.
 - **Both scripts also enforce the coverage floor, not just a bare pytest
   run**, when `.venv/bin/coverage` exists: `coverage run -m pytest -q` then
   `coverage report`, so a drop below `.coveragerc`'s `fail_under` blocks the
@@ -712,7 +692,7 @@ assistant or human contributor.
 - Commits are SSH-signed, scoped locally to this repo (not `--global`, so it
   doesn't affect other projects on this machine): `gpg.format=ssh`,
   `user.signingkey` points at a dedicated key
-  (`~/.ssh/id_ed25519_git_signing`, distinct from the `mini` access key —
+  (`~/.ssh/id_ed25519_git_signing`, distinct from the host access key —
   different purpose, kept separate so rotating one never touches the other),
   `commit.gpgsign=true`. This doesn't add friction for external contributors:
   branch protection requires every outside change to land via a squash-merged
@@ -770,14 +750,14 @@ assistant or human contributor.
   or an API gap; these two simply aren't offered outside a paid tier, and
   there's nothing further to do here short of paying for it.
 - Committing after a verified fix/feature (tested locally, deployed, spot-checked
-  on the Mini) is the norm for this project — no need to ask first. Pushing to
+  on the host) is the norm for this project — no need to ask first. Pushing to
   GitHub is different: only push when explicitly asked, never proactively just
   because a commit was made.
 - **Before any push, run `scripts/check-pii.sh` (or let the installed
   pre-push hook do it)** — see "PII / privacy" below. This is not optional
   diligence, it's a hard blocker: two real leaks already happened before
   this existed.
-- **The Mini also has its own git repo, as of 2026-08-02** (fetch-only) —
+- **The host also has its own git repo, as of 2026-08-02** (fetch-only) —
   before that, `~/claudecode/assetmgt` there was a plain directory kept in
   sync purely by `redeploy.sh`'s rsync, so an entire local-only Claude
   session's work once lived nowhere but that one unversioned checkout. It
@@ -788,39 +768,39 @@ assistant or human contributor.
   dev-machine credential, which would carry far more scope than a server
   needs. `redeploy.sh` still does the actual deploying via rsync, and
   right after commits the just-deployed working tree onto a local-only
-  `deployed` branch on the Mini (`git checkout -B deployed && git add -A &&
+  `deployed` branch on the host (`git checkout -B deployed && git add -A &&
   git commit --allow-empty`). It used to `git reset --mixed origin/main`
   instead, but that only tells the truth when the dev machine's `HEAD` equals
   `origin/main` *and* the deployed files match that commit — neither is
   guaranteed (unpushed local commits; a deploy of uncommitted work), and when
-  it's wrong the Mini reports a clean tree that doesn't match what's actually
+  it's wrong the host reports a clean tree that doesn't match what's actually
   running. Committing the real tree is truthful either way, and (because
   `add -A` respects `.gitignore`) leaves `.env`/`devices/`/`.pii-denylist`
-  untracked. This is what stops the Mini's checkout from silently going stale
+  untracked. This is what stops the host's checkout from silently going stale
   again like the pre-2026-08-02 plain-directory setup did: every redeploy now
-  keeps the Mini's git state truthful about what's actually running there, so
-  after a deploy a dirty `git status` on the Mini means a real, unexpected
-  edit made *on the Mini* — not routine deploy noise. `redeploy.sh` refuses to
-  proceed when it sees one (see "Editing on the Mini" below). See
+  keeps the host's git state truthful about what's actually running there, so
+  after a deploy a dirty `git status` on the host means a real, unexpected
+  edit made *on the host* — not routine deploy noise. `redeploy.sh` refuses to
+  proceed when it sees one (see "Editing on the host" below). See
   `redeploy.sh`'s `--exclude='.git'` comment for why the rsync and the git
   commit don't collide with each other.
-- **Editing on the Mini, and getting the work back.** Editing directly on the
-  Mini is fine — it's where the real data and the live service are, so it's the
-  natural place to debug against them. But the Mini's deploy key is
+- **Editing on the host, and getting the work back.** Editing directly on the
+  host is fine — it's where the real data and the live service are, so it's the
+  natural place to debug against them. But the host's deploy key is
   **read-only by design**, so it can commit locally but never push, and the
-  direction of truth stays MacBook → Mini: work becomes permanent only by
+  direction of truth stays dev machine → host: work becomes permanent only by
   carrying the diff back to a dev machine. `redeploy.sh` enforces this from the
-  dev-machine side — it **aborts before rsync if the Mini's tree is dirty**
+  dev-machine side — it **aborts before rsync if the host's tree is dirty**
   (rather than silently overwriting it with `--delete`) and tells you to
   back-port first:
   ```bash
-  ssh mini 'cd ~/claudecode/assetmgt && git diff' > /tmp/mini-fix.patch
-  git apply /tmp/mini-fix.patch      # on the dev machine (git apply -3 if it's moved on)
+  ssh mint 'cd ~/claudecode/assetmgt && git diff' > /tmp/host-fix.patch
+  git apply /tmp/host-fix.patch      # on the dev machine (git apply -3 if it's moved on)
   ```
   Then commit and push from the dev machine, where the pre-push hook runs, and
   redeploy. `ALLOW_DIRTY_DEPLOY=1 ./scripts/redeploy.sh` overrides the abort and
-  **discards** the Mini's edits — only reach for it when you're sure they're
-  disposable. `redeploy.sh` also refuses to run *on* the Mini itself (it
+  **discards** the host's edits — only reach for it when you're sure they're
+  disposable. `redeploy.sh` also refuses to run *on* the host itself (it
   compares `hostname -s` on both ends), since a self-deploy would rsync the
   repo onto itself.
 
@@ -907,7 +887,7 @@ assistant or human contributor.
   screenshots/PDFs from Amazon/Sonos and the transcribed `accounts.json`,
   which is nothing but real serials, room names and purchase dates. It's
   gitignored the same way `.env`/`.pii-denylist` are, but unlike those two,
-  `scripts/redeploy.sh` still rsyncs it to `mini` on purpose — the import
+  `scripts/redeploy.sh` still rsyncs it to the host on purpose — the import
   needs a copy of the data there. Add any serial you transcribe into it to
   `.pii-denylist` too, same as any other real value.
 - **Sonos serials are stored canonicalized** (uppercase, no separators —
@@ -974,7 +954,7 @@ assistant or human contributor.
   published in `.env.example`; and (c) a tracked `.env`/`.env.local`/
   `.env.*` file at all (i.e. someone ran `git add -f .env`). Rule (b) is
   machine-scoped: it only knows *this* box's `.env`, so a secret that lives
-  only on the Mini isn't a needle here — reconcile with
+  only on the host isn't a needle here — reconcile with
   `scripts/env-structure.sh` (below). Household *names* (`DEFAULT_OWNER`,
   `SECONDARY_OWNER_NAME`) are deliberately **not** auto-scanned — a first
   name collides with ordinary prose (the "chase" verb-vs-name problem that
@@ -985,14 +965,14 @@ assistant or human contributor.
   unsuppressable permanent WARN just trains people to ignore the check.
 - **`scripts/env-structure.sh`** replicates `.env` *structure* — key names,
   order, and `.env.example`'s comment blocks — across a dev machine, the
-  Mini, and the tracked template, **without ever moving a value** (values
+  host, and the tracked template, **without ever moving a value** (values
   are never read into the template, sent over ssh, or printed; the remote is
   queried for key *names* only and re-validated locally). Default is a
   three-way presence report; `--write-example` regenerates the template,
   preserving it byte-for-byte for keys it already documents and appending an
   empty `KEY=` + `TODO` for any new key, then refusing to write if a safety
   re-parse finds anything that isn't template-verbatim or a bare `KEY=`.
-  This is the supported way to notice and close Mini-vs-template drift, since
+  This is the supported way to notice and close host-vs-template drift, since
   `redeploy.sh` never syncs `.env`.
 - **`PII_IP_ALLOWLIST`** (in `scripts/check-pii.conf`, since the engine
   itself must stay repo-neutral — and must carry no such literal of its own,
