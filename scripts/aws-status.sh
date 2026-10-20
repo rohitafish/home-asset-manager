@@ -281,9 +281,11 @@ A_VALUE=""
 if [ "$ADMIN_OK" = 1 ] && [ -z "$ZONE_ID" ]; then
   # Exact-name, public-only match: list-hosted-zones-by-name returns zones
   # starting AT the name, not only that name, and a private zone of the same
-  # name would answer with LAN records.
+  # name would answer with LAN records. Compare PrivateZone to `false`
+  # explicitly: JMESPath binds `!` tighter than `.`, so `!Config.PrivateZone`
+  # is `(!Config).PrivateZone` -- always null, and the filter never matches.
   ZONE_ID="$(aws --profile "$PROFILE" route53 list-hosted-zones-by-name --dns-name "$ZONE_NAME" \
-    --query "HostedZones[?Name=='$ZONE_NAME.' && !Config.PrivateZone].Id | [0]" --output text 2>/dev/null)"
+    --query "HostedZones[?Name=='$ZONE_NAME.' && Config.PrivateZone==\`false\`].Id | [0]" --output text 2>/dev/null)"
   ZONE_ID="${ZONE_ID##*/}"
   [ "$ZONE_ID" = "None" ] && ZONE_ID=""
 fi
