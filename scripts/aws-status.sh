@@ -99,7 +99,9 @@ _cert_field() { printf '%s\n' "$CERTS" | awk -v d="$DOMAIN" -v pat="$1" \
 echo "CERT_EXPIRY=$(_cert_field 'Expiry Date:' | sed -E 's/.*Expiry Date: ([^(]*).*/\1/')"
 echo "CERT_DAYS=$(_cert_field 'VALID:' | sed -E 's/.*VALID: ([0-9]+) day.*/\1/')"
 echo "CERT_KEYTYPE=$(_cert_field 'Key Type:' | sed -E 's/.*Key Type: *//')"
-echo "RENEW_BEFORE=$(grep -m1 renew_before_expiry "$HOME/.certbot/config/renewal/$DOMAIN.conf" 2>/dev/null | sed -E 's/.*= *//')"
+# Anchored: certbot writes the default of this setting as a comment, and an
+# unanchored grep read "# renew_before_expiry = 30 days" as the live value.
+echo "RENEW_BEFORE=$(sed -nE '/^renew_before_expiry *=/{s/^renew_before_expiry *= *//;p;q;}' "$HOME/.certbot/config/renewal/$DOMAIN.conf" 2>/dev/null)"
 echo "CERT_FILE_ENDDATE=$(openssl x509 -in "$HOME/.certbot/config/live/$DOMAIN/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)"
 # The renewal scheduler and Caddy, by whichever service manager this host
 # has. RENEW_AGENT is 1/0; CADDY is "started" when running, else the raw
@@ -239,7 +241,8 @@ echo
 echo "== TLS certificate =="
 CERT_DAYS="$(_val CERT_DAYS)"
 RENEW_BEFORE="$(_val RENEW_BEFORE)"
-RENEW_DAYS="$(printf '%s' "$RENEW_BEFORE" | awk '{print $1}')"
+# Unset means certbot's built-in default, which is 30 days.
+RENEW_DAYS="$(printf '%s' "${RENEW_BEFORE:-30 days}" | awk '{print $1}')"
 if [ -z "$CERT_DAYS" ]; then
   fail "certbot reports no certificate for $DOMAIN"
 else
@@ -248,8 +251,17 @@ else
   elif [ -n "$RENEW_DAYS" ] && [ "$CERT_DAYS" -lt "$RENEW_DAYS" ]; then
     warn "certificate expires in $CERT_DAYS days, inside the ${RENEW_DAYS}-day renewal window -- the next daily tick should renew it"
   else
-    ok "certificate valid for $CERT_DAYS more days (renews with ${RENEW_DAYS:-?} to go, so in $(( CERT_DAYS - ${RENEW_DAYS:-0} )) days)"
+    ok "certificate valid for $CERT_DAYS more days (renews with ${RENEW_DAYS} to go, so in $(( CERT_DAYS - RENEW_DAYS )) days)"
   fi
+fi
+# Must match RENEW_BEFORE_EXPIRY in certbot-renew.sh, which resets it daily.
+# Every issuance is billed and certificates last 45 days, so the window sets
+# the cost: 30 days renews every 15 days, 10 days every 35.
+if [ "$RENEW_BEFORE" = "10 days" ]; then
+  ok "renewal window is 10 days (one billed issuance every 35 days)"
+else
+  RENEW_SHOWN="${RENEW_BEFORE:-unset, so the 30-day certbot default}"
+  fail "renewal window is '$RENEW_SHOWN', not 10 days -- each renewal is billed, so this renews every $(( 45 - RENEW_DAYS )) days instead of 35. certbot-renew.sh resets it on its next daily run; if this persists, that reset is failing (see logs/certrenew.error.log)"
 fi
 [ "$(_val CERT_KEYTYPE)" = "ECDSA" ] \
   && ok "key type is ECDSA (the endpoint allows EC_prime256v1 only)" \

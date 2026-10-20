@@ -257,12 +257,24 @@ assistant or human contributor.
   `45 - renew_before_expiry`, which makes that one setting the entire cost
   lever:
   - certbot's default (30 days) renews every 15 days -- **$24.33/yr**.
-  - `renew_before_expiry = 10 days`, which is what's configured, renews
+  - `renew_before_expiry = 10 days`, the chosen value, renews
     every 35 days -- **$10.43/yr**, still tolerating a 10-day outage. The
     host is not always up (power cuts, an encrypted disk waiting to be
     unlocked after a restart), so that buffer is not theoretical.
   - The floor is $8.30/yr at a 1-day buffer. Chasing the last $2 trades
     real availability for pennies; don't.
+  - **The value lives in certbot's renewal config, and certbot only ever
+    writes it there as a commented-out default.** It was missing from
+    2026-09-23 to 2026-10-20, so every renewal in that time ran at the
+    15-day rate. `scripts/aws-status.sh` didn't catch it, because it read the
+    comment as the setting. So `scripts/certbot-renew.sh` now sets
+    `RENEW_BEFORE_EXPIRY` before every run (warning in
+    `logs/certrenew.error.log` when it had to, and never blocking the
+    renewal), and `aws-status.sh` FAILs on any other value. Change the
+    window in both, and `tests/test_certbot_renew_script.py` checks they
+    agree. A per-service billing alarm on the account backs this up,
+    managed outside this repo: at 35 days a calendar month never holds
+    two issuances, so a second one in a month means the cadence has drifted.
 - **Never run `certbot renew --dry-run` against this endpoint.** ACM's ACME
   service has no staging equivalent, so `--dry-run` performs a real,
   billable issuance and then throws the result away. Verify the renewal
