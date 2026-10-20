@@ -31,10 +31,9 @@ KEEP_LOCAL="${BACKUP_KEEP_LOCAL:-7}"
 # Reads a single KEY=VALUE line out of .env without sourcing the whole file
 # -- sourcing would execute it as shell and export every unrelated secret in
 # it (UniFi, Anthropic, NVD, the admin password) into this process for no
-# reason. AWS credentials for the backup job are an existing, full-S3-access
-# IAM identity (s3-user), by deliberate choice -- see README/AGENTS.md for
-# why that's offset by S3 Object Lock further down rather than a
-# least-privilege IAM policy.
+# reason. AWS credentials for the backup job are a dedicated least-privilege
+# IAM user with no s3:DeleteObject, and S3 Object Lock further down is the
+# second layer -- see README/AGENTS.md's "Database backups".
 #
 # Deliberately always exits 0, even when the key isn't found: under
 # set -euo pipefail, `grep -m1 ... | cut ...` exits non-zero when grep finds
@@ -246,8 +245,9 @@ mv "$TMP" "$DEST"
 # `put-object` does (--object-lock-mode / --object-lock-retain-until-date).
 # S3 itself then refuses to delete or overwrite these objects before the
 # retain-until date, regardless of what IAM permissions the calling
-# credential has -- since s3-user has full S3 access, this (not an IAM
-# policy) is what actually protects backup history here. Output is
+# credential has -- so even a broader credential than the backup user's
+# could not destroy the backup history; IAM is the first layer, this is the
+# backstop. Output is
 # redirected to /dev/null since put-object prints a JSON response on
 # success, unlike `cp --only-show-errors`.
 #
@@ -277,7 +277,7 @@ _put_object_with_retries "daily/$NAME" "$RETAIN_UNTIL_DAILY"
 # support) can remove early. list-objects-v2 separates the two cases: exit 0
 # with `None` when the prefix is genuinely empty, non-zero on a real error.
 # That distinction became load-bearing with the move to the least-privilege
-# assetmgt-backup identity, which is the first credential that could
+# backup identity, which is the first credential that could
 # plausibly lack s3:ListBucket at all (see AGENTS.md).
 YEAR_MONTH="$(date -u +%Y-%m)"
 if ! MONTHLY_EXISTING="$(aws s3api list-objects-v2 \

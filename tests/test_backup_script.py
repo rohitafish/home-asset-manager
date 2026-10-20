@@ -9,7 +9,7 @@ repeats on every run for as long as the wrong answer persists.
 the prefix matched nothing and when the call actually failed (a denied
 ListBucket, a network error). Pairing that with a discarded stderr, as this
 script once did, turns every failure into "upload another one". The
-least-privilege assetmgt-backup identity made the denied-ListBucket case
+least-privilege backup identity made the denied-ListBucket case
 newly plausible -- it is the first credential this job has used that could
 lack the permission at all -- so the distinction is pinned here.
 """

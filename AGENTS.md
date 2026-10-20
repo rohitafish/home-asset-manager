@@ -214,21 +214,23 @@ assistant or human contributor.
   lease that comes back on the same address is proof, and a console that
   agrees with you has already been wrong once.
 - **TLS for `assets.rohita.com` comes from ACM's managed ACME endpoint, not
-  Let's Encrypt.** `assets.rohita.com` is a public A record in Route 53
-  (`Z05906141QTVV2UUOL5D6`) pointing at the host's private LAN address --
+  Let's Encrypt.** `assets.rohita.com` is a public A record in the domain's
+  Route 53 hosted zone, pointing at the host's private LAN address --
   nothing outside the LAN can actually reach it, since no port is forwarded,
   but the name still needs a publicly trusted cert for LAN browsers to accept
   it without a per-device CA install (see README's "Reaching it over HTTPS").
-  ACM's ACME endpoint (`arn:aws:acm:us-east-1:430443789074:acme-endpoint/
-  63638726-6c66-4f01-9430-0e5c9e5ce45d`) has `rohita.com` subdomains
-  pre-approved via a domain validation ACM auto-provisioned as a CNAME in the
-  zone, so issuance uses `PRE_APPROVED` authorizations -- **no DNS-01
-  challenge runs per issuance/renewal**, and no Route 53 write credentials
-  need to live on the host at all (an earlier `assetmgt-acme` IAM user,
-  created for a Let's Encrypt dns-01 approach, is superseded by this and
-  should be deleted once issuance is confirmed working). What the host does
-  need: an external-account-binding (EAB) key ID + HMAC key, tied to an IAM
-  role (`assetmgt-acme-eab-role`) scoped to `acm:RequestCertificate` for
+  ACM's ACME endpoint has `rohita.com` subdomains pre-approved via a domain
+  validation ACM auto-provisioned as a CNAME in the zone, so issuance uses
+  `PRE_APPROVED` authorizations -- **no DNS-01 challenge runs per
+  issuance/renewal**, and no Route 53 write credentials need to live on the
+  host at all (an earlier IAM user, created for a Let's Encrypt dns-01
+  approach, is superseded by this and should be deleted once issuance is
+  confirmed working). The endpoint's ARN and directory URL, like every other
+  AWS identifier for this deployment (account ID, ARNs, zone ID, IAM and
+  profile names), live in the private infrastructure repo, not here: this
+  repo is public. What the host does need: an external-account-binding
+  (EAB) key ID + HMAC key, tied to an IAM role scoped to
+  `acm:RequestCertificate` for
   `*.rohita.com` subdomains through ACME, and `acm:RevokeCertificate` for
   ACME-issued certificates only (two statements, because ACM supplies no
   domain key on revocation). Treat the EAB HMAC key like
@@ -273,26 +275,23 @@ assistant or human contributor.
 - **Adding more names later?** A second FQDN is another $1/renewal; a
   wildcard is $5. Break-even is five subdomains, so name them individually
   until then.
-- **Provisioning the EAB (already done, recorded here because the ARNs and
-  the profile gotcha are not discoverable from the code).** The binding is
-  `arn:aws:acm:us-east-1:430443789074:acme-endpoint/
-  63638726-6c66-4f01-9430-0e5c9e5ce45d/acme-external-account-binding/
-  bdcbf8e4-3e23-4c00-bcb5-90eccd30e316`, tied to IAM role
-  `assetmgt-acme-eab-role` (trust policy naming `acm-acme.amazonaws.com` as
-  principal -- ACM's ACME service assumes it via STS at issuance time, which
-  is why this has to be a *role*; an IAM user has no trust policy and cannot
-  be the target of `sts:AssumeRole`). Two things that cost time the first
-  time round:
-  - **Use an admin profile, not s3-user.** Creating the role needs IAM
-    write, and `create-acme-external-account-binding` needs `iam:PassRole`
-    on the role -- s3-user has neither and fails with
-    `AccessDeniedException`. Name the profile; don't rely on `default`.
-  - **Since 2026-09-12 the preferred admin profile is `admin-sso`** (IAM
-    Identity Center: MFA, 12-hour credentials, no static key; `aws sso login
-    --profile admin-sso` first). It can do everything `schengen-iac-test`
-    can. The static `schengen-iac-test` key is kept until the SSO path has
-    proved itself, then deleted. Details and the reasoning are in
-    `~/claudecode/AWS guardrails/GUARDRAILS-REVIEW.md`.
+- **Provisioning the EAB (already done, recorded here because the gotchas
+  are not discoverable from the code; the binding and role ARNs are in the
+  private infrastructure repo).** The binding is tied to an IAM role whose
+  trust policy names `acm-acme.amazonaws.com` as principal. ACM's ACME
+  service assumes it via STS at issuance time, which is why this has to be a
+  *role*: an IAM user has no trust policy and cannot be the target of
+  `sts:AssumeRole`. Things that cost time the first time round:
+  - **Use an admin profile, not the S3-only one.** Creating the role needs
+    IAM write, and `create-acme-external-account-binding` needs
+    `iam:PassRole` on the role -- a profile scoped to S3 has neither and
+    fails with `AccessDeniedException`. Name the profile; don't rely on
+    `default`.
+  - **Prefer the IAM Identity Center (SSO) admin profile** (MFA, 12-hour
+    credentials, no static key; `aws sso login --profile <admin profile>`
+    first). A static admin-equivalent key is kept permanently as a
+    break-glass fallback for when the SSO session has lapsed -- not the
+    everyday path, and always named explicitly when used.
   - **`create-acme-external-account-binding` returns only ARNs, not
     credentials.** The key ID and MAC key come from a separate call,
     `aws acm get-acme-external-account-binding-credentials
@@ -374,15 +373,15 @@ assistant or human contributor.
   `_env_var()` helper) rather than sourcing `.env`, specifically to avoid
   exporting every *other* secret in that file into the process for no
   reason.
-- **These AWS resources are managed outside this repo:** the backup
-  bucket, `assetmgt-backup` and its policy, the ACME role and the
-  `assets`/CAA DNS records. Don't change them by hand or with the AWS CLI.
-- **The backup identity is `assetmgt-backup`**, a dedicated IAM user
-  created 2026-09-06. Its inline policy (`assetmgt-backup-s3`) is tracked
-  as `scripts/assetmgt-backup-policy.json` carrying a `__BUCKET__`
-  placeholder substituted at apply time -- the bucket name is an `.env`
-  value and this repo is public, so the same pattern as the plists'
-  `__ASSETMGT_DIR__` applies. It grants exactly what the script calls:
+- **These AWS resources are managed outside this repo** (Terraform in the
+  private infrastructure repo): the backup bucket, the backup IAM user and
+  its policy, the ACME role and the `assets`/CAA DNS records. Don't change
+  them by hand or with the AWS CLI.
+- **The backup identity is a dedicated IAM user**, created 2026-09-06. Its
+  inline policy is tracked as `scripts/assetmgt-backup-policy.json` carrying
+  a `__BUCKET__` placeholder substituted at apply time -- the bucket name is
+  an `.env` value and this repo is public, so the same pattern as the
+  plists' `__ASSETMGT_DIR__` applies. It grants exactly what the script calls:
   `s3:ListBucket` on the bucket (the monthly-exists check), and
   `s3:PutObject` + `s3:PutObjectRetention` + `s3:GetObject` on `daily/*`
   and `monthly/*`. A put carrying Object Lock params needs **both** of the
@@ -393,12 +392,12 @@ assistant or human contributor.
   **There is deliberately no `s3:DeleteObject`** -- the script never
   deletes in S3, lifecycle does that server-side, so Object Lock is the
   backstop rather than the only thing standing between a leaked credential
-  and the backup history. Creating the user needs IAM write, i.e. the
-  `admin-sso` (or `schengen-iac-test`) profile: s3-user has none (no
+  and the backup history. Creating the user needs IAM write, i.e. an
+  admin profile: the S3-only profile has none (no
   `iam:CreateUser`/`CreateAccessKey`/`PassRole`), per the TLS section
   above.
 - **Switched over 2026-09-07.** The host's `.env` now authenticates as
-  `assetmgt-backup`, verified live from the host rather than by simulation:
+  the backup user, verified live from the host rather than by simulation:
   `sts get-caller-identity` resolves to the user, `ListBucket` (the monthly
   check) and `GetObject` (the idempotency guard) both succeed, a
   `put-object` carrying `--object-lock-mode COMPLIANCE` lands an object
@@ -407,10 +406,10 @@ assistant or human contributor.
 - **`head-object` from this identity does not show Object Lock, and that is
   expected.** `ObjectLockMode` / `ObjectLockRetainUntilDate` come back
   `None`, because S3 omits those headers unless the caller holds
-  `s3:GetObjectRetention` -- which `assetmgt-backup-s3` deliberately does
+  `s3:GetObjectRetention` -- which the backup policy deliberately does
   not grant, since the script never reads retention. The lock is applied
-  regardless. Debug retention from a broader profile (`admin-sso` on the
-  dev Mac), never from the host, or you will reasonably conclude Object
+  regardless. Debug retention from a broader profile (the admin profile on
+  the dev Mac), never from the host, or you will reasonably conclude Object
   Lock is broken when it is working fine.
 - **Testing a switchover the same day is largely a no-op.** If today's
   `daily/` object already exists, `backup-db.sh` hits the head-object
@@ -420,13 +419,12 @@ assistant or human contributor.
   same `--server-side-encryption`/`--object-lock-*` arguments the script
   uses. It is billed as an object nobody can delete for 30 days, so keep it
   small; the bucket's own lifecycle rule clears it.
-- **`s3-user`'s access key was rotated on 2026-09-07** (the old one dated
-  from 2021-11-23 and sat in the previous host's `.env` for years; IAM shows
-  one active key, created that day). The host doesn't need `~/.aws` at all,
-  since backups read `.env`. On the dev Mac `default` is now the
-  admin-equivalent Schengen-IaC-Test key, not s3-user (see
-  `~/claudecode/AWS guardrails/default-profile-to-schengen.sh`), so scripts
-  name their profile instead of inheriting `default`.
+- **The older, broadly-scoped S3 profile's access key was rotated on
+  2026-09-07** (the old one dated from 2021-11-23 and sat in the previous
+  host's `.env` for years; IAM shows one active key, created that day). The
+  host doesn't need `~/.aws` at all, since backups read `.env`. On the dev
+  Mac `default` resolves to an admin-equivalent key, not that S3 profile,
+  so scripts name their profile instead of inheriting `default`.
 - `pg_dump`/`pg_restore` always run **inside** the `db` container
   (`docker compose exec -T db sh -c '...'`), never against `DATABASE_URL` —
   its `postgresql+psycopg://` prefix is a SQLAlchemy dialect string, not a
@@ -452,7 +450,8 @@ assistant or human contributor.
   set 2026-09-06. Object Lock was *enabled* on the bucket from creation, but
   until then every lock came from the per-object flags above — so an upload
   that omitted them would have landed **unlocked**, and an unlocked object is
-  deletable by anything holding `s3:DeleteObject` (`s3-user` still does).
+  deletable by anything holding `s3:DeleteObject` (the broad S3 profile
+  still does).
   The default closes that fail-open gap without changing current behaviour:
   the script's explicit values still win where it sets them, `daily/` at the
   same 30 days and `monthly/` overriding upward to 186. The cost is that

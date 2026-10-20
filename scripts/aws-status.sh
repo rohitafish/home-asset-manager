@@ -5,10 +5,10 @@
 #
 # Run this from the DEV MAC, not the deploy host. It needs both sides: the
 # host's .env holds the S3 credentials, while Route 53 and IAM reads come
-# from this machine's `admin-sso` profile -- the Identity Center role, not
-# a static key. s3-user deliberately cannot read IAM at all, so it can never
-# answer the key-age question; the fix for that WARN is the right profile,
-# not a wider s3-user. The host
+# from this machine's admin profile -- the Identity Center role, not a
+# static key. An S3-only profile deliberately cannot read IAM at all, so it
+# can never answer the key-age question; the fix for that WARN is the right
+# profile, not a wider S3 one. The host
 # deliberately holds no AWS credential of its own (see AGENTS.md's
 # "Database backups"), so it cannot answer the DNS/IAM half by itself. The host may be the Linux laptop
 # (systemd, apt Caddy) or a Mac (launchd, brew Caddy); the remote
@@ -29,18 +29,29 @@ cd "$REPO_DIR" || exit 1
 HOST="${DEPLOY_HOST:-mint}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-~/claudecode/assetmgt}"
 DOMAIN="${ASSETMGT_DOMAIN:-assets.rohita.com}"
-ZONE_ID="${ASSETMGT_ZONE_ID:-Z05906141QTVV2UUOL5D6}"
-# Preferred first, fallback second. `admin-sso` is the Identity Center role
-# and the right answer when it has a session; `schengen-iac-test` is the
-# static admin-equivalent key kept precisely so this check still works at
-# hour 13, when the 12-hour SSO token has gone. It is named, not reached as
-# `default`, because ~/claudecode/AWS guardrails wants every use of that key
-# deliberate and visible (its tf.sh asks for --static-key). An explicit AWS_PROFILE overrides both
-# and disables the fallback -- if you named a profile, you meant that one.
+# The hosted zone is looked up by name at run time (the parent of $DOMAIN,
+# overridable) rather than hardcoded: its ID is an AWS identifier, and this
+# repo is public. ASSETMGT_ZONE_ID skips the lookup if you'd rather pin it.
+ZONE_NAME="${ASSETMGT_ZONE_NAME:-${DOMAIN#*.}}"
+ZONE_ID="${ASSETMGT_ZONE_ID:-}"
+# Preferred first, fallback second. ASSETMGT_ADMIN_PROFILE (default
+# `admin-sso`) is the Identity Center role and the right answer when it has a
+# session; ASSETMGT_FALLBACK_PROFILE, if set, names a static admin-equivalent
+# key kept precisely so this check still works at hour 13, when the 12-hour
+# SSO token has gone. Neither real profile name lives in this public repo:
+# export them from your shell profile. The fallback is named, never reached
+# as `default`, so every use of that key stays deliberate and visible. An
+# explicit AWS_PROFILE overrides both and disables the fallback -- if you
+# named a profile, you meant that one.
 PROFILE_EXPLICIT=0
 [ -n "${AWS_PROFILE:-}" ] && PROFILE_EXPLICIT=1
-PROFILE="${AWS_PROFILE:-admin-sso}"
-FALLBACK_PROFILE="${ASSETMGT_FALLBACK_PROFILE:-schengen-iac-test}"
+PREFERRED_PROFILE="${ASSETMGT_ADMIN_PROFILE:-admin-sso}"
+PROFILE="${AWS_PROFILE:-$PREFERRED_PROFILE}"
+FALLBACK_PROFILE="${ASSETMGT_FALLBACK_PROFILE:-}"
+# The least-privilege backup IAM user's name. The default follows this
+# repo's own naming (the systemd unit, the policy file), so it reveals
+# nothing those don't already.
+BACKUP_IAM_USER="${ASSETMGT_BACKUP_IAM_USER:-assetmgt-backup}"
 
 FAILS=0
 WARNS=0
@@ -130,7 +141,7 @@ ADMIN_OK=0
 ADMIN_ERR="$(_whoami "$PROFILE")"
 if [ -z "$ADMIN_ERR" ]; then
   ADMIN_OK=1
-elif [ "$PROFILE_EXPLICIT" = 0 ]; then
+elif [ "$PROFILE_EXPLICIT" = 0 ] && [ -n "$FALLBACK_PROFILE" ]; then
   FALLBACK_ERR="$(_whoami "$FALLBACK_PROFILE")"
   if [ -z "$FALLBACK_ERR" ]; then
     PROFILE="$FALLBACK_PROFILE"
@@ -144,8 +155,8 @@ if [ "$ADMIN_OK" = 1 ] && [ "${USED_FALLBACK:-0}" = 1 ]; then
   # Say which identity answered. Falling back is supported, but a long-lived
   # static admin key quietly standing in for a 12-hour role is worth one line
   # on screen rather than none.
-  ok "profile '$PROFILE' can read IAM and Route 53 (fell back from 'admin-sso', which has no session)"
-  echo "        to use the Identity Center role instead: aws sso login --profile admin-sso"
+  ok "profile '$PROFILE' can read IAM and Route 53 (fell back from '$PREFERRED_PROFILE', which has no session)"
+  echo "        to use the Identity Center role instead: aws sso login --profile $PREFERRED_PROFILE"
 elif [ "$ADMIN_OK" = 1 ]; then
   ok "profile '$PROFILE' can read IAM and Route 53"
 else
@@ -155,7 +166,11 @@ else
     *)
       fail "profile '$PROFILE' is unusable: $(printf '%s' "$ADMIN_ERR" | tr '\n' ' ' | cut -c1-160)" ;;
   esac
-  [ "$PROFILE_EXPLICIT" = 0 ] && echo "        fallback '$FALLBACK_PROFILE' could not authenticate either"
+  if [ "$PROFILE_EXPLICIT" = 0 ] && [ -n "$FALLBACK_PROFILE" ]; then
+    echo "        fallback '$FALLBACK_PROFILE' could not authenticate either"
+  elif [ "$PROFILE_EXPLICIT" = 0 ]; then
+    echo "        no fallback profile set (ASSETMGT_FALLBACK_PROFILE)"
+  fi
   echo "        the IAM and Route 53 checks below are skipped, not passed"
 fi
 
@@ -163,17 +178,16 @@ echo
 echo "== Backup identity =="
 IDENTITY="$(_val IDENTITY)"
 case "$IDENTITY" in
-  *:user/assetmgt-backup) ok "backups authenticate as assetmgt-backup (least privilege)" ;;
-  *:user/s3-user)         fail "backups still authenticate as s3-user -- the broadly-scoped identity. See AGENTS.md's \"Database backups\"" ;;
-  "")                     fail "could not resolve the backup identity -- credentials in the host's .env may be wrong" ;;
-  *)                      warn "backups authenticate as an unexpected identity: $IDENTITY" ;;
+  *:user/"$BACKUP_IAM_USER") ok "backups authenticate as the least-privilege backup user" ;;
+  "")                        fail "could not resolve the backup identity -- credentials in the host's .env may be wrong" ;;
+  *)                         fail "backups authenticate as something other than the least-privilege backup user ($IDENTITY). See AGENTS.md's \"Database backups\"" ;;
 esac
 
 # Key age matters: this is the credential sitting in a .env on an always-on
 # host, so an old one is the thing worth noticing before it's the thing
 # worth regretting.
 if [ "$ADMIN_OK" = 1 ]; then
-  KEY_CREATED="$(aws --profile "$PROFILE" iam list-access-keys --user-name assetmgt-backup \
+  KEY_CREATED="$(aws --profile "$PROFILE" iam list-access-keys --user-name "$BACKUP_IAM_USER" \
     --query 'AccessKeyMetadata[0].CreateDate' --output text 2>/dev/null)"
 else
   KEY_CREATED=""
@@ -264,12 +278,24 @@ fi
 echo
 echo "== DNS =="
 A_VALUE=""
-if [ "$ADMIN_OK" = 1 ]; then
+if [ "$ADMIN_OK" = 1 ] && [ -z "$ZONE_ID" ]; then
+  # Exact-name, public-only match: list-hosted-zones-by-name returns zones
+  # starting AT the name, not only that name, and a private zone of the same
+  # name would answer with LAN records.
+  ZONE_ID="$(aws --profile "$PROFILE" route53 list-hosted-zones-by-name --dns-name "$ZONE_NAME" \
+    --query "HostedZones[?Name=='$ZONE_NAME.' && !Config.PrivateZone].Id | [0]" --output text 2>/dev/null)"
+  ZONE_ID="${ZONE_ID##*/}"
+  [ "$ZONE_ID" = "None" ] && ZONE_ID=""
+fi
+if [ "$ADMIN_OK" = 1 ] && [ -z "$ZONE_ID" ]; then
+  fail "no public Route 53 hosted zone named $ZONE_NAME (set ASSETMGT_ZONE_NAME or ASSETMGT_ZONE_ID)"
+  echo "  ----  Route 53 A and CAA not read (zone not found)"
+elif [ "$ADMIN_OK" = 1 ]; then
   A_VALUE="$(aws --profile "$PROFILE" route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
     --query "ResourceRecordSets[?Name=='$DOMAIN.'&&Type=='A'].ResourceRecords[0].Value" --output text 2>/dev/null)"
   [ -n "$A_VALUE" ] && [ "$A_VALUE" != "None" ] \
     && ok "Route 53 has an A record for $DOMAIN" \
-    || fail "no A record for $DOMAIN in zone $ZONE_ID"
+    || fail "no A record for $DOMAIN in the $ZONE_NAME zone"
 
   CAA="$(aws --profile "$PROFILE" route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" \
     --query "ResourceRecordSets[?Type=='CAA'].ResourceRecords[].Value" --output text 2>/dev/null)"
