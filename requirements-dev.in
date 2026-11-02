@@ -8,7 +8,7 @@
 # Install both with:
 #   pip install --require-hashes -r requirements.txt -r requirements-dev.txt
 -c requirements.txt
-pytest==9.1.1
+pytest==9.2.0
 ruff==0.17.3
 # Measures what the suite actually reaches (settings in .coveragerc). CI runs
 # the suite under it and fails below the threshold there.
