@@ -1,5 +1,11 @@
 version: 2
 updates:
+  # Monthly and grouped, with a 7-day cooldown on new releases: about one PR per
+  # ecosystem per month rather than one per package per week. Security fixes
+  # ignore both the schedule and the cooldown, and share one PR so that two
+  # advisories at once can't fail each other's pip-audit. Major versions stay
+  # out of the group and arrive as their own PR.
+
   # Python dependencies: requirements*.in (direct pins) and the uv-generated
   # lockfiles compiled from them (requirements*.txt, with hashes -- see
   # CONTRIBUTING.md's "Dependencies" for the `uv pip compile --universal`
@@ -8,8 +14,18 @@ updates:
   - package-ecosystem: pip
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      python-updates:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
     ignore:
       # sqlmodel 0.0.47 rejects naive datetimes and maps datetime fields to
       # a tz-aware column type (drift on ~20 columns). Held back until the
@@ -22,4 +38,14 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      actions-updates:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
