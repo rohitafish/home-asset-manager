@@ -30,10 +30,26 @@ pinned. To change one:
 ```bash
 pip install uv                               # once, anywhere (a scratch venv is fine)
 # edit the pin in requirements.in (or requirements-dev.in)
-uv pip compile --universal --generate-hashes -o requirements.txt requirements.in
-uv pip compile --universal --generate-hashes -o requirements-dev.txt requirements-dev.in
+UV_EXCLUDE_NEWER=P7D uv pip compile --universal --generate-hashes -o requirements.txt requirements.in
+UV_EXCLUDE_NEWER=P7D uv pip compile --universal --generate-hashes -o requirements-dev.txt requirements-dev.in
 pip install --require-hashes -r requirements.txt -r requirements-dev.txt
 ```
+
+**The `UV_EXCLUDE_NEWER=P7D` prefix is a 7-day cooldown.** It hides every
+release uploaded in the last seven days, transitives included: the same
+delay Dependabot's `cooldown` gives its own PRs. A hijacked release is
+usually found and pulled within hours or days (the malicious
+`agent-framework` releases in November 2026 lasted about 30 minutes), so a
+week's wait means one is gone before it can be locked in. The hashes don't
+cover this on their own: they prove every install gets the file you
+locked, not that the file was safe when you locked it. It is an
+environment variable rather than a flag so that the lockfile header, which
+Dependabot and the restore job below read, stays as it is. If a compile
+fails because a pin you chose on purpose is less than a week old (an
+urgent security fix, say), check that release, run that one compile
+without the prefix, and say so in the commit message. The restore job
+doesn't need the prefix: it refuses any result that moves a pin, so it
+can't bring in a new release.
 
 **`--universal` is not optional.** Plain `pip-compile` (pip-tools) resolves
 environment markers against the machine that ran it, so a package another

@@ -14,7 +14,10 @@
 # --universal keeps every platform's branch and hashes it. Bump a pin here,
 # then regenerate:
 #
-#   uv pip compile --universal --generate-hashes -o requirements.txt requirements.in
+#   UV_EXCLUDE_NEWER=P7D uv pip compile --universal --generate-hashes -o requirements.txt requirements.in
+#
+# UV_EXCLUDE_NEWER=P7D is a 7-day cooldown on new releases; see
+# CONTRIBUTING.md's "Dependencies".
 #
 # Dependabot understands this layout and regenerates requirements.txt itself
 # in its PRs. See CONTRIBUTING.md's "Dependencies".
