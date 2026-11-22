@@ -64,3 +64,8 @@ ignore = [
 # sees it as unused because nothing here references the module by name.
 # Removing it breaks the entire suite. See tests/conftest.py's own comment.
 "tests/conftest.py" = ["F401"]
+# The software collector runs on every inventoried machine, down to Apple's
+# Command Line Tools Python 3.9 on a Mac -- not on the app host's 3.12, which
+# target-version assumes. datetime.UTC (UP017) is 3.11+, and %-formatting
+# (UP031) is fine there; keep both rules out of that one file.
+"scripts/software-inventory/collect_unix.py" = ["UP017", "UP031"]

@@ -6,12 +6,16 @@ Usage:
   python -m discovery.cli all
   python -m discovery.cli account-import
   python -m discovery.cli sonos
+  python -m discovery.cli software-import --file inventory.json
+  python -m discovery.cli software-eol
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import sys
 from contextlib import contextmanager
 
 import typer
@@ -38,6 +42,8 @@ from discovery.normalize import (
 )
 from discovery.reconcile import merge_by_ip, merge_by_mac, reconcile_into_db
 from discovery.revaluation import run_revaluation as _run_revaluation
+from discovery.software_eol import enrich_software_eol
+from discovery.software_import import SoftwareImportError, import_inventory
 from discovery.sonos_household import (
     run_sonos_household_discovery as _run_sonos_household_discovery,
 )
@@ -267,6 +273,28 @@ def run_exposure_resync(apply: bool) -> dict:
         return _run_exposure_resync(dry_run=not apply, session=session)
 
 
+def run_software_import(doc: dict, asset_id: int | None = None) -> dict:
+    """Import one machine's software inventory (see
+    discovery/software_import.py). Tracked as a DiscoveryRun: it is a
+    collector, just one whose collection step ran on the machine itself."""
+    with Session(engine) as session, _tracked_run("software", session) as run:
+        summary = import_inventory(session, doc, asset_id=asset_id)
+        run.summary = (
+            f"asset={summary['asset_id']} platform={summary['platform']} "
+            f"imported={summary['imported']} removed={summary['removed']} "
+            f"excluded_os={summary['excluded_os']}"
+        )
+        return summary
+
+
+def run_software_eol() -> dict:
+    """Refresh end-of-life facts for the software inventory from endoflife.date."""
+    with Session(engine) as session, _tracked_run("software_eol", session) as run:
+        summary = enrich_software_eol(session)
+        run.summary = " ".join(f"{k}={v}" for k, v in summary.items())
+        return summary
+
+
 def run_all_discovery() -> dict:
     results = {}
     try:
@@ -365,6 +393,37 @@ def sonos(apply: bool = typer.Option(False, help="Write the changes. Without thi
 def enrich():
     """Match detected service versions against NVD/EPSS/CISA KEV."""
     typer.echo(run_enrichment())
+
+
+@app.command(name="software-import")
+def software_import(
+    file: str = typer.Option("-", help="Inventory JSON from scripts/software-inventory/; - reads stdin."),
+    asset_id: int | None = typer.Option(None, help="The asset to file it under, when MAC/hostname matching can't tell."),
+):
+    """Import one machine's software inventory (printed by
+    scripts/software-inventory/collect_unix.py or collect_windows.ps1;
+    scripts/collect-software.sh runs both ends)."""
+    try:
+        if file == "-":
+            raw = sys.stdin.read()
+        else:
+            with open(file, encoding="utf-8") as fh:
+                raw = fh.read()
+        doc = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        typer.echo(f"could not read the inventory: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    try:
+        typer.echo(run_software_import(doc, asset_id=asset_id))
+    except SoftwareImportError as exc:
+        typer.echo(f"not imported: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+
+@app.command(name="software-eol")
+def software_eol():
+    """Refresh end-of-life dates for the software inventory from endoflife.date."""
+    typer.echo(run_software_eol())
 
 
 @app.command(name="all")

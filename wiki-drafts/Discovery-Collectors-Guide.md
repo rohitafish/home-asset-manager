@@ -100,3 +100,33 @@ this from the dev machine reports the dev machine's own hardware; the useful
 run is the one triggered on the machine actually serving the app. It
 deliberately won't guess when more than one asset row matches — writing a
 serial onto the wrong asset is worse than writing none.
+
+## Software inventory
+
+**Modules:** `scripts/software-inventory/collect_unix.py` and
+`collect_windows.ps1` (run on each machine), `discovery/software_import.py`
+and `discovery/software_eol.py` (run on the host) · **Driven by:**
+`scripts/collect-software.sh` from a dev machine · **Needs:** ssh access from
+that dev machine to each machine and to the host
+
+Unlike the network collectors, this one runs *on* the machines it describes:
+the dev machine pipes a read-only collector to each over ssh (nothing is
+installed there), then pipes the JSON it prints to `software-import` on the
+host. The host is never given ssh access to the other machines. macOS reports
+apps, Homebrew formulae and casks and `brew vulns` findings; Debian-family
+Linux reports dpkg packages, pending and security updates, snaps and
+flatpaks; Windows reports registry-installed programs and Store apps. The
+importer drops the operating system itself, sorts the rest into application,
+library and base system, and merges the same software across machines and
+package managers into one row. `software-eol` then adds end-of-life dates from
+endoflife.date. The Software tab grades each row red/amber/green from
+vulnerabilities, supportability and the age of the installed version, at
+render time, and shows its reasons.
+
+**Limitations:** vulnerability data exists only where the machine has a
+scanner the collector can read: `brew vulns` for Homebrew formulae, and the
+distribution's security pocket for Linux packages. Mac apps, casks, snaps,
+flatpaks and Windows programs are graded on age, end of life and pending
+updates only. Publication dates for Mac apps and Windows programs are file
+dates, so they're approximate. A machine that's off when the script runs keeps
+its previous list until the next run.

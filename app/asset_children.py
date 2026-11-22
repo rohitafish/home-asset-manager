@@ -58,6 +58,8 @@ from app.models import (
     Finding,
     ProbeResult,
     SameDeviceDismissal,
+    SoftwareHost,
+    SoftwareInstall,
 )
 
 # Every model with a plain `asset_id` FK back to Asset. Extend this list --
@@ -65,6 +67,7 @@ from app.models import (
 # table is introduced.
 ASSET_CHILD_MODELS = [
     AssetInterface, AssetService, Finding, AssetNote, ProbeResult, ChatMessage, ChangeProposal,
+    SoftwareInstall, SoftwareHost,
 ]
 
 

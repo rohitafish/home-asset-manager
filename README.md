@@ -1611,6 +1611,92 @@ Reading it:
 
 Entries are `INFO`, so they're suppressed if you set `LOG_LEVEL=WARNING`.
 
+## Software inventory
+
+The **Software** tab lists the software installed on your computers -- one
+row per piece of software, with the machines it's on, the installed version
+on each, the **publication date** of that version, and a **red/amber/green**
+cyber-risk grade with the reasons for it. The operating system itself isn't
+listed; it belongs to the machine's own asset (hardware or VM).
+
+### Collecting
+
+Collection runs on each machine, driven over ssh from a dev machine that can
+reach them all and the app host:
+
+```bash
+scripts/collect-software.sh              # every machine in software-hosts.conf
+scripts/collect-software.sh mini         # just one
+```
+
+List the machines in `software-hosts.conf` at the repo root (gitignored --
+the aliases are household details), one per line: the ssh alias (or `local`
+for the machine you're on), `unix` or `windows`, and optionally the asset id:
+
+```text
+local    unix
+mini     unix
+laptop   windows  12
+```
+
+Without an asset id the importer finds the machine's asset by its MAC
+addresses, then by the hostname a previous import recorded, and refuses to
+guess between two candidates -- add the id then. A machine that's off or
+asleep is skipped with a warning and the rest still import. Nothing is
+installed on the machines: the collectors (`scripts/software-inventory/`) are
+piped over ssh and only read. They report, per platform:
+
+- **macOS**: apps in `/Applications` and `~/Applications`, Homebrew formulae
+  and casks, and `brew vulns` findings. Homebrew's metadata isn't refreshed
+  first, so run `brew update` on a Mac beforehand if it hasn't auto-updated
+  lately.
+- **Linux** (Debian family): every dpkg package, pending apt updates (and
+  whether they come from a security pocket), packages no repository offers
+  any more, snaps and flatpak apps. Pending updates are as fresh as the
+  machine's last `apt update`; the Notes column shows when that was.
+- **Windows**: programs from the registry's Uninstall keys, Microsoft Store
+  apps, and pending updates if the WinGet PowerShell module is installed.
+
+Each import replaces that machine's list, so uninstalled software drops off
+on its next collection. The script then refreshes end-of-life dates from
+[endoflife.date](https://endoflife.date) (also the tab's **Refresh
+end-of-life data** button, or `python -m discovery.cli software-eol` on the
+host); only product names go out, nothing about your machines.
+
+By default the tab shows applications; switch the last filter to include
+libraries and base-system packages (most of a Linux machine's list).
+**Download CSV** exports what's on screen.
+
+### How grades work
+
+Grades are worked out each time the page loads (so an age threshold crossed
+overnight shows up without re-collecting), from three things:
+
+| | Red | Amber |
+|---|---|---|
+| Vulnerabilities | a high/critical one open, or a security update pending | any other known vulnerability |
+| Supportability | end of life; disabled by Homebrew | any other pending update; deprecated; no longer packaged; Intel-only Mac app; end of life within 6 months; a newer release in the same series |
+| Age of the installed version | published over 5 years ago | over 2 years ago |
+
+Green means none of those, and **Unrated** means there was nothing to judge
+by. Linux distribution packages are only marked amber for age, and only past
+5 years, and an upstream end of life is amber for them rather than red,
+because the distribution backports security fixes into old versions.
+
+Coverage differs by kind of software, and the tab's Coverage table says what
+each is checked against. In short: Homebrew formulae are checked for known
+vulnerabilities (`brew vulns`, which uses OSV) and Linux packages for
+pending security updates; Mac apps, casks, snaps, flatpaks and Windows
+programs have no vulnerability feed here. A green row therefore means no
+known issues among what was checked.
+
+Publication dates come from the best source each platform has: the
+distribution's package changelog (Linux), the Homebrew formula's date
+(formulae), the app bundle's date (Mac apps, approximate), or the program's
+executable date (Windows, approximate); endoflife.date's release date fills
+the gap where the installed version is a release it lists. Hover over a date
+to see where it came from.
+
 ## CLI reference
 
 ```bash
@@ -1621,6 +1707,8 @@ python -m discovery.cli enrich             # NVD/EPSS/KEV matching
 python -m discovery.cli all                # all four, in order
 python -m discovery.cli account-import [--apply]   # see "Vendor account import" below
 python -m discovery.cli sonos [--apply]            # see "Sonos household discovery" below
+python -m discovery.cli software-import [--file F] [--asset-id N]  # one machine's inventory (stdin by default)
+python -m discovery.cli software-eol               # end-of-life dates for the software inventory
 ```
 
 ### Vendor account import

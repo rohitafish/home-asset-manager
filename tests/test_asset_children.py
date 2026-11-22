@@ -30,6 +30,9 @@ from app.models import (
     ProbeResult,
     SameDeviceDismissal,
     Severity,
+    SoftwareHost,
+    SoftwareInstall,
+    SoftwareItem,
 )
 
 
@@ -60,6 +63,11 @@ def _populate_children(session, asset_id):
     session.add(ChatMessage(asset_id=asset_id, role="user", content_json="[]"))
     session.add(ChangeProposal(asset_id=asset_id, kind="add_note", payload_json="{}"))
     session.add(Finding(asset_id=asset_id, severity=Severity.low))
+    item = SoftwareItem(key=f"tool-{asset_id}", name="tool")
+    session.add(item)
+    session.flush()
+    session.add(SoftwareInstall(software_id=item.id, asset_id=asset_id, source="apt", package_name="tool"))
+    session.add(SoftwareHost(asset_id=asset_id, platform="linux"))
     make_interface(session, asset_id)
     session.commit()
 
