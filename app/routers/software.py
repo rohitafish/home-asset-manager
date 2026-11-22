@@ -16,14 +16,14 @@ import logging
 from collections import defaultdict
 from datetime import date
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
 from app.auth import require_admin, require_same_origin
 from app.db import get_session
-from app.models import Asset, SoftwareHost, SoftwareInstall, SoftwareItem
+from app.models import Asset, SoftwareHost, SoftwareInstall, SoftwareItem, SoftwareNote
 from app.routers.dashboard import _csv_safe, _discovery_already_running, templates
 from app.software_risk import (
     AMBER,
@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 SORTS = ("risk", "name", "published", "machines")
 CATEGORY_LABELS = {"application": "Application", "library": "Library/component", "system": "Base system"}
+NOTE_MAX_CHARS = 4000
 
 
 def _asset_label(asset: Asset | None, asset_id: int) -> str:
@@ -74,6 +75,12 @@ def build_rows(
         a.id: a for a in session.exec(select(Asset).where(Asset.id.in_(asset_ids))).all()
     } if asset_ids else {}
 
+    notes: dict[int, list[SoftwareNote]] = defaultdict(list)
+    for note in session.exec(
+        select(SoftwareNote).order_by(SoftwareNote.created_at.desc(), SoftwareNote.id.desc())
+    ).all():
+        notes[note.software_id].append(note)
+
     grouped: dict[int, dict] = {}
     for inst, item in pairs:
         if machine is not None and inst.asset_id != machine:
@@ -87,9 +94,10 @@ def build_rows(
         item, installs = row["item"], row["installs"]
         if not show_all and not any(i.category == "application" for i, _ in installs):
             continue
+        item_notes = notes.get(item.id, [])
         if needle and needle not in item.name.lower() and needle not in item.key and not any(
             needle in i.package_name.lower() for i, _ in installs
-        ):
+        ) and not any(needle in n.body.lower() for n in item_notes):
             continue
         row_rag = worst(g.rag for _, g in installs)
         if rag and row_rag != rag:
@@ -142,6 +150,7 @@ def build_rows(
             "versions": version_list,
             "machine_count": len(machine_ids),
             "machine_labels": [_asset_label(assets.get(a), a) for a in machine_ids],
+            "notes": item_notes,
             "oldest_published": min(published) if published else None,
             "category": CATEGORY_LABELS.get(
                 "application" if "application" in categories else min(categories), ""
@@ -236,7 +245,7 @@ def software_csv(
     buf.write("﻿")  # Excel needs the BOM to read UTF-8
     writer = csv.writer(buf)
     writer.writerow(["Risk", "Software", "Category", "Version", "Published", "Date source",
-                     "Machines", "Reasons"])
+                     "Machines", "Reasons", "Notes"])
     for r in rows:
         for v in r["versions"]:
             writer.writerow([_csv_safe(x) for x in (
@@ -248,12 +257,36 @@ def software_csv(
                 v["published_source"] or "",
                 ", ".join(m["label"] for m in v["machines"]),
                 "; ".join(r["reasons"]),
+                " | ".join(f"{n.created_at.date().isoformat()} ({n.author}): {n.body}" for n in r["notes"]),
             )])
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="software.csv"'},
     )
+
+
+def _return_to(value: str) -> str:
+    """Back to the Software tab view the note was added from. Only a local
+    /software path is accepted, so the form can't be used to redirect off-site."""
+    if value == "/software" or value.startswith("/software?"):
+        return value
+    return "/software"
+
+
+@router.post("/software/{item_id}/notes")
+def software_add_note(
+    item_id: int,
+    body: str = Form(...),
+    return_to: str = Form(""),
+    session: Session = Depends(get_session),
+):
+    """Append a review note to one piece of software (see SoftwareNote)."""
+    text = body.strip()[:NOTE_MAX_CHARS]
+    if text and session.get(SoftwareItem, item_id):
+        session.add(SoftwareNote(software_id=item_id, author="user", body=text))
+        session.commit()
+    return RedirectResponse(url=f"{_return_to(return_to)}#sw-{item_id}", status_code=303)
 
 
 @router.post("/software/refresh-eol")

@@ -8,7 +8,7 @@ AGENTS.md's PII rules.
 import gzip
 import importlib.util
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,7 +19,13 @@ from sqlmodel import select
 from typer.testing import CliRunner
 
 from app.asset_children import delete_asset_cascade
-from app.models import DiscoveryRun, SoftwareHost, SoftwareInstall, SoftwareItem
+from app.models import (
+    DiscoveryRun,
+    SoftwareHost,
+    SoftwareInstall,
+    SoftwareItem,
+    SoftwareNote,
+)
 from app.software_risk import (
     AMBER,
     EOL_UNKNOWN_DATE,
@@ -674,3 +680,76 @@ def test_refresh_eol_route_reports_failure(admin_client, monkeypatch):
     monkeypatch.setattr(cli, "run_software_eol", boom)
     resp = admin_client.post("/software/refresh-eol", follow_redirects=False)
     assert resp.headers["location"] == "/software?eol=failed"
+
+
+# ------------------------------------------------------------ review notes
+
+
+def _item(session, key):
+    return session.exec(select(SoftwareItem).where(SoftwareItem.key == key)).one()
+
+
+def test_add_note_appends_and_returns_to_the_same_view(admin_client, session, populated_software):
+    git = _item(session, "git")
+    resp = admin_client.post(f"/software/{git.id}/notes", data={
+        "body": "  Example finding: 9.9.9 is the newest build.  ",
+        "return_to": "/software?rag=amber&sort=name",
+    }, follow_redirects=False)
+    assert resp.status_code == 303
+    assert resp.headers["location"] == f"/software?rag=amber&sort=name#sw-{git.id}"
+    admin_client.post(f"/software/{git.id}/notes", data={"body": "Example second finding"})
+    notes = session.exec(select(SoftwareNote).where(SoftwareNote.software_id == git.id)).all()
+    assert sorted(n.body for n in notes) == ["Example finding: 9.9.9 is the newest build.",
+                                            "Example second finding"]
+    assert {n.author for n in notes} == {"user"}
+
+
+@pytest.mark.parametrize("return_to", ["https://example.com/x", "//example.com", "/assets/1", ""])
+def test_add_note_only_redirects_within_the_software_tab(admin_client, session, populated_software,
+                                                         return_to):
+    git = _item(session, "git")
+    resp = admin_client.post(f"/software/{git.id}/notes",
+                             data={"body": "Example", "return_to": return_to}, follow_redirects=False)
+    assert resp.headers["location"] == f"/software#sw-{git.id}"
+
+
+def test_blank_note_or_unknown_item_adds_nothing(admin_client, session, populated_software):
+    git = _item(session, "git")
+    admin_client.post(f"/software/{git.id}/notes", data={"body": "   "})
+    admin_client.post("/software/999999/notes", data={"body": "Example"})
+    assert session.exec(select(SoftwareNote)).all() == []
+
+
+def test_notes_show_newest_first_and_are_searchable(admin_client, session, populated_software):
+    git = _item(session, "git")
+    session.add(SoftwareNote(software_id=git.id, body="Example older note",
+                             created_at=datetime(2026, 1, 1, 9, 0)))
+    session.add(SoftwareNote(software_id=git.id, author="claude", body="Example newer note",
+                             created_at=datetime(2026, 2, 1, 9, 0)))
+    session.commit()
+    body = admin_client.get("/software").text
+    assert body.index("Example newer note") < body.index("Example older note")
+    assert f'id="sw-{git.id}"' in body and "Add note" in body
+    found = admin_client.get("/software?q=newer+note").text
+    assert "<strong>git</strong>" in found and "=cmd" not in found
+
+
+def test_csv_includes_notes(admin_client, session, populated_software):
+    git = _item(session, "git")
+    session.add(SoftwareNote(software_id=git.id, body="Example note", created_at=datetime(2026, 2, 1)))
+    session.commit()
+    text = admin_client.get("/software.csv").text
+    assert text.splitlines()[0].endswith(",Notes")
+    assert "2026-02-01 (user): Example note" in text
+
+
+def test_reimport_keeps_an_item_that_has_notes(session):
+    a = make_asset(session)
+    make_interface(session, a.id, mac="00:1a:2b:3c:4d:01")
+    nmap = {"source": "apt", "name": "nmap", "version": "7.94", "section": "net"}
+    import_inventory(session, _doc([GIT_APT, nmap]))
+    session.add(SoftwareNote(software_id=_item(session, "nmap").id, body="Example note"))
+    session.commit()
+    summary = import_inventory(session, _doc([GIT_APT]))
+    assert (summary["removed"], summary["items_pruned"]) == (1, 0)
+    assert _item(session, "nmap").id == session.exec(select(SoftwareNote)).one().software_id

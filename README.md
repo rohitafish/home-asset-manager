@@ -1674,6 +1674,16 @@ host); only product names go out, nothing about your machines.
 
 By default the tab shows applications; switch the last filter to include
 libraries and base-system packages (most of a Linux machine's list).
+
+Each row has a **Notes** column for what you've checked and decided about it
+-- "9.9.9 is the newest Windows build the vendor offers", "still needed:
+the printer's port uses it" -- so the next review of a red or amber row
+starts from that. Notes are a log, newest first, with who added them (you
+or Claude), and aren't edited or deleted. They belong to the piece of
+software rather than one machine, so name the machine in the note when it
+matters. They survive the software being uninstalled and come back if it's
+reinstalled, the search box looks in them, and the CSV export has a Notes
+column.
 **Download CSV** exports what's on screen.
 
 ### How grades work

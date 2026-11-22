@@ -2,6 +2,7 @@
 {% block title %}Software{% endblock %}
 {% block content %}
 {% set base_qs = {'q': q, 'machine': machine or '', 'rag': rag, 'show': 'all' if show_all else ''} %}
+{% set here = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
 {% macro sort_th(key, label) %}
   {% set qs = dict(base_qs, sort=key) %}
   <th><a class="sort-link" href="/software?{{ qs | urlencode }}">{{ label }}{% if sort == key %} ▼{% endif %}</a></th>
@@ -26,7 +27,8 @@
   Installed software on every collected machine, one row per piece of software. The operating
   system itself isn't listed: it's recorded on the machine's own asset. Grades are worked out
   from known vulnerabilities, supportability and the age of the installed version, and each one
-  shows its reasons. What each kind of software is checked against is listed under
+  shows its reasons; notes on a row record what was checked and decided about it, and are kept
+  as a log, newest first. What each kind of software is checked against is listed under
   <a href="#coverage">Coverage</a>. Collect with <code>scripts/collect-software.sh</code>.
 </p>
 
@@ -86,11 +88,12 @@
       <th>Installed version &middot; published &middot; machines</th>
       {{ sort_th('published', 'Oldest published') }}{{ sort_th('machines', 'Machines') }}
       <th>Why</th>
+      <th>Notes</th>
     </tr>
   </thead>
   <tbody>
   {% for row in rows %}
-    <tr>
+    <tr id="sw-{{ row.item.id }}">
       <td class="rag-cell"><span class="rag-badge rag-{{ row.rag }}">{{ rag_labels[row.rag] }}</span></td>
       <td>
         <strong>{{ row.item.name }}</strong>
@@ -114,9 +117,25 @@
           <ul class="reasons">{% for r in row.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
         {% else %}<span class="muted">No known issues</span>{% endif %}
       </td>
+      <td class="small sw-notes">
+        {% for note in row.notes %}
+          <div class="sw-note">
+            <div class="note-meta">{{ note.created_at | localdt }} — {{ note.author }}</div>
+            <div class="note-body">{{ note.body }}</div>
+          </div>
+        {% endfor %}
+        <details class="sw-note-add">
+          <summary>Add note</summary>
+          <form method="post" action="/software/{{ row.item.id }}/notes">
+            <textarea name="body" required maxlength="4000" placeholder="What was checked, and what was decided"></textarea>
+            <input type="hidden" name="return_to" value="{{ here }}">
+            <button type="submit">Save note</button>
+          </form>
+        </details>
+      </td>
     </tr>
   {% else %}
-    <tr><td colspan="6">
+    <tr><td colspan="7">
       {% if hosts %}Nothing matches these filters.{% else %}No software collected yet &mdash; run
       <code>scripts/collect-software.sh</code> from a dev machine (see README's "Software inventory").{% endif %}
     </td></tr>

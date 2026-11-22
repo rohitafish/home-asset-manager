@@ -340,6 +340,22 @@ class SoftwareItem(SQLModel, table=True):
     first_seen: datetime = Field(default_factory=utcnow_naive)
 
 
+class SoftwareNote(SQLModel, table=True):
+    """Append-only review note on a piece of software, shown in the Software
+    tab's Notes column -- what was checked and decided ("9.9.9 is the newest
+    Windows build the vendor offers"), so the next review of a red or amber row
+    starts from that rather than from scratch. Append-only for the same reason
+    as AssetNote: an earlier finding is never overwritten. An item with notes
+    is kept when no machine has it any more (discovery/software_import.py), so
+    reinstalling the software brings its notes back."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    software_id: int = Field(foreign_key="softwareitem.id", index=True)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    author: str = "user"  # "user" | "claude"
+    body: str
+
+
 class SoftwareInstall(SQLModel, table=True):
     """One item installed on one machine, as one package manager sees it.
     Stores facts only -- the red/amber/green grade is computed from these at
