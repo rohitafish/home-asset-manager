@@ -760,6 +760,19 @@ assistant or human contributor.
   are "Secret Protection" and "Push protection", both already on. Not a bug
   or an API gap; these two simply aren't offered outside a paid tier, and
   there's nothing further to do here short of paying for it.
+- **Auto-merge is allowed** (`allow_auto_merge`, turned on 2026-11-22;
+  `Settings` → `General` → "Allow auto-merge", or
+  `gh api -X PATCH repos/<owner>/<repo> -F allow_auto_merge=true`). It only
+  makes the option available: nothing merges by itself until a PR is
+  explicitly set to auto-merge (`gh pr merge <n> --auto --squash`, or the
+  PR page's button), and GitHub then merges it once every required status
+  check on `protect-main` is green. A failing or still-running check holds
+  it. Squash and merge commits are both allowed. Use **squash** when a PR's
+  intermediate commits shouldn't land on `main` -- e.g. a commit later
+  corrected for carrying real values (see "PII / privacy"): a squash lands
+  only the final tree, though the original commits stay reachable through
+  the PR on GitHub. Only set a PR to auto-merge when someone has decided it
+  should merge; it doesn't replace that decision.
 - Committing after a verified fix/feature (tested locally, deployed, spot-checked
   on the host) is the norm for this project — no need to ask first. Pushing to
   GitHub is different: only push when explicitly asked, never proactively just
