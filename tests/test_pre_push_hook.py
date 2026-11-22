@@ -117,3 +117,56 @@ def test_a_failing_scan_blocks_the_push(repo):
 
     assert proc.returncode == 1
     assert "push blocked" in proc.stderr
+
+
+def _install_sync_stub(repo: Path, exit_code: int = 0) -> None:
+    stub = repo / "scripts" / "pii-denylist-sync.sh"
+    stub.write_text(
+        '#!/bin/sh\n'
+        'echo ran >> "$(dirname "$0")/../sync.log"\n'
+        f'exit {exit_code}\n'
+    )
+    stub.chmod(0o755)
+
+
+def _denylist(repo: Path, synced: str | None) -> None:
+    stamp = f"# last synced: {synced} from host\n" if synced else ""
+    (repo / ".pii-denylist").write_text(f"hand-entry\n# >>> auto\n{stamp}value\n# <<< end\n")
+
+
+@pytest.mark.parametrize("synced", ["2020-01-01", None])
+def test_a_stale_or_unstamped_denylist_is_resynced_before_scanning(repo, synced):
+    _install_sync_stub(repo)
+    _denylist(repo, synced)
+    sha = _git(repo, "rev-parse", "HEAD")
+
+    proc = _run_hook(repo, f"refs/heads/feature {sha} refs/heads/feature {ZERO}\n")
+
+    assert proc.returncode == 0, proc.stderr
+    assert (repo / "sync.log").read_text() == "ran\n"
+    assert "refreshing it from the inventory" in proc.stderr
+
+
+def test_a_fresh_denylist_is_left_alone(repo):
+    import datetime
+
+    _install_sync_stub(repo)
+    _denylist(repo, datetime.date.today().isoformat())
+    sha = _git(repo, "rev-parse", "HEAD")
+
+    proc = _run_hook(repo, f"refs/heads/feature {sha} refs/heads/feature {ZERO}\n")
+
+    assert proc.returncode == 0, proc.stderr
+    assert not (repo / "sync.log").exists()
+
+
+def test_a_failed_resync_warns_but_still_scans_and_pushes(repo):
+    _install_sync_stub(repo, exit_code=3)
+    _denylist(repo, "2020-01-01")
+    sha = _git(repo, "rev-parse", "HEAD")
+
+    proc = _run_hook(repo, f"refs/heads/feature {sha} refs/heads/feature {ZERO}\n")
+
+    assert proc.returncode == 0, proc.stderr
+    assert "WARNING: .pii-denylist sync failed" in proc.stderr
+    assert "--range" in _scan_args(repo)  # still scanned with the existing list

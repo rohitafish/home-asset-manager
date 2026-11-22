@@ -17,10 +17,23 @@
 # What it pulls: every interface MAC, every serial number, and the owner and
 # custodian names -- from the host's Postgres, over one ssh round trip -- plus
 # DEFAULT_OWNER / SECONDARY_OWNER_* from the host's .env (household names).
-# Not hostnames (too many are generic product names, "Sonos Move", that
+# Not asset hostnames (too many are generic product names, "Sonos Move", that
 # legitimately appear in docs and tests), not model numbers (public product
 # codes), not private IPs/subnets (the docs' illustrative addresses would
 # collide). Add those by hand if a specific one matters.
+#
+# One kind of hostname IS pulled: each computer's own OS hostname, as the
+# software inventory's collector reported it (softwarehost.hostname, see
+# discovery/software_import.py). Those are set by a person and are often
+# specific (a machine named after its owner). Any that already appears as a
+# whole word in the tracked tree (a generic name such as the deploy alias,
+# used all over the docs) is skipped and only counted -- that count is also
+# where an existing leak would show, so check it if it moves.
+#
+# The block's first line records when it was last synced; the pre-push hook
+# reads it and re-runs this script when the denylist is more than a week old
+# (scripts/hooks/pre-push), so the list keeps up with the inventory between
+# deploys.
 #
 # The pulled values are written into a marked block at the END of
 # .pii-denylist; everything above the marker is yours and is never touched.
@@ -55,7 +68,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --host) HOST="${2:?--host needs a value}"; shift ;;
-    -h|--help) sed -n '2,32p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,48p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -76,14 +89,35 @@ select distinct v from (
   union select custodian from asset where custodian is not null
 ) t where v is not null and length(trim(v)) >= 3 order by v;
 SQL
+# Separate query, and allowed to fail: softwarehost only exists from
+# migration e4a7c2b9d1f3 on, and a host without it must still sync the rest.
+docker compose exec -T db psql -U assetmgt -d assetmgt -tA \
+  -c "select distinct 'host:' || hostname from softwarehost where hostname is not null" 2>/dev/null || true
 for k in DEFAULT_OWNER SECONDARY_OWNER_NAME SECONDARY_OWNER_HOSTNAME_KEYWORD; do
   grep -m1 "^${k}=" .env 2>/dev/null | cut -d= -f2-
 done
 REMOTE
 )" || { echo "!!! could not read the inventory on '$HOST' -- nothing changed." >&2; exit 3; }
 
+# Machine hostnames ("host:" lines) are kept only if the tracked tree doesn't
+# already use them as a word -- see the header. Never printed, only counted.
+HOSTS_KEPT=""
+HOSTS_SKIPPED=0
+while IFS= read -r line; do
+  h="$(printf '%s' "$line" | sed -e 's/^host://' -e 's/[[:space:]]*$//')"
+  [ "${#h}" -ge 4 ] || continue
+  if git -C "$REPO_DIR" rev-parse -q --verify HEAD >/dev/null 2>&1 \
+     && git -C "$REPO_DIR" --no-pager grep -qiwF -e "$h" HEAD -- 2>/dev/null; then
+    HOSTS_SKIPPED=$((HOSTS_SKIPPED + 1))
+  else
+    HOSTS_KEPT="$(printf '%s\n%s' "$HOSTS_KEPT" "$h")"
+  fi
+done < <(printf '%s\n' "$PULLED" | grep '^host:' || true)
+HOSTS_KEPT_COUNT="$(printf '%s\n' "$HOSTS_KEPT" | grep -c . || true)"
+
 # Drop template defaults and anything too short to be an identifier.
-NEW_BLOCK="$(printf '%s\n' "$PULLED" | sed 's/[[:space:]]*$//' | awk 'length($0) >= 3 && tolower($0) != "owner" && tolower($0) != "unknown"' | sort -u)"
+NEW_BLOCK="$( { printf '%s\n' "$PULLED" | grep -v '^host:' || true; printf '%s\n' "$HOSTS_KEPT"; } \
+  | sed 's/[[:space:]]*$//' | awk 'length($0) >= 3 && tolower($0) != "owner" && tolower($0) != "unknown"' | sort -u)"
 NEW_COUNT="$(printf '%s\n' "$NEW_BLOCK" | grep -c . || true)"
 [ "$NEW_COUNT" -gt 0 ] || { echo "!!! the inventory returned no identifiers -- refusing to write an empty block." >&2; exit 1; }
 
@@ -105,7 +139,7 @@ fi
 # Split the existing file into the hand-written part and the old block.
 if [ -f "$DENYLIST" ]; then
   HAND="$(awk -v b="$BEGIN_MARK" '$0 == b {exit} {print}' "$DENYLIST")"
-  OLD_BLOCK="$(awk -v b="$BEGIN_MARK" -v e="$END_MARK" '$0 == e {f=0} f {print} $0 == b {f=1}' "$DENYLIST")"
+  OLD_BLOCK="$(awk -v b="$BEGIN_MARK" -v e="$END_MARK" '$0 == e {f=0} f && !/^#/ {print} $0 == b {f=1}' "$DENYLIST")"
 else
   HAND="# Literal strings that must NEVER appear in a commit to this repo.
 # One per line. Case-insensitive substring match (scripts/check-pii.sh)."
@@ -119,6 +153,7 @@ HAND_COUNT="$(printf '%s\n' "$HAND" | grep -vE '^\s*(#|$)' | grep -c . || true)"
 echo "== .pii-denylist sync from $HOST =="
 echo "  hand-written entries : $HAND_COUNT (untouched)"
 echo "  auto block           : $OLD_COUNT -> $NEW_COUNT entries (+$ADDED / -$REMOVED)"
+echo "  machine hostnames    : $HOSTS_KEPT_COUNT added, $HOSTS_SKIPPED skipped (already used as a word in the repo)"
 [ -z "$IN_HISTORY" ] || echo "  already in git history : $IN_HISTORY (still added -- scripts/check-pii.sh --full names the locations; baseline or rewrite them)"
 if [ "$DRY_RUN" -eq 1 ]; then echo "  (dry run -- nothing written)"; exit 0; fi
 
@@ -126,6 +161,7 @@ TMP="$(mktemp "$REPO_DIR/.pii-denylist.XXXXXX")"
 {
   printf '%s\n' "$HAND" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
   printf '\n%s\n' "$BEGIN_MARK"
+  printf '# last synced: %s from %s\n' "$(date -u +%Y-%m-%d)" "$HOST"
   printf '%s\n' "$NEW_BLOCK"
   printf '%s\n' "$END_MARK"
 } > "$TMP"

@@ -134,3 +134,35 @@ def test_the_written_file_is_owner_only(tmp_path):
 @pytest.mark.parametrize("flag", ["--bogus"])
 def test_unknown_flag_is_a_usage_error(tmp_path, flag):
     assert _run(tmp_path, INVENTORY, flag, denylist=HAND).returncode == 2
+
+
+def test_the_block_records_when_it_was_synced(tmp_path):
+    r = _run(tmp_path, INVENTORY, denylist=HAND)
+    assert r.returncode == 0, r.stderr
+    block = (tmp_path / ".pii-denylist").read_text().split(BEGIN, 1)[1]
+    stamp = block.splitlines()[1]
+    assert stamp.startswith("# last synced: 20") and stamp.endswith(" from mint")
+    # A second sync doesn't count the stamp line as an entry that went away.
+    again = _run(tmp_path, INVENTORY)
+    assert "(+0 / -0)" in again.stdout
+
+
+def test_machine_hostnames_are_added_unless_the_repo_already_uses_them(tmp_path):
+    """A computer's own hostname (from the software collector) is often
+    specific and gets denylisted; one the tracked tree already uses as a word
+    -- a generic name like the deploy alias -- is skipped and only counted."""
+    _git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / "README.md").write_text("deploy with ssh examplebox\n")
+    _git(tmp_path, "add", "README.md")
+    _git(tmp_path, "commit", "-qm", "docs")
+
+    inventory = INVENTORY + "host:examplebox\nhost:fake-laptop-x1\nhost:ab\n"
+    r = _run(tmp_path, inventory, denylist=HAND)
+
+    assert r.returncode == 0, r.stderr
+    assert "machine hostnames    : 1 added, 1 skipped" in r.stdout
+    block = (tmp_path / ".pii-denylist").read_text().split(BEGIN, 1)[1]
+    assert "fake-laptop-x1" in block
+    assert "examplebox" not in block and "host:" not in block
+    for secret in ("fake-laptop-x1", "examplebox"):
+        assert secret not in r.stdout + r.stderr

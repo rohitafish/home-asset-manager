@@ -90,6 +90,31 @@ else
   echo "pre-push: ruff not installed in .venv -- skipping lint (run: pip install -r requirements-dev.txt)" >&2
 fi
 
+# Keep .pii-denylist current before scanning with it. redeploy.sh re-syncs
+# it from the live inventory on every deploy, but weeks can pass between
+# deploys while new devices (MACs, serials) and machines (their hostnames)
+# join the inventory -- and a denylist that doesn't know a value can't block
+# it. So when the sync stamp is older than PII_DENYLIST_MAX_AGE_DAYS (default
+# 7), or missing, re-sync here. A failed sync (host unreachable, away from
+# home) only warns: the push is still scanned against the existing list,
+# and blocking every push while travelling would just train --no-verify.
+SYNC="$REPO_DIR/scripts/pii-denylist-sync.sh"
+if [ -x "$SYNC" ]; then
+  MAX_AGE="${PII_DENYLIST_MAX_AGE_DAYS:-7}"
+  SYNCED="$(sed -n 's/^# last synced: \([0-9-]*\).*/\1/p' "$REPO_DIR/.pii-denylist" 2>/dev/null | head -n 1)"
+  AGE="$(python3 -c 'import sys, datetime as d
+try:
+    print((d.date.today() - d.date.fromisoformat(sys.argv[1])).days)
+except Exception:
+    print(99999)' "${SYNCED:-none}" 2>/dev/null || echo 99999)"
+  if [ "$AGE" -gt "$MAX_AGE" ]; then
+    echo "pre-push: .pii-denylist last synced ${SYNCED:-never} -- refreshing it from the inventory first" >&2
+    if ! "$SYNC" >&2; then
+      echo "pre-push: WARNING: .pii-denylist sync failed -- scanning with the existing list (run scripts/pii-denylist-sync.sh when the host is reachable)" >&2
+    fi
+  fi
+fi
+
 exec 3<&0
 
 while read -r local_ref local_sha remote_ref remote_sha <&3; do

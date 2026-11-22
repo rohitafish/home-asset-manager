@@ -865,11 +865,34 @@ assistant or human contributor.
   an identifier already in history is a leak that has happened, and a
   future commit carrying it must still FAIL; the script header has the
   reasoning). Before it existed (2026-09-12) the file knew 1 of 56 MACs,
-  and real MACs reached GitHub in a test file that same morning. Hostnames,
-  model numbers and private IPs are deliberately not pulled -- too many
-  are generic and would collide with the docs' illustrative values.
-  Tests must use fabricated identifiers (`00:1a:2b:3c:4d:xx`-style MACs,
-  `C02FAKE...` serials), never real ones "because they're handy".
+  and real MACs reached GitHub in a test file that same morning. Asset
+  hostnames, model numbers and private IPs are deliberately not pulled --
+  too many are generic and would collide with the docs' illustrative values.
+  The exception (since 2026-11-22) is each computer's own OS hostname from
+  the software inventory (`softwarehost.hostname`): those are often
+  specific, so they are pulled unless the tracked tree already uses one as
+  a word (a generic name like the deploy alias), which is skipped and
+  counted.
+- **The denylist re-syncs itself before a push when it's stale.** The sync
+  stamps its block (`# last synced: <date> from <host>`), and
+  `scripts/hooks/pre-push` re-runs it when that stamp is more than
+  `PII_DENYLIST_MAX_AGE_DAYS` (default 7) old or missing -- so weeks
+  without a deploy no longer mean weeks of new devices the check doesn't
+  know. If the host can't be reached the hook warns and scans with the
+  existing list rather than blocking (a push from away shouldn't need
+  `--no-verify`). Re-copy the hook after changing it (install step below).
+- **Tests, examples and docs use invented values only** --
+  `00:1a:2b:3c:4d:xx`-style MACs, `C02FAKE...` serials, `example-*` names,
+  `9.9.9` versions, `OSV-2099-0001` IDs -- never real ones "because they're
+  handy", and never output copied from a real machine, collection or the
+  live database. **The denylist cannot catch that class**: it only knows
+  identifiers, and a host's package versions, an open vulnerability on it,
+  install timestamps or an asset id are not identifiers. That is what
+  happened on 2026-11-22 (the software inventory's first test fixtures,
+  replaced with invented ones before the PR was squash-merged). So before
+  committing, read the diff's added lines (`git diff --cached | grep '^+'`)
+  for anything that came from a real source; the check is the backstop,
+  not the review.
 - Real personal data has leaked into this repo twice: household names,
   a real hostname/LAN IP, and an SSH key filename sat in git history for
   weeks after a commit *scrubbed the current files* without rewriting
