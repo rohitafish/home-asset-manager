@@ -117,6 +117,12 @@ td.rag-cell { white-space: nowrap; }
 ul.reasons { margin: 0; padding-left: 1rem; }
 table.software td { vertical-align: top; }
 table.software td:nth-child(6) { min-width: 14rem; }
+table.software td.sw-notes { min-width: 14rem; max-width: 24rem; }
+.sw-note { margin-bottom: 0.5rem; }
+.sw-note-add summary { cursor: pointer; color: #555; }
+.sw-note-add form { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.35rem; }
+.sw-note-add textarea { min-height: 4rem; padding: 0.35rem; font-family: inherit; font-size: 0.85rem; }
+.sw-note-add button { align-self: flex-start; }
 .table-scroll { overflow-x: auto; margin-bottom: 1.5rem; }
 .table-scroll table { margin-bottom: 0; }
 

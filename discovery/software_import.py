@@ -34,6 +34,7 @@ from app.models import (
     SoftwareHost,
     SoftwareInstall,
     SoftwareItem,
+    SoftwareNote,
 )
 
 logger = logging.getLogger(__name__)
@@ -394,8 +395,10 @@ def import_inventory(session: Session, doc: dict, asset_id: int | None = None) -
     session.add(host)
     session.flush()
 
-    # Items no machine has any more.
+    # Items no machine has any more -- unless someone wrote a review note on
+    # one: that finding should still be there if the software comes back.
     used = set(session.exec(select(SoftwareInstall.software_id).distinct()).all())
+    used |= set(session.exec(select(SoftwareNote.software_id).distinct()).all())
     pruned = 0
     for item in items.values():
         if item.id not in used:

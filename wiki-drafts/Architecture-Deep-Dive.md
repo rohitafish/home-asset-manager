@@ -211,6 +211,7 @@ and [Security Model](Security-Model).
 | `SoftwareItem` | One distinct piece of software across every machine (one row on the Software tab) |
 | `SoftwareInstall` | That software on one machine, as one package manager sees it: version, publication date, pending updates, known vulnerabilities, end-of-life facts |
 | `SoftwareHost` | When each machine's software was last collected, and its platform and OS |
+| `SoftwareNote` | An append-only review note on a piece of software (the Software tab's Notes column) |
 
 ## Entry points
 
