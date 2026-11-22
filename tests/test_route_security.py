@@ -30,7 +30,7 @@ from fastapi.routing import APIRoute
 
 import app.routers
 from app import auth
-from app.routers import assets, dashboard
+from app.routers import assets, dashboard, software
 
 # Every router that must sit behind both guards. Not hardcoded as the whole
 # story -- test_every_router_module_is_listed_here below fails if a new
@@ -39,6 +39,7 @@ from app.routers import assets, dashboard
 GUARDED_ROUTERS = {
     "app/routers/dashboard.py": dashboard.router,
     "app/routers/assets.py": assets.router,
+    "app/routers/software.py": software.router,
 }
 
 # /health is deliberately unauthenticated: scripts/redeploy.sh curls it as

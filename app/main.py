@@ -11,7 +11,7 @@ from app.clock import utcnow_naive
 from app.db import engine
 from app.logging_config import configure_logging
 from app.models import DiscoveryRun
-from app.routers import assets, dashboard
+from app.routers import assets, dashboard, software
 
 # Response headers applied to every request, not just the require_admin
 # routers -- /health is unauthenticated by design (redeploy.sh's deploy gate,
@@ -144,6 +144,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(assets.router)
 app.include_router(dashboard.router)
+app.include_router(software.router)
 
 
 @app.on_event("startup")

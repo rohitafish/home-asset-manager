@@ -1084,6 +1084,51 @@ assistant or human contributor.
   same update, the same way README/AGENTS.md updates are already expected
   above.
 
+## Software inventory (the Software tab)
+- **Collection runs on the machines, import runs on the host.**
+  `scripts/collect-software.sh` (on a dev machine) pipes
+  `scripts/software-inventory/collect_unix.py` or `collect_windows.ps1` to
+  each machine over ssh, then pipes the JSON to `discovery.cli
+  software-import` on the host and runs `software-eol`. The host never
+  holds ssh keys to the other machines -- deliberately: a server that can
+  log in to every laptop turns one compromise into all of them. The target
+  list is `software-hosts.conf` (gitignored: aliases are household details,
+  same rule as `.pii-denylist`).
+- **`collect_unix.py` must stay a single stdlib-only file that runs on
+  Python 3.9** -- it executes on every machine, down to Apple's Command Line
+  Tools Python on a Mac, not on the host's 3.12. `ruff.toml` exempts it from
+  UP017 (`datetime.UTC` is 3.11+) and UP031 for that reason; don't
+  "modernise" it. Check with `ast.parse(..., feature_version=(3, 9))`.
+- **`brew vulns` exits 1 when it finds something.** Treating non-zero as
+  failure silently drops every finding (it did, on the first run).
+  `_run(..., ok_codes=(0, 1))` is why.
+- **dpkg status `hi` (held) is installed.** A package pinned at its version
+  (a held kernel, say) still counts; filtering on `ii` alone dropped them.
+- **Never collect what identifies people.** Debian changelog lines carry
+  maintainers' names and emails: `changelog_date()` keeps the date and
+  discards the line. File paths carry home folders: no collector reports one.
+- **Grades are computed at render time, never stored** (`app/software_risk.py`).
+  Age thresholds and end-of-life dates move with the calendar; a stored grade
+  would be wrong the morning after. The page computes ~2,000 installs in
+  well under a second, so there is nothing to cache.
+- **Distro packages are graded differently on purpose**: age only raises
+  them to amber past 5 years, and an upstream end of life is amber, not red,
+  because the distribution backports fixes (an LTS release's OpenSSL or
+  git can be upstream-EOL and still patched). Their real security signal
+  is a pending update from a `-security` pocket.
+- **`SoftwareInstall` has no unique constraint**, unlike `AssetService`:
+  the generic merge in `app/asset_children.py` re-points rows, and a
+  constraint would make a merge of two collected machines fail. The next
+  import of the survivor collapses duplicates instead. `SoftwareInstall` and
+  `SoftwareHost` are in `ASSET_CHILD_MODELS`.
+- **The importer decides what is the OS** (`classify()` in
+  `discovery/software_import.py`): kernel/firmware/OS-release packages and
+  Windows' own entries are dropped, required/important apt packages are
+  "base system", the rest application or library. Change it there, not in a
+  collector, so it needs no redeploy to every machine.
+- **Bundle dates before 1995 are discarded.** Some apps zero their file
+  timestamps (1980-01-01, the ZIP epoch), which would grade them red for age.
+
 ## Asset-child tables (cascade deletion)
 - There's no `ON DELETE CASCADE` on any FK pointing at `asset.id`, so
   deleting/merging an asset requires cleaning up every dependent row by

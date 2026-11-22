@@ -317,3 +317,85 @@ class Finding(SQLModel, table=True):
     closed_date: datetime | None = None
     evidence: str | None = None
     source: str | None = None
+
+
+class SoftwareItem(SQLModel, table=True):
+    """One distinct piece of software across every machine -- the row the
+    Software tab shows. `key` is the cross-source match key built by
+    discovery/software_import.py's software_key() (so Homebrew's "git", apt's
+    "git" and a Windows "Git" land on one item); `name` is the nicest display
+    name seen so far. The operating system itself is never an item -- it is
+    recorded on the hardware/VM asset (Asset.firmware_version and friends),
+    and the importer drops kernel/OS-release packages before they get here."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    key: str = Field(unique=True, index=True)
+    name: str
+    publisher: str | None = None
+    description: str | None = None
+    homepage: str | None = None
+    # endoflife.date product slug this item maps to (None = not tracked
+    # there, or not looked up yet). Set by discovery/software_eol.py.
+    eol_product: str | None = None
+    first_seen: datetime = Field(default_factory=utcnow_naive)
+
+
+class SoftwareInstall(SQLModel, table=True):
+    """One item installed on one machine, as one package manager sees it.
+    Stores facts only -- the red/amber/green grade is computed from these at
+    render time (app/software_risk.py) so an age threshold crossed overnight
+    shows up without a re-import. Replaced wholesale per asset on every
+    import of that machine (first_seen is carried over by key), so a package
+    removed from a machine disappears from the tab on its next collection.
+
+    No unique constraint on purpose: an asset merge (app/asset_children.py)
+    re-points these rows generically and could otherwise collide; the next
+    import of the survivor collapses any duplicates."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    software_id: int = Field(foreign_key="softwareitem.id", index=True)
+    asset_id: int = Field(foreign_key="asset.id", index=True)
+    source: str  # brew | brew-cask | app | apt | snap | flatpak | windows | appx
+    package_name: str  # the name inside that source, e.g. "python@3.12"
+    category: str = "application"  # application | library | system
+    version: str | None = None
+    published_date: date | None = None  # publication date of the installed version
+    published_source: str | None = None  # where published_date came from
+    installed_date: date | None = None
+    update_available: bool = False
+    latest_version: str | None = None
+    security_update: bool = False  # the pending update is a security fix
+    deprecated: bool = False
+    disabled: bool = False  # Homebrew: disabled formula/cask (unmaintained)
+    orphaned: bool = False  # apt: no configured repository offers it any more
+    intel_only: bool = False  # macOS app that needs Rosetta on Apple silicon
+    # Known vulnerabilities from the machine's own scanner (brew vulns), as
+    # JSON text: [{"id", "severity", "fixed"}]. NULL = not scanned; "[]" =
+    # scanned, nothing found. Same JSON-in-text convention as ProbeResult.
+    vulns_json: str | None = None
+    # endoflife.date facts for the release cycle this version belongs to.
+    eol_cycle: str | None = None
+    eol_date: date | None = None
+    upstream_latest: str | None = None
+    upstream_latest_date: date | None = None
+    first_seen: datetime = Field(default_factory=utcnow_naive)
+    last_seen: datetime = Field(default_factory=utcnow_naive)
+
+
+class SoftwareHost(SQLModel, table=True):
+    """When each machine's software was last collected, and what it runs.
+    One row per asset (kept to one by the importer)."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    asset_id: int = Field(foreign_key="asset.id", index=True)
+    collected_at: datetime = Field(default_factory=utcnow_naive)
+    # The machine's own hostname as its collector reported it -- a fallback
+    # match for the next import when its MAC has changed (private Wi-Fi
+    # addresses rotate).
+    hostname: str | None = None
+    platform: str  # darwin | linux | windows
+    os_name: str | None = None
+    os_version: str | None = None
+    package_count: int = 0
+    # Collector notes worth surfacing ("brew vulns unavailable", ...), JSON list.
+    notes_json: str | None = None

@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Software{% endblock %}
+{% block content %}
+{% set base_qs = {'q': q, 'machine': machine or '', 'rag': rag, 'show': 'all' if show_all else ''} %}
+{% macro sort_th(key, label) %}
+  {% set qs = dict(base_qs, sort=key) %}
+  <th><a class="sort-link" href="/software?{{ qs | urlencode }}">{{ label }}{% if sort == key %} ▼{% endif %}</a></th>
+{% endmacro %}
+
+<div class="toolbar">
+  <h2>Software</h2>
+  <div class="button-row">
+    <form method="post" action="/software/refresh-eol">
+      <button type="submit" title="Look up end-of-life dates on endoflife.date">Refresh end-of-life data</button>
+    </form>
+    <a class="button" href="/software.csv?{{ dict(base_qs, sort=sort) | urlencode }}">Download CSV</a>
+  </div>
+</div>
+
+{% if eol == "done" %}<p class="flash">End-of-life data refreshed.</p>
+{% elif eol == "busy" %}<p class="flash flash-warn">A discovery run is in progress; try again when it finishes.</p>
+{% elif eol == "failed" %}<p class="flash flash-warn">The end-of-life refresh failed; see logs/app.error.log.</p>
+{% endif %}
+
+<p class="hint">
+  Installed software on every collected machine, one row per piece of software. The operating
+  system itself isn't listed: it's recorded on the machine's own asset. Grades are worked out
+  from known vulnerabilities, supportability and the age of the installed version, and each one
+  shows its reasons. What each kind of software is checked against is listed under
+  <a href="#coverage">Coverage</a>. Collect with <code>scripts/collect-software.sh</code>.
+</p>
+
+{% if hosts %}
+<table class="report software-hosts">
+  <thead><tr><th>Machine</th><th>System</th><th>Packages</th><th>Last collected</th><th>Notes</th></tr></thead>
+  <tbody>
+  {% for h in hosts %}
+    <tr>
+      <td><a href="/software?{{ dict(base_qs, machine=h.host.asset_id, sort=sort) | urlencode }}">{{ h.label }}</a>
+        &middot; <a class="muted" href="/assets/{{ h.host.asset_id }}">asset</a></td>
+      <td>{{ h.host.os_name or h.host.platform }} {{ h.host.os_version or "" }}</td>
+      <td class="num">{{ h.host.package_count }}</td>
+      <td class="date">{{ h.host.collected_at | localdt }}</td>
+      <td>{{ h.notes | join("; ") }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<form method="get" class="filters software-filters">
+  <input type="search" name="q" value="{{ q }}" placeholder="Search software">
+  <select name="machine" data-autosubmit>
+    <option value="">All machines</option>
+    {% for h in hosts %}
+      <option value="{{ h.host.asset_id }}" {% if machine == h.host.asset_id %}selected{% endif %}>{{ h.label }}</option>
+    {% endfor %}
+  </select>
+  <select name="rag" data-autosubmit>
+    <option value="">All grades</option>
+    {% for key in ["red", "amber", "green", "unrated"] %}
+      <option value="{{ key }}" {% if rag == key %}selected{% endif %}>{{ rag_labels[key] }}</option>
+    {% endfor %}
+  </select>
+  <select name="show" data-autosubmit>
+    <option value="" {% if not show_all %}selected{% endif %}>Applications</option>
+    <option value="all" {% if show_all %}selected{% endif %}>Applications, libraries and base system</option>
+  </select>
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <button type="submit">Filter</button>
+  {% if q or machine or rag or show_all %}<a href="/software">Clear</a>{% endif %}
+</form>
+
+<p class="rag-summary">
+  {% for key in ["red", "amber", "green", "unrated"] %}
+    <a class="rag-chip rag-{{ key }}" href="/software?{{ dict(base_qs, rag=key, sort=sort) | urlencode }}">{{ rag_labels[key] }} {{ counts[key] }}</a>
+  {% endfor %}
+  <span class="muted">{{ rows | length }} item{{ "s" if rows | length != 1 }}</span>
+</p>
+
+<div class="table-scroll">
+<table class="report software">
+  <thead>
+    <tr>
+      {{ sort_th('risk', 'Risk') }}{{ sort_th('name', 'Software') }}
+      <th>Installed version &middot; published &middot; machines</th>
+      {{ sort_th('published', 'Oldest published') }}{{ sort_th('machines', 'Machines') }}
+      <th>Why</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td class="rag-cell"><span class="rag-badge rag-{{ row.rag }}">{{ rag_labels[row.rag] }}</span></td>
+      <td>
+        <strong>{{ row.item.name }}</strong>
+        <div class="muted">{{ row.category }}{% if row.item.publisher %} &middot; {{ row.item.publisher }}{% endif %}</div>
+        {% if row.item.description %}<div class="muted small">{{ row.item.description }}</div>{% endif %}
+      </td>
+      <td>
+        {% for v in row.versions %}
+          <div class="sw-version">
+            <span class="sw-ver">{{ v.version }}</span>
+            &middot; {% if v.published %}<span title="{{ v.published_source }}">{{ v.published.isoformat() }}</span>{% else %}<span class="muted">date unknown</span>{% endif %}
+            &middot; {% for m in v.machines %}<a class="machine-chip rag-border-{{ m.rag }}" href="/software?{{ dict(base_qs, machine=m.id, sort=sort) | urlencode }}">{{ m.label }}</a>{% endfor %}
+            <span class="muted small">({{ v.sources | join(", ") }})</span>
+          </div>
+        {% endfor %}
+      </td>
+      <td class="date">{{ row.oldest_published.isoformat() if row.oldest_published else "—" }}</td>
+      <td class="num">{{ row.machine_count }}</td>
+      <td class="small">
+        {% if row.reasons %}
+          <ul class="reasons">{% for r in row.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+        {% else %}<span class="muted">No known issues</span>{% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6">
+      {% if hosts %}Nothing matches these filters.{% else %}No software collected yet &mdash; run
+      <code>scripts/collect-software.sh</code> from a dev machine (see README's "Software inventory").{% endif %}
+    </td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h3 id="coverage">Coverage</h3>
+<table class="report software-coverage">
+  <thead><tr><th>Source</th><th>Checked against</th></tr></thead>
+  <tbody>
+  {% for source, text in coverage.items() %}
+    <tr><td>{{ source_labels[source] }}</td><td>{{ text }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="hint">
+  <strong>Red</strong>: a high or critical vulnerability, a pending security update, end of life,
+  disabled by Homebrew, or the installed version published more than 5 years ago.
+  <strong>Amber</strong>: other known vulnerabilities, any other pending update, deprecated or
+  no-longer-packaged software, Intel-only Mac apps, end of life within 6 months, or published
+  more than 2 years ago. Linux distribution packages are only marked amber for age, and only past
+  5 years, because the distribution backports security fixes into older versions.
+  <strong>Unrated</strong>: nothing to judge by. A green row means no known issues among what
+  was checked, not that the software was scanned for everything.
+</p>
+{% endblock %}

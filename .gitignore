@@ -33,3 +33,7 @@ devices/
 # `coverage run` (see .coveragerc), never useful to track.
 .coverage
 htmlcov/
+
+# scripts/collect-software.sh's target list: ssh aliases and asset ids of the
+# household's machines -- household details, so never committed.
+software-hosts.conf
