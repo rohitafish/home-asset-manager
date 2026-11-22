@@ -129,6 +129,28 @@ README's "Off-site database backups" section for the setup and restore steps.
 > silent no-op. Override it in the unit (`scripts/systemd/assetmgt-backup.service`)
 > or the plist (`com.assetmgt.backup.plist`) instead if you ever need to change it.
 
+## Software inventory (not in `.env`)
+
+The software inventory needs no `.env` settings: it's collected from a dev
+machine, not the host. `scripts/collect-software.sh` reads its targets from
+`software-hosts.conf` at the repo root on that dev machine (gitignored, since
+the ssh aliases are household details), one machine per line:
+
+```text
+<ssh alias, or "local">  <unix|windows>  [asset id]
+```
+
+The asset id is optional; see the README's
+[Software inventory](https://github.com/rohitafish/home-asset-manager#software-inventory)
+section for when you need it. These process-environment variables override
+the script's defaults:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `SOFTWARE_HOSTS_CONF` | `software-hosts.conf` at the repo root | Read targets from another file |
+| `DEPLOY_HOST` | the deploy host alias | The app host the results are imported on, as for `redeploy.sh` |
+| `DEPLOY_REMOTE_DIR` | `~/claudecode/assetmgt` | The app's directory on that host |
+
 ## If something's misconfigured
 
 Most misconfiguration here fails **soft** — a missing UniFi key means no

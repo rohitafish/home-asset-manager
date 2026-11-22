@@ -124,6 +124,44 @@ type, and a magic-byte check against the file's actual header (never trusting
 the browser-supplied content type alone) — and are **never written to disk**;
 they're read once, analysed, and discarded.
 
+## The software inventory collectors
+
+Listing the software on a computer means running something on it, which
+raises the question of who gets to log in where. The design answer:
+
+- **The app host is never given ssh access to your other machines.** A
+  server that can log in to every laptop turns one compromise into all of
+  them. Collection is driven instead from a dev machine that already has
+  that access (`scripts/collect-software.sh`), which hands the results to
+  the host.
+- **Read-only, and nothing installed.** The collectors are piped over ssh,
+  run, and exit. They read package databases and app bundles and write
+  nothing on the machine; the only writes are to the app's own database.
+- **No data that identifies people.** Debian changelog lines carry package
+  maintainers' names and emails, so the collector keeps the date and drops
+  the line. File paths carry home-folder names, so no collector reports a
+  path.
+- **The list of machines stays private.** `software-hosts.conf`, which names
+  them by ssh alias, is gitignored like the PII denylist.
+
+## What leaves your network
+
+Apart from the optional AI assistant (above), the app makes four kinds of
+outbound request, all started by you and none carrying anything that
+identifies your household:
+
+| Lookup | Sent to | What's sent |
+|---|---|---|
+| CVE matching | NVD (`services.nvd.nist.gov`) | A product name and version from an nmap service banner, e.g. `openssh 99.1` |
+| Exploit likelihood | FIRST EPSS (`api.first.org`) | CVE ids |
+| Known exploited vulnerabilities | CISA KEV (`www.cisa.gov`) | Nothing: the whole catalogue is downloaded |
+| Software end-of-life dates | endoflife.date | A request for the product list, then one per matched product (e.g. `/api/nodejs.json`) |
+
+Someone watching those requests could learn *which* products and versions you
+run, but not your addresses, hostnames, serials or anything about who you
+are. Off-site backups go to your own S3 bucket, encrypted, and only if you
+configure them — see [Backup & Disaster Recovery](Backup-and-Disaster-Recovery).
+
 ## Supply chain & repo hygiene
 
 - CI runs `ruff` (lint) and the full test suite on every push and pull

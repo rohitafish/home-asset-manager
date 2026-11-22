@@ -9,12 +9,15 @@ scaled down from the enterprise-grade practices that inspired it.
 **Scope and requirements:** this is designed for a small home network (tens
 of devices, not hundreds), and has two hard dependencies:
 
-- **macOS** — the app and its discovery collectors run natively on a Mac,
-  not on Linux/Windows. Those two specifically can't be containerised:
-  nmap needs raw-socket/L2 access to the LAN that a Linux-VM-backed Docker
-  runtime on macOS can't reliably give it. Postgres *is* containerised,
-  since it only needs a port on localhost — so this is a split, not a
-  no-containers rule (see [Architecture](#architecture)).
+- **A Linux or macOS host** — the app and its discovery collectors run
+  natively on the host (systemd units on Linux, LaunchAgents on a Mac), not
+  in a container: nmap needs raw-socket/L2 access to the LAN, which a
+  Linux-VM-backed Docker runtime on macOS can't reliably give it. Postgres
+  *is* containerised, since it only needs a port on localhost — so this is a
+  split, not a no-containers rule (see [Architecture](#architecture)). The
+  live host has been Linux since September 2026 (see
+  [Installing on Linux](#installing-on-linux-the-oldmacbook)); Windows isn't
+  supported as a host.
 - **A Ubiquiti UniFi network** (a self-hosted UniFi Network controller, or a
   UDM/Cloud Gateway console) — one of the two discovery collectors talks to
   UniFi's local Integration API directly. The other collector (nmap) works
@@ -31,13 +34,14 @@ Two of the three moving parts run on the host and one runs in a container —
 the split is deliberate, and which side each lands on is forced by whether
 it needs real access to the LAN:
 
-- **The FastAPI app and discovery/scanning code run natively** on the Mac in
+- **The FastAPI app and discovery/scanning code run natively** on the host in
   a Python venv, *not* in a container. Nmap needs raw-socket/L2 access to the
   LAN, and on macOS every Docker runtime — Colima and Docker Desktop alike —
   puts containers behind a Linux VM's virtualised networking, which can't
   reliably provide that. So these run directly on the host.
-- **Postgres** runs in Docker (via [Colima](https://github.com/abiosoft/colima),
-  a lightweight CLI-only Docker runtime — no Docker Desktop GUI needed). It
+- **Postgres** runs in Docker (native `dockerd` on Linux; on a Mac via
+  [Colima](https://github.com/abiosoft/colima), a lightweight CLI-only Docker
+  runtime — no Docker Desktop GUI needed). It
   only needs a TCP port on localhost, never the LAN, so the VM boundary
   costs it nothing and containerising it avoids managing a native install.
 - Vulnerability enrichment matches nmap-detected service versions against the
@@ -45,6 +49,11 @@ it needs real access to the LAN:
   scores and the **CISA KEV** catalogue. The NVD API is used directly rather
   than nmap's own `vulscan`/`vulners` NSE scripts, since it's simpler to
   integrate correctly and to verify results against.
+- **The software inventory** is collected separately, on the computers
+  themselves: `scripts/collect-software.sh`, run from a dev machine, pipes a
+  read-only collector to each over ssh and hands the results to the host.
+  The host is never given ssh access to the other machines. See
+  [Software inventory](#software-inventory).
 
 ### Reconciliation across discovery sources
 

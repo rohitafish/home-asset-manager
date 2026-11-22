@@ -10,8 +10,10 @@ practice to fit a home network of tens of devices, not thousands.
 It discovers what's actually on your network (via UniFi, nmap, and Sonos),
 keeps a proper asset register (vendor, model, serial, purchase price,
 warranty, owner, location), does best-effort CVE matching against detected
-services, and estimates insurance replacement values — all running locally on
-your own LAN, with nothing exposed to the internet.
+services, lists the software installed on your computers with a
+red/amber/green risk grade for each, and estimates insurance replacement
+values — all running locally on your own LAN, with nothing exposed to the
+internet.
 
 ## At a glance
 
@@ -21,15 +23,16 @@ your own LAN, with nothing exposed to the internet.
 | **Needs** | A Ubiquiti UniFi network (self-hosted controller or UDM/Cloud Gateway) |
 | **Network exposure** | LAN-only. No port forwarded, ever. |
 | **Discovery** | On-demand only — nothing scans continuously in the background |
-| **Data leaves your network** | Only if you configure the optional AI assistant, and only per-conversation — see [Security Model](Security-Model) |
+| **Data leaves your network** | Nothing that identifies your household, unless you configure the optional AI assistant (and then only per-conversation). Vulnerability and end-of-life lookups send product names and versions, nothing else — see [Security Model](Security-Model#what-leaves-your-network) |
 
 ## Who this is for
 
 You're inventorying a home network in the tens-of-devices range, you already
 run (or are willing to run) a UniFi network, you're comfortable running a
-native macOS service, and you want a real asset register — not a spreadsheet —
-with some automation on top. If any of those don't hold (Windows/Linux only,
-hundreds of devices, no UniFi), this probably isn't the right tool; see
+native service on a Linux or macOS host, and you want a real asset register —
+not a spreadsheet — with some automation on top. If any of those don't hold
+(a Windows-only household, hundreds of devices, no UniFi), this probably isn't
+the right tool; see
 [Roadmap / Known Limitations](Roadmap-and-Known-Limitations).
 
 ## Where to go next
@@ -43,6 +46,7 @@ hundreds of devices, no UniFi), this probably isn't the right tool; see
 | See every software component this app is built on | [Software Bill of Materials](SBOM) |
 | Understand the AWS backup design (storage, retention, encryption) | [Backup & Disaster Recovery](Backup-and-Disaster-Recovery) |
 | Understand a specific discovery collector | [Discovery Collectors Guide](Discovery-Collectors-Guide) |
+| Inventory the software on my computers | [Discovery Collectors Guide: Software inventory](Discovery-Collectors-Guide#software-inventory), then the README's [Software inventory](https://github.com/rohitafish/home-asset-manager#software-inventory) section |
 | Understand a specific probe | [Probes Reference](Probes-Reference) |
 | Understand the AI assistant's safety model | [The LLM Assistant, Explained](The-LLM-Assistant-Explained) |
 | Know how vulnerability matching and valuations actually work (and their limits) | [CVE Matching & Valuation Methodology](CVE-Matching-and-Valuation-Methodology) |

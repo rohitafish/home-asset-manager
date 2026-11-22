@@ -118,6 +118,38 @@ problem. If it's a genuine migration error, check `alembic current` against
 
 ---
 
+**`collect-software.sh` says "collection failed -- off, asleep or
+unreachable?" for a machine.**
+That machine is skipped and the rest still import; it keeps its previous
+software list until a later run reaches it. Wake it and run the script again
+for just that one (`scripts/collect-software.sh <alias>`). The script uses
+ssh with `BatchMode=yes`, so a machine that would ask for a password or a new
+host-key confirmation also fails here: check `ssh <alias> true` works
+without a prompt first. The text after the message is the start of the
+collector's own error output, if it got that far.
+
+---
+
+**The software import fails with "no asset matches this machine" or "matches
+several assets".**
+The importer matches each machine to its asset by MAC address, then by the
+hostname a previous import recorded, and refuses to guess. Add the asset id
+(the number in the asset's `/assets/<id>` URL) as the third column for that
+machine in `software-hosts.conf`. A machine whose Wi-Fi uses a private,
+rotating MAC needs this until its first successful import has recorded its
+hostname.
+
+---
+
+**A Mac shows fewer vulnerabilities than expected.**
+`brew vulns` reads Homebrew's local metadata, which the collector doesn't
+refresh. Run `brew update` on that Mac and collect again. If that machine's
+Notes, in the Software tab's machines table, say "brew vulns unavailable",
+the command didn't run there, so its formulae are graded on age, end of life
+and pending updates only.
+
+---
+
 **Still stuck?** Open an issue with what `./scripts/preflight.sh` reported —
 and `./scripts/aws-status.sh` too if the problem touches backups, TLS or
 DNS, since preflight only covers the deploy host itself.

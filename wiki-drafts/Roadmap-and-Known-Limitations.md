@@ -18,14 +18,23 @@ Several limits are permanent design choices, not gaps waiting to be filled:
 - **LAN-only, by design, not by omission.** No port is ever forwarded; the
   threat model in [Security Model](Security-Model) assumes this. Don't expect
   (or add) internet-facing hardening here — that's a different project.
-- **macOS + UniFi required.** nmap needs raw-socket/L2 access Docker can't
-  reliably give it on macOS, so the app and its collectors run natively — see
-  [Architecture Deep-Dive](Architecture-Deep-Dive). Full device naming/VLAN/
-  topology data specifically depends on UniFi.
+- **A Linux or macOS host, and UniFi, required.** nmap needs raw-socket/L2
+  access Docker can't reliably give it on macOS, so the app and its
+  collectors run natively on the host (systemd on Linux, launchd on a Mac) —
+  see [Architecture Deep-Dive](Architecture-Deep-Dive). Windows isn't
+  supported as a host, though the software inventory does collect from
+  Windows machines. Full device naming/VLAN/topology data specifically
+  depends on UniFi.
 - **Best-effort vulnerability matching, not authoritative.** Keyword search
   against nmap banners, not CPE-accurate CVE matching — see
   [CVE Matching & Valuation Methodology](CVE-Matching-and-Valuation-Methodology).
   Treat findings as a starting point, always.
+- **Software vulnerability data only where a machine already has it.** The
+  software inventory reads `brew vulns` for Homebrew formulae and the
+  distribution's security pocket for Linux packages; it doesn't run its own
+  scanner. Mac apps, casks, snaps, flatpaks and Windows programs are graded
+  on age, end of life and pending updates only, so a green row means "no
+  known issues among what was checked", not "safe".
 - **A single shared admin credential, not multi-user.** One household, one
   login. No roles, no per-user audit trail.
 - **New-for-old valuation, not a market-price feed.** A defensible estimate
