@@ -41,7 +41,7 @@ flowchart TD
     UniFi["UniFi collector\n(Integration API)"] --> Normalize
     Nmap["nmap collector\n(ping sweep + service scan)"] --> Normalize
     Sonos["Sonos household collector\n(local port-1400 protocol)"] --> Normalize
-    LocalHost["local-host collector\n(this Mac self-registers)"] --> Normalize
+    LocalHost["local-host collector\n(the host self-registers)"] --> Normalize
     Normalize["discovery/normalize.py\nDiscoveredDevice shape"] --> Reconcile
     Reconcile["discovery/reconcile.py\nmatch by MAC, fall back to IP"] --> DB[("Asset /\nAssetInterface /\nAssetService")]
     DB --> Correlate["app/correlate.py\nsame-device scoring"]
@@ -64,9 +64,50 @@ crashing the discovery run.
 | UniFi (`discovery/unifi_client.py`) | The UniFi Integration API (local controller or UDM/Cloud Gateway) | Clients + UniFi-managed devices, with UniFi's own naming |
 | nmap (`discovery/nmap_scan.py`) | A two-phase `-sn` ping sweep + `-sV` service scan against `SCAN_SUBNETS` | Anything on the LAN, MAC via ARP, open ports/service banners |
 | Sonos household (`discovery/sonos_household.py`) | One `GetZoneGroupState` call to any known Sonos player | Every player in the household, room names, stereo-pair/satellite topology |
-| local-host (`discovery/local_host.py`) | The Mac this app runs on | Self-registers the host running the app |
+| local-host (`discovery/local_host.py`) | The machine this app runs on (macOS `system_profiler`, Linux DMI) | Self-registers the host running the app |
 
 Full details on each: [Discovery Collectors Guide](Discovery-Collectors-Guide).
+
+### The software inventory: a different shape on purpose
+
+The Software tab's data doesn't come through this pipeline. The four
+collectors above look at devices *from the network*; listing what's installed
+on a computer means running something *on* it. So the software inventory has
+its own path, driven from a dev machine rather than from the host:
+
+```mermaid
+flowchart LR
+    Dev["dev machine\nscripts/collect-software.sh"]
+    Dev -- "ssh: pipe collect_unix.py /\ncollect_windows.ps1 (read-only)" --> Machines["each computer\n(macOS, Linux, Windows)"]
+    Machines -- "JSON on stdout" --> Dev
+    Dev -- "ssh: JSON on stdin" --> Import["host: discovery.cli\nsoftware-import"]
+    Import --> SDB[("SoftwareItem /\nSoftwareInstall /\nSoftwareHost")]
+    SDB --> EOL["host: software-eol\n(endoflife.date)"]
+    SDB --> Tab["Software tab\n(grades computed per page load)"]
+```
+
+- **The host never holds ssh keys to the other machines.** A server that can
+  log in to every laptop turns one compromise into all of them, so the dev
+  machine, which already has that access, does the driving.
+- **Nothing is installed on the machines.** The collectors are piped over ssh
+  and only read. `collect_unix.py` is a single stdlib-only file that runs on
+  Python 3.9, down to the Command Line Tools Python on a Mac.
+- **The importer, not the collector, decides what counts as the operating
+  system** (`classify()` in `discovery/software_import.py`), so changing that
+  rule needs no redeploy to every machine. The OS itself stays on the
+  machine's own asset; the Software tab lists everything else.
+- **Each machine is matched to its existing asset** by MAC address, then by
+  the hostname a previous import recorded. The importer refuses to guess
+  between two candidates: listing software against the wrong asset is worse
+  than not listing it.
+- **Grades are never stored.** `app/software_risk.py` works out each row's
+  red/amber/green grade when the page loads, because age thresholds and
+  end-of-life dates move with the calendar.
+
+Details: [Discovery Collectors Guide](Discovery-Collectors-Guide#software-inventory)
+and the README's
+[Software inventory](https://github.com/rohitafish/home-asset-manager#software-inventory)
+section.
 
 ### Keeping repeated runs from degrading data quality
 
@@ -167,13 +208,19 @@ and [Security Model](Security-Model).
 | `ChangeProposal` | A pending AI-suggested change, awaiting human approval |
 | `DiscoveryRun` | A record of one discovery run and its summary |
 | `Vulnerability` / `Finding` | Enriched CVE data and its match to a specific asset/service |
+| `SoftwareItem` | One distinct piece of software across every machine (one row on the Software tab) |
+| `SoftwareInstall` | That software on one machine, as one package manager sees it: version, publication date, pending updates, known vulnerabilities, end-of-life facts |
+| `SoftwareHost` | When each machine's software was last collected, and its platform and OS |
 
 ## Entry points
 
 - **Web app** — `uvicorn app.main:app`, routed through `app/routers/assets.py`
-  (JSON-ish API surface) and `app/routers/dashboard.py` (the HTML dashboard).
+  (JSON-ish API surface) and `app/routers/dashboard.py` (the HTML dashboard),
+  with `app/routers/software.py` serving the Software tab and its CSV export.
 - **CLI** (`discovery/cli.py`, Typer) — `unifi`, `nmap`, `local-mac`,
-  `account-import`, `sonos`, `enrich`, `revalue`, `resync-exposure`, and
-  `all` (every discovery source in one pass). Full flag reference in the
+  `account-import`, `sonos`, `enrich`, `revalue`, `resync-exposure`,
+  `software-import`, `software-eol`, and `all` (every network discovery
+  source in one pass; the software inventory is collected separately by
+  `scripts/collect-software.sh`). Full flag reference in the
   README's
   [CLI reference](https://github.com/rohitafish/home-asset-manager#cli-reference).

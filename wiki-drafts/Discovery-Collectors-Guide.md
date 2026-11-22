@@ -1,10 +1,15 @@
 # Discovery Collectors Guide
 
-Four collectors feed the same reconciliation pipeline (see
+Four network collectors feed the same reconciliation pipeline (see
 [Architecture Deep-Dive](Architecture-Deep-Dive)). All are synchronous,
 on-demand (`./scripts/discover.sh` or the dashboard's Discovery page — nothing
 runs on a schedule), and designed to never raise: a source that's unreachable
 or misconfigured reports that in the run summary rather than crashing.
+
+A fifth, the [software inventory](#software-inventory), works differently:
+it runs on the computers themselves, driven over ssh from a dev machine by
+`scripts/collect-software.sh`, and feeds the Software tab rather than the
+asset pipeline. It's on-demand too.
 
 ## UniFi
 
@@ -85,12 +90,14 @@ module's docstring for the naming-collision history behind that decision.
 
 ## local-host
 
-**Module:** `discovery/local_host.py` · **Needs:** macOS (`Darwin`) — a no-op
+**Module:** `discovery/local_host.py` · **Needs:** macOS or Linux — a no-op
 everywhere else
 
-A one-off collector for the Mac this app happens to be running on: reads its
-own serial number, model identifier, and model number straight from
-`system_profiler`, then finds its matching `Asset` row (by an existing serial
+A one-off collector for the machine this app happens to be running on: reads
+its own serial number, model identifier, and model number — from
+`system_profiler` on macOS, or the DMI tables under `/sys/class/dmi/id` on
+Linux (which have no marketing model number, so that field is left as it
+was) — then finds its matching `Asset` row (by an existing serial
 match, or by its own MAC addresses against `AssetInterface`) and writes the
 hardware identity onto it.
 
