@@ -1102,8 +1102,8 @@ assistant or human contributor.
 - **`brew vulns` exits 1 when it finds something.** Treating non-zero as
   failure silently drops every finding (it did, on the first run).
   `_run(..., ok_codes=(0, 1))` is why.
-- **dpkg status `hi` (held) is installed.** The host holds its kernel and
-  Wi-Fi driver; filtering on `ii` alone dropped them.
+- **dpkg status `hi` (held) is installed.** A package pinned at its version
+  (a held kernel, say) still counts; filtering on `ii` alone dropped them.
 - **Never collect what identifies people.** Debian changelog lines carry
   maintainers' names and emails: `changelog_date()` keeps the date and
   discards the line. File paths carry home folders: no collector reports one.
@@ -1113,8 +1113,8 @@ assistant or human contributor.
   well under a second, so there is nothing to cache.
 - **Distro packages are graded differently on purpose**: age only raises
   them to amber past 5 years, and an upstream end of life is amber, not red,
-  because the distribution backports fixes (Ubuntu 24.04's OpenSSL 3.0 and
-  git 2.43 are upstream-EOL and still patched). Their real security signal
+  because the distribution backports fixes (an LTS release's OpenSSL or
+  git can be upstream-EOL and still patched). Their real security signal
   is a pending update from a `-security` pocket.
 - **`SoftwareInstall` has no unique constraint**, unlike `AssetService`:
   the generic merge in `app/asset_children.py` re-points rows, and a

@@ -258,8 +258,8 @@ DPKG_FORMAT = "${Package}\t${Version}\t${Source}\t${Priority}\t${Section}\t${Ess
 
 def parse_dpkg(text):
     """dpkg-query output in DPKG_FORMAT -> {name: record}. Only installed
-    packages: status "ii", or "hi" for one held at its version (the host
-    holds its kernel and Wi-Fi driver, and those still count). Multi-arch
+    packages: status "ii", or "hi" for one held at its version (a pinned
+    kernel, say, which still counts). Multi-arch
     duplicates collapse to one."""
     out = {}
     for line in text.splitlines():

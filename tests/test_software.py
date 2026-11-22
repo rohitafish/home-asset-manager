@@ -86,7 +86,7 @@ def test_software_key_matches_across_sources(name, key):
 @pytest.mark.parametrize(
     ("rec", "expected"),
     [
-        ({"source": "apt", "name": "linux-image-7.0.0-43-generic"}, None),
+        ({"source": "apt", "name": "linux-image-9.9.9-1-generic"}, None),
         ({"source": "apt", "name": "linux-firmware"}, None),
         ({"source": "apt", "name": "base-files", "priority": "required"}, None),
         ({"source": "apt", "name": "kali-linux-headless"}, None),
@@ -224,7 +224,7 @@ def test_worst_and_versions():
     assert worst([GREEN, AMBER, UNRATED]) == AMBER
     assert worst([]) == UNRATED
     assert version_tuple("3.12.4rc1") == (3, 12, 4)
-    assert upstream_version("1:2.43.0-1ubuntu7.3", "apt") == "2.43.0"
+    assert upstream_version("1:9.8.7-1ubuntu1.2", "apt") == "9.8.7"
     assert upstream_version("1.4+dfsg-2", "apt") == "1.4"
     assert upstream_version("1.11.1_4", "brew") == "1.11.1"
     assert upstream_version(None, "app") is None
@@ -245,7 +245,7 @@ def _doc(packages, macs=("00:1a:2b:3c:4d:01",), hostname="testhost", platform="l
     }
 
 
-GIT_APT = {"source": "apt", "name": "git", "version": "1:2.43.0-1ubuntu7.3", "section": "vcs",
+GIT_APT = {"source": "apt", "name": "git", "version": "1:9.8.7-1ubuntu1.2", "section": "vcs",
            "priority": "optional", "published": "2026-10-16",
            "published_source": "distro package changelog"}
 
@@ -255,7 +255,7 @@ def test_import_matches_by_mac_and_drops_the_os(session):
     make_interface(session, asset.id, mac="00:1a:2b:3c:4d:01")
     summary = import_inventory(session, _doc([
         GIT_APT,
-        {"source": "apt", "name": "linux-image-7.0.0-43-generic", "version": "7.0.0-43"},
+        {"source": "apt", "name": "linux-image-9.9.9-1-generic", "version": "9.9.9-1"},
     ]))
     assert summary["asset_id"] == asset.id
     assert (summary["imported"], summary["excluded_os"]) == (1, 1)
@@ -291,11 +291,11 @@ def test_reimport_removes_uninstalled_software_and_keeps_first_seen(session):
     import_inventory(session, _doc([GIT_APT, nmap]))
     git_first = session.exec(select(SoftwareInstall).where(SoftwareInstall.package_name == "git")).one()
     first_seen = git_first.first_seen
-    git_first.eol_cycle = "2.43"
+    git_first.eol_cycle = "9.8"
     session.add(git_first)
     session.commit()
 
-    newer = dict(GIT_APT, version="1:2.43.0-1ubuntu7.4")
+    newer = dict(GIT_APT, version="1:9.8.7-1ubuntu1.3")
     summary = import_inventory(session, _doc([newer]))
     assert (summary["removed"], summary["items_pruned"]) == (1, 1)
     git = session.exec(select(SoftwareInstall)).one()
@@ -491,27 +491,27 @@ def test_enrich_survives_a_failed_product_fetch(session, monkeypatch):
 
 def test_parse_dpkg_keeps_held_packages_and_skips_removed():
     text = (
-        "git\t1:2.43.0-1\tgit\toptional\tvcs\tno\tii \tfast, scalable VCS\n"
-        "broadcom-sta-dkms\t6.30-1\tbroadcom-sta\toptional\tkernel\tno\thi \tdriver\n"
+        "git\t1:9.8.7-1\tgit\toptional\tvcs\tno\tii \tfast, scalable VCS\n"
+        "example-dkms\t1.2-1\texample\toptional\tkernel\tno\thi \tdriver\n"
         "oldthing\t1.0\t\toptional\tmisc\tno\trc \tgone\n"
         "libc6\t2.39-0\tglibc (2.39-0)\trequired\tlibs\tno\tii \tGNU C Library\n"
         "libc6\t2.39-0\tglibc (2.39-0)\trequired\tlibs\tno\tii \tGNU C Library\n"
     )
     pkgs = collector.parse_dpkg(text)
-    assert set(pkgs) == {"git", "broadcom-sta-dkms", "libc6"}
+    assert set(pkgs) == {"git", "example-dkms", "libc6"}
     assert pkgs["libc6"]["source_package"] == "glibc"
 
 
 def test_parse_apt_lists():
     up = collector.parse_apt_upgradable(
         "Listing...\n"
-        "openssl/noble-updates,noble-security 3.0.13-0ubuntu3.6 amd64 [upgradable from: 3.0.13-0ubuntu3.5]\n"
-        "linux-firmware/noble-updates 20240318.0ubuntu3.1 amd64 [upgradable from: 20240318.0ubuntu2.27]\n"
+        "examplessl/stable-updates,stable-security 9.9.1-1example2 amd64 [upgradable from: 9.9.1-1example1]\n"
+        "examplefw/stable-updates 20990101.1 amd64 [upgradable from: 20990101.0]\n"
     )
-    assert up == {"openssl": ("3.0.13-0ubuntu3.6", True),
-                  "linux-firmware": ("20240318.0ubuntu3.1", False)}
+    assert up == {"examplessl": ("9.9.1-1example2", True),
+                  "examplefw": ("20990101.1", False)}
     local = collector.parse_apt_installed_local(
-        "Listing...\nfoo/now 1.0 amd64 [installed,local]\nbar/noble,now 2.0 amd64 [installed]\n"
+        "Listing...\nfoo/now 1.0 amd64 [installed,local]\nbar/stable,now 2.0 amd64 [installed]\n"
     )
     assert local == {"foo"}
 
@@ -520,7 +520,7 @@ def test_changelog_date_reads_only_the_date(tmp_path):
     pkg = tmp_path / "git"
     pkg.mkdir()
     with gzip.open(pkg / "changelog.Debian.gz", "wt") as fh:
-        fh.write("git (1:2.43.0-1ubuntu7.3) noble-security; urgency=medium\n\n  * fix\n\n"
+        fh.write("git (1:9.8.7-1ubuntu1.2) stable-security; urgency=medium\n\n  * fix\n\n"
                  " -- A Maintainer <maintainer@example.com>  Fri, 16 Oct 2026 10:11:45 -0400\n")
     assert collector.changelog_date("git", doc_dir=str(tmp_path)) == "2026-10-16"
     assert collector.changelog_date("missing", doc_dir=str(tmp_path)) is None
@@ -528,26 +528,26 @@ def test_changelog_date_reads_only_the_date(tmp_path):
 
 def test_parse_brew_info_and_vulns():
     vulns = collector.parse_brew_vulns({"findings": [
-        {"formula": "libssh2", "vulnerabilities": [
-            {"id": "OSV-2025-433", "severity": "UNKNOWN", "fixed_versions": []}],
-         "patched": [{"id": "CVE-2026-55199", "severity": "HIGH", "fixed_versions": ["abc"]}]},
+        {"formula": "examplelib", "vulnerabilities": [
+            {"id": "OSV-2099-0001", "severity": "UNKNOWN", "fixed_versions": []}],
+         "patched": [{"id": "CVE-2099-0002", "severity": "HIGH", "fixed_versions": ["abc"]}]},
     ]})
-    assert vulns == {"libssh2": [{"id": "OSV-2025-433", "severity": "UNKNOWN", "fixed": False}]}
+    assert vulns == {"examplelib": [{"id": "OSV-2099-0001", "severity": "UNKNOWN", "fixed": False}]}
     info = {
         "formulae": [
-            {"name": "libssh2", "desc": "C library", "homepage": "https://libssh2.org",
+            {"name": "examplelib", "desc": "C library", "homepage": "https://example.org",
              "versions": {"stable": "1.11.1"}, "outdated": True, "deprecated": False, "disabled": False,
-             "installed": [{"version": "1.11.1_4", "time": 1789468014, "installed_on_request": False}]},
+             "installed": [{"version": "1.2.3_4", "time": 1700000000, "installed_on_request": False}]},
             {"name": "git", "versions": {"stable": "2.47.1"}, "outdated": False,
              "installed": [{"version": "2.47.1", "installed_on_request": True}]},
         ],
         "casks": [{"token": "firefox", "name": ["Firefox"], "installed": "148.0", "version": "149.0",
-                   "outdated": True, "installed_time": 1793455523}],
+                   "outdated": True, "installed_time": 1710000000}],
     }
-    recs = collector.parse_brew_info(info, {"libssh2": {"source_modified_time": 1774892837}}, vulns)
+    recs = collector.parse_brew_info(info, {"examplelib": {"source_modified_time": 1690000000}}, vulns)
     ssh, git, cask = recs
-    assert (ssh["published"], ssh["explicit"], ssh["update_available"]) == ("2026-03-30", False, True)
-    assert ssh["vulns"][0]["id"] == "OSV-2025-433" and git["vulns"] == []
+    assert (ssh["published"], ssh["explicit"], ssh["update_available"]) == ("2023-07-22", False, True)
+    assert ssh["vulns"][0]["id"] == "OSV-2099-0001" and git["vulns"] == []
     assert (cask["source"], cask["display_name"], cask["latest_version"]) == ("brew-cask", "Firefox", "149.0")
     # No `brew vulns` at all: formulae carry no vulns key ("not scanned").
     assert "vulns" not in collector.parse_brew_info(info)[0]
