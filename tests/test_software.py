@@ -8,7 +8,7 @@ AGENTS.md's PII rules.
 import gzip
 import importlib.util
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -193,6 +193,23 @@ def test_end_of_life_without_a_date_reads_cleanly():
 def test_end_of_life_soon_is_amber():
     g = grade_install(_inst(source="app", eol_date=date(2027, 2, 1)), TODAY)
     assert g.rag == AMBER and "2027-02-01" in g.reasons[0]
+
+
+@pytest.mark.parametrize("product", ["chrome", "firefox", "microsoft-edge"])
+def test_rapid_release_browser_on_the_newest_version_is_green(product):
+    # The newest cycle's "end of life" is just the next release day, two weeks out.
+    current = _inst(source="app", version="9.0.1", eol_cycle="9", eol_date=TODAY + timedelta(days=14),
+                    published_date=TODAY - timedelta(days=3))
+    assert grade_install(current, TODAY, product).rag == GREEN
+    # Without the product it is still the ordinary early warning.
+    assert grade_install(current, TODAY).rag == AMBER
+
+
+def test_rapid_release_browser_left_behind_is_still_red():
+    behind = _inst(source="app", version="8.0.1", eol_cycle="8", eol_date=TODAY - timedelta(days=1),
+                   published_date=TODAY - timedelta(days=17))
+    g = grade_install(behind, TODAY, "chrome")
+    assert g.rag == RED and g.reasons[0].startswith("End of life (8)")
 
 
 @pytest.mark.parametrize(

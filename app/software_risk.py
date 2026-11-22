@@ -22,8 +22,8 @@ The three things graded, and where each comes from:
 RED      high/critical vulnerability, security update pending, end of life,
          disabled by Homebrew, or published over AGE_RED_YEARS ago.
 AMBER    other known vulnerabilities, any other pending update, deprecated,
-         orphaned, Intel-only, end of life within EOL_WARN_DAYS, or older
-         than AGE_AMBER_YEARS.
+         orphaned, Intel-only, end of life within EOL_WARN_DAYS (except for
+         RAPID_RELEASE_PRODUCTS), or older than AGE_AMBER_YEARS.
 GREEN    none of the above, with at least something to judge by.
 UNRATED  nothing to judge by at all (no date, no scanner, no update source).
 
@@ -51,6 +51,12 @@ RAG_LABELS = {RED: "Red", AMBER: "Amber", GREEN: "Green", UNRATED: "Unrated"}
 AGE_AMBER_YEARS = 2
 AGE_RED_YEARS = 5
 EOL_WARN_DAYS = 180
+# endoflife.date products whose release cycles are only weeks long: each
+# cycle's "end of life" is just the day the next version ships, so even the
+# newest version is always inside EOL_WARN_DAYS and the early warning could
+# never clear. For these the date passing (a newer version has shipped and
+# this machine hasn't taken it) is the signal, and it is still red.
+RAPID_RELEASE_PRODUCTS = {"chrome", "firefox", "microsoft-edge"}
 HIGH_SEVERITIES = {"CRITICAL", "HIGH"}
 DISTRO_SOURCES = {"apt"}
 # Sources whose package manager reports pending updates, so "no update
@@ -137,8 +143,9 @@ def _age_years(published: date, today: date) -> float:
     return (today - published).days / 365.25
 
 
-def grade_install(inst, today: date) -> Grade:
-    """Grade one SoftwareInstall (or any object with the same attributes)."""
+def grade_install(inst, today: date, eol_product: str | None = None) -> Grade:
+    """Grade one SoftwareInstall (or any object with the same attributes).
+    `eol_product` is the item's endoflife.date slug (SoftwareItem.eol_product)."""
     red: list[str] = []
     amber: list[str] = []
     distro = inst.source in DISTRO_SOURCES
@@ -189,7 +196,10 @@ def grade_install(inst, today: date) -> Grade:
                 amber.append(f"Upstream end of life{cycle}{when}; the distribution may still backport fixes")
             else:
                 red.append(f"End of life{cycle}{when}")
-        elif (inst.eol_date - today).days <= EOL_WARN_DAYS:
+        elif (
+            (inst.eol_date - today).days <= EOL_WARN_DAYS
+            and eol_product not in RAPID_RELEASE_PRODUCTS
+        ):
             amber.append(f"End of life{cycle} on {inst.eol_date.isoformat()}")
 
     if (

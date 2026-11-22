@@ -79,7 +79,7 @@ def build_rows(
         if machine is not None and inst.asset_id != machine:
             continue
         row = grouped.setdefault(item.id, {"item": item, "installs": []})
-        row["installs"].append((inst, grade_install(inst, today)))
+        row["installs"].append((inst, grade_install(inst, today, item.eol_product)))
 
     needle = q.strip().lower()
     rows = []

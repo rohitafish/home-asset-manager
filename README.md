@@ -1682,6 +1682,10 @@ Green means none of those, and **Unrated** means there was nothing to judge
 by. Linux distribution packages are only marked amber for age, and only past
 5 years, and an upstream end of life is amber for them rather than red,
 because the distribution backports security fixes into old versions.
+Chrome, Firefox and Edge get no early end-of-life warning: they ship a new
+version every few weeks and each version's end of life is simply the next
+release day, so even the newest version would always be amber. They turn red
+as soon as a newer version has shipped and the machine hasn't taken it.
 
 Coverage differs by kind of software, and the tab's Coverage table says what
 each is checked against. In short: Homebrew formulae are checked for known
