@@ -393,6 +393,18 @@ def test_import_skips_junk_records(session):
     assert (summary["skipped"], summary["imported"]) == (3, 1)
 
 
+def test_import_keeps_the_newest_of_a_package_listed_twice(session):
+    a = make_asset(session)
+    make_interface(session, a.id, mac="00:1a:2b:3c:4d:01")
+    old = {"source": "app", "name": "ExampleChat", "version": "1.1.1"}
+    new = {"source": "app", "name": "ExampleChat", "version": "9.9.9"}
+    for order in ([old, new], [new, old]):
+        summary = import_inventory(session, _doc(order, platform="darwin"))
+        installs = session.exec(select(SoftwareInstall).where(SoftwareInstall.asset_id == a.id)).all()
+        assert summary["imported"] == 1
+        assert [i.version for i in installs] == ["9.9.9"]
+
+
 def test_deleting_an_asset_removes_its_software(session):
     a = make_asset(session)
     make_interface(session, a.id, mac="00:1a:2b:3c:4d:01")
@@ -591,6 +603,33 @@ def test_parse_macos_apps_keeps_installed_apps_only():
     assert [r["name"] for r in recs] == ["Firefox", "OldTool"]
     assert recs[0]["publisher"] == "Mozilla Corporation" and recs[0]["published"] == "2026-11-01"
     assert recs[1]["intel_only"] is True
+
+
+def test_parse_macos_apps_skips_non_installs_and_keeps_the_newest_copy():
+    home = "/Users/someone"
+    apps = [
+        # A browser web-app shortcut that shares a name with the real app.
+        {"_name": "ExampleMeet", "path": f"{home}/Applications/Chrome Apps.localized/ExampleMeet.app",
+         "version": "1.0.0 (1000.0001)"},
+        {"_name": "ExampleMeet", "path": "/Applications/examplemeet.app", "version": "9.9.9 (99999)"},
+        # Old copies left behind by Sparkle updates that never finished.
+        {"_name": "ExampleChat", "path": "/Applications/(A Document Being Saved By Sparkle)/ExampleChat.app",
+         "version": "1.1.1"},
+        {"_name": "ExampleChat", "path": "/Applications/(A Document Being Saved By Sparkle 2)/ExampleChat.app",
+         "version": "1.2.2"},
+        {"_name": "ExampleChat", "path": "/Applications/ExampleChat.app", "version": "9.9.9"},
+        # Two genuine copies: the newest is recorded, listed first or not.
+        {"_name": "ExampleEdit", "path": "/Applications/ExampleEdit 9.app", "version": "9.10.0"},
+        {"_name": "ExampleEdit", "path": f"{home}/Applications/ExampleEdit.app", "version": "9.9.0"},
+    ]
+    notes = []
+    recs = collector.parse_macos_apps(apps, home=home, notes=notes)
+    assert [(r["name"], r["version"]) for r in recs] == [
+        ("ExampleMeet", "9.9.9 (99999)"), ("ExampleChat", "9.9.9"), ("ExampleEdit", "9.10.0"),
+    ]
+    assert notes == ["2 copies of ExampleEdit found (9.9.0, 9.10.0); recorded the newest"]
+    # Without a notes list it still dedupes, quietly.
+    assert len(collector.parse_macos_apps(apps, home=home)) == 3
 
 
 def test_parse_snap_and_flatpak():

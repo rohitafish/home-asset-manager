@@ -71,10 +71,35 @@ def _iso_date(ts):
 # ---------------------------------------------------------------- macOS
 
 
-def parse_macos_apps(apps, home=None):
+# Folders under an Applications folder that hold no real install:
+#   "Chrome Apps.localized" (and Edge/Brave equivalents): a browser's web-app
+#     shortcuts, whose "version" is the shortcut's, not the site's or the
+#     vendor app's (a shortcut can share the real app's name);
+#   "(A Document Being Saved By Sparkle...)": a Sparkle auto-update that never
+#     finished, leaving the old copy of the app behind.
+_NOT_INSTALLS = re.compile(r"/[^/]+ Apps\.localized/|/\(A Document Being Saved By ")
+
+
+def _version_key(version):
+    """Leading numeric components: "9.10.2 (999)" -> (9, 10, 2)."""
+    out = []
+    for part in re.split(r"[.\s]", version or ""):
+        m = re.match(r"\d+", part)
+        if not m:
+            break
+        out.append(int(m.group()))
+        if m.end() != len(part):
+            break
+    return tuple(out)
+
+
+def parse_macos_apps(apps, home=None, notes=None):
     """system_profiler SPApplicationsDataType entries -> package records.
     Keeps apps a person installed: /Applications and ~/Applications, not
-    apps nested inside another bundle (helpers), not /System or /Library."""
+    apps nested inside another bundle (helpers), not /System or /Library,
+    not browser web-app shortcuts or abandoned Sparkle update folders. When
+    two copies share a name, records the newest and says so in `notes` (the
+    importer keeps one install per name and machine)."""
     home = home or os.path.expanduser("~")
     out = []
     for app in apps:
@@ -83,6 +108,8 @@ def parse_macos_apps(apps, home=None):
         if not path.startswith(roots):
             continue
         if path.count(".app") != 1:  # a helper app inside another bundle
+            continue
+        if _NOT_INSTALLS.search(path):
             continue
         out.append(
             {
@@ -99,7 +126,18 @@ def parse_macos_apps(apps, home=None):
                 "obtained_from": app.get("obtained_from"),
             }
         )
-    return out
+    by_name = {}
+    for rec in out:
+        by_name.setdefault(rec["name"], []).append(rec)
+    kept = []
+    for name, copies in by_name.items():
+        newest = max(copies, key=lambda r: (_version_key(r["version"]), r["published"] or ""))
+        kept.append(newest)
+        if len(copies) > 1 and notes is not None:
+            versions = ", ".join(sorted((r["version"] or "unknown" for r in copies), key=_version_key))
+            notes.append(f"{len(copies)} copies of {name} found ({versions}); recorded the newest")
+    order = {id(r): i for i, r in enumerate(out)}
+    return sorted(kept, key=lambda r: order[id(r)])
 
 
 def _signer(signed_by):
@@ -208,7 +246,7 @@ def collect_macos(notes):
     raw = _run(["system_profiler", "-json", "SPApplicationsDataType"], timeout=180)
     if raw:
         try:
-            packages += parse_macos_apps(json.loads(raw).get("SPApplicationsDataType", []))
+            packages += parse_macos_apps(json.loads(raw).get("SPApplicationsDataType", []), notes=notes)
         except ValueError:
             notes.append("system_profiler output was not JSON; apps not collected")
     else:

@@ -36,6 +36,7 @@ from app.models import (
     SoftwareItem,
     SoftwareNote,
 )
+from app.software_risk import version_tuple
 
 logger = logging.getLogger(__name__)
 
@@ -342,9 +343,10 @@ def import_inventory(session: Session, doc: dict, asset_id: int | None = None) -
         session.add(item)
 
         inst = existing.get((item.id, source, name))
-        if inst is not None and inst.id in kept:
-            continue  # the same package twice in one document
         version = _text(rec.get("version"))
+        repeat = inst is not None and inst.id in kept
+        if repeat and version_tuple(version) <= version_tuple(inst.version):
+            continue  # the same package twice in one document: the newest copy wins
         if inst is None:
             inst = SoftwareInstall(
                 software_id=item.id, asset_id=asset.id, source=source,
@@ -371,7 +373,8 @@ def import_inventory(session: Session, doc: dict, asset_id: int | None = None) -
         session.flush()
         existing[(item.id, source, name)] = inst
         kept.add(inst.id)
-        imported += 1
+        if not repeat:
+            imported += 1
 
     removed = 0
     for inst in list(existing.values()) + stale:
