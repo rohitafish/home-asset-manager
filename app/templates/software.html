@@ -3,9 +3,9 @@
 {% block content %}
 {% set base_qs = {'q': q, 'machine': machine or '', 'rag': rag, 'show': 'all' if show_all else ''} %}
 {% set here = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
-{% macro sort_th(key, label) %}
+{% macro sort_th(key, label, cls="", title="") %}
   {% set qs = dict(base_qs, sort=key) %}
-  <th><a class="sort-link" href="/software?{{ qs | urlencode }}">{{ label }}{% if sort == key %} ▼{% endif %}</a></th>
+  <th{% if cls %} class="{{ cls }}"{% endif %}><a class="sort-link" href="/software?{{ qs | urlencode }}"{% if title %} title="{{ title }}"{% endif %}>{{ label }}{% if sort == key %} ▼{% endif %}</a></th>
 {% endmacro %}
 
 <div class="toolbar">
@@ -85,10 +85,10 @@
   <thead>
     <tr>
       {{ sort_th('risk', 'Risk') }}{{ sort_th('name', 'Software') }}
-      <th>Installed version &middot; published &middot; machines</th>
-      {{ sort_th('published', 'Oldest published') }}{{ sort_th('machines', 'Machines') }}
-      <th>Why</th>
-      <th>Notes</th>
+      <th class="sw-versions">Installed version &middot; machines</th>
+      {{ sort_th('published', 'Oldest published') }}{{ sort_th('machines', '#', 'sw-count', 'Number of machines') }}
+      <th class="sw-why">Why</th>
+      <th class="sw-notes">Notes</th>
     </tr>
   </thead>
   <tbody>
@@ -100,19 +100,19 @@
         <div class="muted">{{ row.category }}{% if row.item.publisher %} &middot; {{ row.item.publisher }}{% endif %}</div>
         {% if row.item.description %}<div class="muted small">{{ row.item.description }}</div>{% endif %}
       </td>
-      <td>
+      <td class="sw-versions">
         {% for v in row.versions %}
           <div class="sw-version">
             <span class="sw-ver">{{ v.version }}</span>
-            &middot; {% if v.published %}<span title="{{ v.published_source }}">{{ v.published.isoformat() }}</span>{% else %}<span class="muted">date unknown</span>{% endif %}
+            &middot; {% if v.published %}<span class="sw-pub" title="{{ v.published_source }}">{{ v.published.isoformat() }}</span>{% else %}<span class="muted">date unknown</span>{% endif %}
             &middot; {% for m in v.machines %}<a class="machine-chip rag-border-{{ m.rag }}" href="/software?{{ dict(base_qs, machine=m.id, sort=sort) | urlencode }}">{{ m.label }}</a>{% endfor %}
             <span class="muted small">({{ v.sources | join(", ") }})</span>
           </div>
         {% endfor %}
       </td>
       <td class="date">{{ row.oldest_published.isoformat() if row.oldest_published else "—" }}</td>
-      <td class="num">{{ row.machine_count }}</td>
-      <td class="small">
+      <td class="num sw-count">{{ row.machine_count }}</td>
+      <td class="small sw-why">
         {% if row.reasons %}
           <ul class="reasons">{% for r in row.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
         {% else %}<span class="muted">No known issues</span>{% endif %}
