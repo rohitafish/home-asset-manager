@@ -78,6 +78,17 @@ IP). A few rules keep repeated discovery runs from degrading data quality:
   discovery while an asset's `lifecycle_status` is `discovered`. Once an asset
   is marked `active` (see Triage Queue below), its type is frozen against
   future discovery runs.
+- **Decommissioned assets are kept, not deleted** — set an asset's status to
+  `decommissioned` when it has left the house. Its row, notes, interfaces and
+  purchase data stay in the database as the record of what you owned, but it
+  drops out of the views of what's here now: the Assets list and its count
+  card, the default Valuables view, Locations and the Summary. Pick
+  `decommissioned` in the Assets list's status filter (or follow the
+  "N decommissioned assets hidden" link under the table) to see them. A
+  location a decommissioned asset is still assigned to lists it separately
+  and can't be deleted until it's reassigned. If a decommissioned device
+  rejoins the network, discovery updates its last-seen time but leaves it
+  decommissioned.
 - **Per-VLAN gateway addresses attach to the router, not new assets** — a
   multi-VLAN gateway (e.g. a UDM/UCG) has a separate IP per network, and
   nmap can't ARP-resolve a MAC for one on a different VLAN than the scanning
@@ -1427,7 +1438,9 @@ The **Valuables** page in the nav lists every asset with identity, purchase
 or cover data recorded, plus any high-criticality asset regardless (so it
 also doubles as a worklist of what's still worth filling in), with **Print**
 and **Download CSV** buttons — the thing to hand to an insurer or a support
-desk. `/valuables?all=1` shows the full inventory instead.
+desk. Decommissioned assets are left out, since they're no longer yours to
+insure. `/valuables?all=1` shows the full inventory instead, decommissioned
+assets included.
 
 #### Model numbers
 

@@ -6,7 +6,7 @@
 <div class="metric-cards">
   <div class="metric-card">
     <div class="value">{{ total_assets }}</div>
-    <div class="label">Total assets</div>
+    <div class="label">Live assets</div>
   </div>
   <div class="metric-card">
     <div class="value">{{ active_count }}</div>
@@ -19,6 +19,10 @@
   <div class="metric-card">
     <div class="value">{{ coverage_pct }}%</div>
     <div class="label">Seen in last 30 days</div>
+  </div>
+  <div class="metric-card">
+    <div class="value"><a href="/assets?lifecycle_status=decommissioned">{{ decommissioned_count }}</a></div>
+    <div class="label">Decommissioned (kept, hidden)</div>
   </div>
   <div class="metric-card {% if open_findings_total %}warn{% endif %}">
     <div class="value">{{ open_findings_total }}</div>

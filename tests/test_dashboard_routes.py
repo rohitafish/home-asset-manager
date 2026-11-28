@@ -686,3 +686,82 @@ def test_a_blank_location_name_is_rejected(admin_client, session):
     admin_client.post("/locations/new", data={"name": "   "}, follow_redirects=False)
 
     assert session.exec(select(Location)).all() == []
+
+
+# -- decommissioned assets: kept, but hidden from the live views ----------------
+
+
+@pytest.fixture()
+def live_and_retired(session):
+    """One live asset and one decommissioned one, both priced (so both
+    qualify for the default Valuables view) and in the same location."""
+    location = Location(name="Example Room")
+    session.add(location)
+    session.commit()
+    session.refresh(location)
+    live = make_asset(
+        session, hostname="example-live", lifecycle_status=LifecycleStatus.active,
+        purchase_price=Decimal("100.00"), location_id=location.id,
+    )
+    retired = make_asset(
+        session, hostname="example-retired", lifecycle_status=LifecycleStatus.decommissioned,
+        purchase_price=Decimal("200.00"), location_id=location.id,
+    )
+    return live, retired, location
+
+
+def test_asset_list_hides_decommissioned_by_default(admin_client, live_and_retired):
+    page = admin_client.get("/assets").text
+    assert "example-live" in page
+    assert "example-retired" not in page
+    assert "1 decommissioned asset hidden" in page
+
+
+def test_asset_list_status_filter_shows_decommissioned(admin_client, live_and_retired):
+    page = admin_client.get("/assets?lifecycle_status=decommissioned").text
+    assert "example-retired" in page
+    assert "example-live" not in page
+    assert "decommissioned asset hidden" not in page
+
+
+def test_count_badge_counts_only_live_assets(admin_client, live_and_retired):
+    badge = admin_client.get("/assets/count-badge").text
+    assert '<div class="value">1</div>' in badge
+    assert "Live assets" in badge
+
+
+def test_decommissioned_assets_are_kept_in_the_database(admin_client, live_and_retired, session):
+    _, retired, _ = live_and_retired
+    admin_client.get("/assets")
+    assert session.get(Asset, retired.id) is not None
+    assert admin_client.get(f"/assets/{retired.id}").status_code == 200
+
+
+def test_valuables_default_leaves_out_decommissioned_but_all_includes_them(
+    admin_client, live_and_retired
+):
+    default_rows = _csv_rows(admin_client.get("/valuables.csv"))[1:]
+    all_rows = _csv_rows(admin_client.get("/valuables.csv?all=1"))[1:]
+    assert [r[1] for r in default_rows] == ["example-live"]
+    assert "example-retired" in [r[1] for r in all_rows]
+    page = admin_client.get("/valuables").text
+    assert "example-retired" not in page
+
+
+def test_locations_count_live_assets_and_list_decommissioned_apart(
+    admin_client, live_and_retired
+):
+    _, _, location = live_and_retired
+    listing = admin_client.get("/locations").text
+    assert "Example Room" in listing
+    assert "<td>1</td>" in listing
+    detail = admin_client.get(f"/locations/{location.id}").text
+    live_part, _, retired_part = detail.partition("Decommissioned, still assigned here")
+    assert "example-live" in live_part and "example-retired" not in live_part
+    assert "example-retired" in retired_part
+
+
+def test_summary_counts_live_assets_and_reports_decommissioned(admin_client, live_and_retired):
+    page = admin_client.get("/summary").text
+    assert "Live assets" in page
+    assert "Decommissioned (kept, hidden)" in page

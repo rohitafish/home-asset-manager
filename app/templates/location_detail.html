@@ -34,4 +34,19 @@
     {% endfor %}
   </tbody>
 </table>
+{% if decommissioned %}
+<h3>Decommissioned, still assigned here</h3>
+<p class="muted">Kept as a record. While they're assigned here, this location can't be deleted.</p>
+<table>
+  <thead><tr><th>Hostname</th><th>Type</th></tr></thead>
+  <tbody>
+    {% for asset in decommissioned %}
+    <tr>
+      <td><a href="/assets/{{ asset.id }}">{{ asset.hostname or ("Asset #" ~ asset.id) }}</a></td>
+      <td>{{ asset.asset_type.value.replace('_device', '') }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% endblock %}

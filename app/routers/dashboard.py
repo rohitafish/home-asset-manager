@@ -233,6 +233,24 @@ LIFECYCLE_STATUSES = [s.value for s in LifecycleStatus]
 FINDING_STATUSES = [s.value for s in FindingStatus]
 SEVERITY_ORDER = {Severity.critical: 0, Severity.high: 1, Severity.medium: 2, Severity.low: 3}
 
+# Decommissioned assets stay in the database as the record of what the
+# household once owned (with their notes, interfaces and purchase data) --
+# they are never deleted for being retired. They're hidden from the views of
+# what's here now: the asset list (unless the status filter asks for them),
+# its count card, the default Valuables view, Locations and the Summary.
+# The JSON API and an asset's own detail page still show them.
+LIVE_ASSET = Asset.lifecycle_status != LifecycleStatus.decommissioned
+
+
+def _decommissioned_count(session: Session) -> int:
+    return session.exec(
+        select(func.count()).select_from(Asset).where(~LIVE_ASSET)
+    ).one()
+
+
+def _live_count(session: Session) -> int:
+    return session.exec(select(func.count()).select_from(Asset).where(LIVE_ASSET)).one()
+
 # Cast native enum columns to text so ORDER BY sorts alphabetically by value
 # rather than by the enum's declaration order in Postgres.
 ASSET_SORT_COLUMNS = {
@@ -304,6 +322,8 @@ def assets_list(
         query = query.where(Asset.criticality == criticality)
     if lifecycle_status:
         query = query.where(Asset.lifecycle_status == lifecycle_status)
+    else:
+        query = query.where(LIVE_ASSET)
     location_filter = _parse_location_id(location_id)
     if location_filter is not None:
         query = query.where(Asset.location_id == location_filter)
@@ -321,7 +341,7 @@ def assets_list(
         sort = "last_seen"
     order = sort_column.desc() if direction == "desc" else sort_column.asc()
     assets = session.exec(query.order_by(order)).all()
-    total_count = session.exec(select(func.count()).select_from(Asset)).one()
+    total_count = _live_count(session)
     locations = _all_locations(session)
     locations_by_id = {loc.id: loc for loc in locations}
     return templates.TemplateResponse(
@@ -347,13 +367,14 @@ def assets_list(
             "sort": sort,
             "direction": direction if direction == "asc" else "desc",
             "total_count": total_count,
+            "decommissioned_count": _decommissioned_count(session),
         },
     )
 
 
 @router.get("/assets/count-badge")
 def assets_count_badge(request: Request, session: Session = Depends(get_session)):
-    total_count = session.exec(select(func.count()).select_from(Asset)).one()
+    total_count = _live_count(session)
     return templates.TemplateResponse(
         request, "_asset_count_badge.html", {"total_count": total_count}
     )
@@ -374,7 +395,9 @@ def _valuables_query(
     legitimately be high criticality as an attack-surface concern while
     being worth nothing for insurance; that flag is the one way to say so
     without misrepresenting its actual criticality). ?all=1 shows every
-    asset, is_valuable included -- that mode means literally everything."""
+    asset, is_valuable and decommissioned included -- that mode means
+    literally everything. The default also leaves out decommissioned assets:
+    they're no longer in the house, so not something to insure."""
     query = select(Asset)
     if not show_all:
         query = query.where(
@@ -388,7 +411,7 @@ def _valuables_query(
                 Asset.warranty_expiry.is_not(None),
                 Asset.criticality == Criticality.high,
             )
-        ).where(Asset.is_valuable.is_(True))
+        ).where(Asset.is_valuable.is_(True)).where(LIVE_ASSET)
     if sort == "location":
         # Location.name isn't a column on Asset -- outerjoin so it can be
         # sorted on directly, and outer (not inner) so assets with no
@@ -529,7 +552,10 @@ def locations_list(request: Request, session: Session = Depends(get_session)):
     counts = {}
     for loc in locations:
         counts[loc.id] = session.exec(
-            select(func.count()).select_from(Asset).where(Asset.location_id == loc.id)
+            select(func.count())
+            .select_from(Asset)
+            .where(Asset.location_id == loc.id)
+            .where(LIVE_ASSET)
         ).one()
     return templates.TemplateResponse(
         request, "locations.html", {"locations": locations, "counts": counts}
@@ -553,11 +579,18 @@ def location_detail(location_id: int, request: Request, session: Session = Depen
     location = session.get(Location, location_id)
     if not location:
         return RedirectResponse(url="/locations")
-    assets = session.exec(
+    assigned = session.exec(
         select(Asset).where(Asset.location_id == location_id).order_by(Asset.hostname)
     ).all()
+    # Decommissioned assets keep their location (it's part of their record)
+    # and so still block deleting it -- list them apart rather than hide
+    # them, or a delete that silently does nothing would be a mystery.
+    assets = [a for a in assigned if a.lifecycle_status != LifecycleStatus.decommissioned]
+    decommissioned = [a for a in assigned if a.lifecycle_status == LifecycleStatus.decommissioned]
     return templates.TemplateResponse(
-        request, "location_detail.html", {"location": location, "assets": assets}
+        request,
+        "location_detail.html",
+        {"location": location, "assets": assets, "decommissioned": decommissioned},
     )
 
 
@@ -976,7 +1009,7 @@ def summary_page(request: Request, session: Session = Depends(get_session)):
     from datetime import timedelta
 
     now = utcnow_naive()
-    assets = session.exec(select(Asset)).all()
+    assets = session.exec(select(Asset).where(LIVE_ASSET)).all()
     total_assets = len(assets)
     active_assets = [a for a in assets if a.lifecycle_status == LifecycleStatus.active]
     discovered_assets = [a for a in assets if a.lifecycle_status == LifecycleStatus.discovered]
@@ -1008,6 +1041,7 @@ def summary_page(request: Request, session: Session = Depends(get_session)):
             "total_assets": total_assets,
             "active_count": len(active_assets),
             "discovered_count": len(discovered_assets),
+            "decommissioned_count": _decommissioned_count(session),
             "coverage_pct": coverage_pct,
             "open_findings_total": len(open_findings),
             "open_by_severity": open_by_severity,

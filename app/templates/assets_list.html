@@ -33,7 +33,7 @@
       {% endfor %}
     </select>
     <select name="lifecycle_status" data-autosubmit>
-      <option value="">All statuses</option>
+      <option value="">All except decommissioned</option>
       {% for s in lifecycle_statuses %}
         <option value="{{ s }}" {% if s == filters.lifecycle_status %}selected{% endif %}>{{ s }}</option>
       {% endfor %}
@@ -79,4 +79,8 @@
     {% endfor %}
   </tbody>
 </table>
+{% if decommissioned_count and not filters.lifecycle_status %}
+<p class="muted">{{ decommissioned_count }} decommissioned asset{{ '' if decommissioned_count == 1 else 's' }} hidden.
+  <a href="/assets?lifecycle_status=decommissioned">Show them</a>.</p>
+{% endif %}
 {% endblock %}
